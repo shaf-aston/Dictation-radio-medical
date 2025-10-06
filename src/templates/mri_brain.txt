@@ -1,0 +1,12 @@
+Clinical details:
+
+Technique: Multiplanar, multisequence MRI brain without and with contrast.
+
+Findings:
+- No acute infarct on diffusion-weighted imaging.
+- No intracranial haemorrhage.
+- No mass effect or midline shift.
+- Mild age-appropriate small vessel disease.
+
+Conclusion:
+- No acute intracranial abnormality.
