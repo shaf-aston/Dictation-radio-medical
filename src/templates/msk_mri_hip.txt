@@ -1,0 +1,54 @@
+EXAMINATION: MRI [Right / Left / Bilateral] Hip
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+Multiplanar multisequence MRI of the [right/left/bilateral] hip performed on a [X]T magnet.
+Sequences: coronal T1, coronal STIR, sagittal PD fat-saturated, axial PD fat-saturated.
+[MR arthrogram sequences if applicable: coronal T1 fat-saturated, sagittal T1 fat-saturated, axial T1 fat-saturated.]
+
+FINDINGS:
+
+ACETABULAR LABRUM:
+Superior labrum:
+Anterosuperior labrum:
+Posterior labrum:
+Para-labral cysts:
+
+ARTICULAR CARTILAGE:
+Femoral head articular surface:
+Acetabular articular surface:
+Joint space:
+
+FEMORAL HEAD AND NECK:
+Morphology (cam deformity / alpha angle):
+Bone marrow signal:
+Avascular necrosis:
+
+ACETABULUM:
+Morphology (pincer / cross-over sign):
+Subchondral signal:
+
+JOINT SPACE:
+Effusion:
+Synovitis:
+Loose bodies:
+
+PERIARTICULAR TENDONS AND MUSCLES:
+Iliopsoas tendon and bursa:
+Gluteus medius:
+Gluteus minimus:
+Greater trochanteric bursae:
+Hamstring origin (ischial tuberosity):
+Adductor origin:
+
+BONE AND BONE MARROW:
+Femoral head and neck:
+Acetabulum:
+Proximal femur:
+
+OTHER FINDINGS:
+
+IMPRESSION:
+1.

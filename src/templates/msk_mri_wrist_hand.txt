@@ -1,0 +1,69 @@
+EXAMINATION: MRI [Right / Left] Wrist and Hand
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+Multiplanar multisequence MRI of the [right/left] wrist performed on a [X]T magnet.
+Sequences: coronal PD fat-saturated, coronal T1, sagittal PD fat-saturated, axial PD fat-saturated.
+[MR arthrogram sequences if applicable.]
+
+FINDINGS:
+
+TRIANGULAR FIBROCARTILAGE COMPLEX (TFCC):
+Central disc:
+Peripheral attachments (radial and ulnar):
+Prestyloid recess:
+Palmer classification:
+
+INTRINSIC LIGAMENTS:
+Scapholunate interosseous ligament (SLIL):
+Lunotriquetral interosseous ligament (LTIL):
+
+CARPAL ALIGNMENT:
+Scapholunate angle:
+Lunotriquetral alignment:
+Carpal height:
+
+EXTRINSIC LIGAMENTS:
+Volar extrinsic ligaments:
+Dorsal radiocarpal ligament:
+
+DISTAL RADIOULNAR JOINT (DRUJ):
+Congruence:
+Signal:
+
+FLEXOR TENDONS:
+Carpal tunnel:
+Median nerve at carpal tunnel inlet:
+Individual flexor tendon assessment:
+
+EXTENSOR TENDONS:
+First compartment (APL/EPB):
+Second compartment:
+Third compartment (EPL):
+Remaining compartments:
+
+RADIOCARPAL JOINT:
+Articular cartilage:
+Effusion:
+Synovitis:
+
+BONE AND BONE MARROW:
+Distal radius:
+Distal ulna:
+Scaphoid (proximal pole, waist, distal pole):
+Lunate:
+Triquetrum:
+Pisiform:
+Trapezium:
+Trapezoid:
+Capitate:
+Hamate (hook of hamate):
+
+OTHER SOFT TISSUES:
+Ganglion cysts:
+Other:
+
+IMPRESSION:
+1.

@@ -1,0 +1,47 @@
+EXAMINATION: MRI [Right / Left] Shoulder
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+Multiplanar multisequence MRI of the [right/left] shoulder performed on a [X]T magnet.
+Sequences: coronal oblique PD fat-saturated, coronal oblique T1, sagittal oblique PD fat-saturated, axial PD fat-saturated.
+
+FINDINGS:
+
+ROTATOR CUFF:
+Supraspinatus:
+Infraspinatus:
+Teres minor:
+Subscapularis:
+
+LONG HEAD OF BICEPS TENDON:
+Tendon:
+Bicipital groove:
+
+LABRUM:
+Anterior labrum:
+Posterior labrum:
+Superior labrum (SLAP region):
+
+GLENOHUMERAL JOINT:
+Joint space and alignment:
+Articular cartilage:
+Joint effusion:
+Osseous structures (humeral head, glenoid, coracoid):
+
+ACROMIOCLAVICULAR JOINT:
+Joint space:
+Osteophytes / impingement:
+
+SUBACROMIAL SPACE:
+Subacromial-subdeltoid bursa:
+Acromion morphology (Type I / II / III):
+Subacromial interval:
+
+OTHER SOFT TISSUES:
+Deltoid:
+Other findings:
+
+IMPRESSION:
+1.

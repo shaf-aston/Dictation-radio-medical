@@ -1,0 +1,70 @@
+EXAMINATION: MRI [Right / Left] Ankle and Foot
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+Multiplanar multisequence MRI of the [right/left] ankle and foot performed on a [X]T magnet.
+Sequences: coronal PD fat-saturated, sagittal PD fat-saturated, sagittal T1, axial PD fat-saturated.
+
+FINDINGS:
+
+ACHILLES TENDON:
+Morphology:
+Insertion:
+Retrocalcaneal bursa:
+
+PERONEAL TENDONS:
+Peroneus longus:
+Peroneus brevis:
+Superior peroneal retinaculum:
+Retromalleolar groove:
+
+MEDIAL TENDONS:
+Posterior tibial tendon:
+Flexor digitorum longus:
+Flexor hallucis longus:
+
+ANTERIOR TENDONS:
+Tibialis anterior:
+Extensor tendons:
+
+LATERAL LIGAMENTS:
+ATFL (anterior talofibular):
+CFL (calcaneofibular):
+PTFL (posterior talofibular):
+
+MEDIAL LIGAMENTS:
+Deltoid ligament complex:
+
+SINUS TARSI:
+
+TALAR DOME:
+Medial aspect:
+Lateral aspect:
+[Note osteochondral lesions, subchondral signal]
+
+ANKLE JOINT:
+Joint space:
+Effusion:
+Synovitis:
+Loose bodies:
+
+SUBTALAR JOINT:
+MIDFOOT AND FOREFOOT:
+
+PLANTAR FASCIA:
+Origin at calcaneus:
+Mid-substance:
+
+BONE AND BONE MARROW:
+Calcaneus:
+Talus:
+Navicular:
+Metatarsals:
+[Stress fractures, osteochondral lesions]
+
+OTHER SOFT TISSUES:
+
+IMPRESSION:
+1.

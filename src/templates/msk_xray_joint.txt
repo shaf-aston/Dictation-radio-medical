@@ -1,0 +1,37 @@
+EXAMINATION: Plain Radiograph – [Joint / Region] [Right / Left / Bilateral]
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+VIEWS: [AP / Lateral / Oblique / Weight-bearing / Stress views]
+
+FINDINGS:
+
+ALIGNMENT:
+[Describe joint alignment, any subluxation or dislocation]
+
+JOINT SPACE:
+[Describe joint space width: preserved / narrowed (mild/moderate/severe) / obliterated]
+[Distribution: medial / lateral / patellofemoral / uniform (concentric)]
+
+BONE DENSITY:
+[Normal / osteopaenic / osteoporotic]
+
+SUBCHONDRAL BONE:
+[Sclerosis / cysts / irregularity]
+
+OSTEOPHYTES:
+[Location and size of marginal osteophytes]
+
+FRACTURE:
+[No acute fracture identified. / Describe fracture: site, pattern, displacement, angulation, comminution]
+
+SOFT TISSUES:
+[Joint effusion / calcification / soft tissue swelling]
+
+OTHER FINDINGS:
+
+KELLGREN-LAWRENCE GRADING (if applicable):
+Grade:
+
+IMPRESSION:
+1.

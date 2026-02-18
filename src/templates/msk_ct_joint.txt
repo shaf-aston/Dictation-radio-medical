@@ -1,0 +1,34 @@
+EXAMINATION: CT [Joint / Region] [Right / Left / Bilateral]
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+TECHNIQUE: [Pre- / Post-contrast] CT of the [joint/region]. [Slice thickness] mm sections. [Multiplanar reformats: coronal / sagittal / 3D reconstruction.]
+
+FINDINGS:
+
+ALIGNMENT:
+[Joint congruence, subluxation, dislocation]
+
+JOINT SPACE:
+[Preserved / narrowed. Loose bodies / intra-articular fragments.]
+
+OSSEOUS STRUCTURES:
+[Cortical integrity, trabecular pattern, sclerosis, lysis, periosteal reaction]
+
+FRACTURE ASSESSMENT:
+[No acute fracture. / Describe fracture: AO/OTA classification, number of fragments, displacement, articular involvement, comminution]
+
+SUBCHONDRAL BONE:
+[Cysts, sclerosis, collapse]
+
+BONE DENSITY:
+[Normal / osteopaenic]
+
+SOFT TISSUES:
+[Calcification, soft tissue swelling, joint effusion where visible on CT]
+
+ADJACENT STRUCTURES:
+[Neurovascular structures, tendons where visible]
+
+IMPRESSION:
+1.

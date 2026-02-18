@@ -1,0 +1,40 @@
+EXAMINATION: MRI Thoracic Spine
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+Multiplanar multisequence MRI thoracic spine performed on a [X]T magnet.
+Sequences: sagittal T1, sagittal T2, sagittal STIR, axial T2 (targeted levels).
+
+FINDINGS:
+
+ALIGNMENT:
+Thoracic vertebral alignment: [Normal kyphosis / scoliosis / listhesis]
+
+VERTEBRAL BODIES:
+[Describe each level from T1 to T12 or key levels:]
+T1–T4:
+T5–T8:
+T9–T12:
+[Note marrow signal, height, Schmorl's nodes, end-plate changes, fractures, wedging]
+
+INTERVERTEBRAL DISCS:
+[Describe key levels or overall:]
+Disc hydration: [Maintained / reduced multilevel]
+Focal disc pathology:
+
+CENTRAL CANAL:
+
+FACET JOINTS:
+
+POSTERIOR ELEMENTS:
+
+SPINAL CORD:
+Morphology: [Normal calibre and outline throughout]
+Signal: [No intrinsic cord signal change identified.]
+
+PARASPINAL SOFT TISSUES:
+
+IMPRESSION:
+1.

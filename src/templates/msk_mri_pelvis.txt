@@ -1,0 +1,54 @@
+EXAMINATION: MRI Pelvis
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+Multiplanar multisequence MRI of the pelvis performed on a [X]T magnet.
+Sequences: coronal T1, coronal STIR, axial T1, axial T2, sagittal T2.
+[With gadolinium contrast if indicated.]
+
+FINDINGS:
+
+PELVIC RING AND SACRUM:
+Iliac bones:
+Sacrum and sacral foramina:
+Pubic symphysis:
+Ischiopubic rami:
+Sacroiliac joints: [See dedicated SI joint report / or describe bilaterally]
+
+FEMORAL HEADS AND PROXIMAL FEMORA:
+Right:
+Left:
+Bone marrow signal bilaterally:
+
+HIP JOINTS:
+Right:
+Left:
+
+MUSCULATURE:
+Gluteal muscles (gluteus maximus, medius, minimus):
+Iliopsoas:
+Hamstring origins (ischial tuberosity):
+Adductor origins:
+Pelvic floor muscles:
+
+PELVIC VISCERA (as visible on MSK sequences):
+Bladder:
+Uterus / Prostate:
+Bowel:
+
+LYMPH NODES:
+[No pathologically enlarged lymph nodes identified within the field of view.]
+
+NEUROVASCULAR STRUCTURES:
+Sciatic nerve:
+Other:
+
+BONE MARROW:
+[Normal bone marrow signal throughout the pelvis and proximal femora. / Describe abnormalities.]
+
+OTHER SOFT TISSUE FINDINGS:
+
+IMPRESSION:
+1.

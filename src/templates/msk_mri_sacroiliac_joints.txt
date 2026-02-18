@@ -1,0 +1,44 @@
+EXAMINATION: MRI Sacroiliac Joints
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+Dedicated MRI of the sacroiliac joints performed on a [X]T magnet.
+Sequences: coronal oblique T1, coronal oblique STIR, axial T1, axial STIR.
+[With gadolinium: coronal oblique T1 fat-saturated post-contrast.]
+
+FINDINGS:
+
+RIGHT SACROILIAC JOINT:
+Subchondral bone marrow oedema (STIR):
+Erosions:
+Sclerosis:
+Fat deposition:
+Ankylosis:
+Joint space:
+
+LEFT SACROILIAC JOINT:
+Subchondral bone marrow oedema (STIR):
+Erosions:
+Sclerosis:
+Fat deposition:
+Ankylosis:
+Joint space:
+
+OVERALL ASSESSMENT:
+SPARCC score (if calculated):
+Distribution: [Symmetric / asymmetric / unilateral]
+Activity: [Active inflammatory / chronic structural / mixed]
+Assessment for axial spondyloarthropathy:
+
+SYMPHYSIS PUBIS:
+
+SACRUM AND ILIAC BONES:
+Marrow signal:
+Fractures:
+
+PARARTICULAR SOFT TISSUES:
+
+IMPRESSION:
+1.

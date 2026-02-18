@@ -1,0 +1,58 @@
+EXAMINATION: MRI Lumbar Spine
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+Multiplanar multisequence MRI lumbar spine performed on a [X]T magnet.
+Sequences: sagittal T1, sagittal T2, sagittal STIR, axial T2 (L3/4, L4/5, L5/S1).
+[With gadolinium contrast: post-contrast sagittal and axial T1 fat-saturated.]
+
+FINDINGS:
+
+ALIGNMENT:
+Vertebral alignment: [Maintained / scoliosis / spondylolisthesis]
+Lumbar lordosis: [Normal / reduced / exaggerated]
+
+VERTEBRAL BODIES:
+T12/L1:
+L1:
+L2:
+L3:
+L4:
+L5:
+S1:
+[Describe marrow signal, height, fractures, Schmorl's nodes, end-plate changes separately if relevant]
+
+INTERVERTEBRAL DISCS:
+T12/L1:
+L1/L2:
+L2/L3:
+L3/L4:
+L4/L5:
+L5/S1:
+
+CENTRAL CANAL:
+
+NEURAL FORAMINA:
+Right:
+Left:
+
+FACET JOINTS:
+
+POSTERIOR ELEMENTS:
+Pedicles:
+Pars interarticularis:
+Posterior ligamentous complex:
+Ligamentum flavum:
+
+SPINAL CORD / CONUS:
+Conus medullaris level:
+Conus signal:
+
+CAUDA EQUINA:
+
+PARASPINAL SOFT TISSUES:
+
+IMPRESSION:
+1.

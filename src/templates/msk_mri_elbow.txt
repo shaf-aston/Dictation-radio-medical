@@ -1,0 +1,48 @@
+EXAMINATION: MRI [Right / Left] Elbow
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+Multiplanar multisequence MRI of the [right/left] elbow performed on a [X]T magnet.
+Sequences: coronal PD fat-saturated, coronal T1, sagittal PD fat-saturated, axial PD fat-saturated.
+
+FINDINGS:
+
+LATERAL STRUCTURES:
+Common extensor tendon origin (lateral epicondyle):
+Lateral collateral ligament complex (RCL, LCL, LUCL, annular ligament):
+Radiocapitellar joint:
+Capitellum (osteochondral):
+
+MEDIAL STRUCTURES:
+Common flexor tendon origin (medial epicondyle):
+Ulnar collateral ligament (UCL – anterior bundle, posterior bundle):
+Ulnar nerve (cubital tunnel):
+
+ANTERIOR STRUCTURES:
+Distal biceps tendon (insertion at radial tuberosity):
+Brachialis:
+
+POSTERIOR STRUCTURES:
+Triceps tendon (insertion at olecranon):
+Olecranon bursae:
+Olecranon:
+
+ELBOW JOINT:
+Joint space:
+Articular cartilage (humeroulnar and humeroradial):
+Joint effusion:
+Synovitis:
+Loose bodies:
+
+BONE AND BONE MARROW:
+Distal humerus:
+Radial head:
+Olecranon:
+Coronoid process:
+
+PARARTICULAR SOFT TISSUES:
+
+IMPRESSION:
+1.

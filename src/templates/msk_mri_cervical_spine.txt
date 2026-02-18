@@ -1,0 +1,58 @@
+EXAMINATION: MRI Cervical Spine
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+Multiplanar multisequence MRI cervical spine performed on a [X]T magnet.
+Sequences: sagittal T1, sagittal T2, sagittal STIR, axial T2 (targeted levels), axial GRE.
+[With gadolinium contrast if indicated.]
+
+FINDINGS:
+
+ALIGNMENT:
+Cervical vertebral alignment: [Normal lordosis / straightening / kyphosis / listhesis]
+No acute fracture or traumatic malalignment.
+
+VERTEBRAL BODIES:
+C2:
+C3:
+C4:
+C5:
+C6:
+C7:
+T1:
+[Note height, signal, end-plate changes, Modic changes]
+
+INTERVERTEBRAL DISCS:
+C2/C3:
+C3/C4:
+C4/C5:
+C5/C6:
+C6/C7:
+C7/T1:
+
+CENTRAL CANAL:
+
+NEURAL FORAMINA:
+Right:
+Left:
+
+UNCOVERTEBRAL JOINTS:
+
+FACET JOINTS:
+
+SPINAL CORD:
+Morphology:
+Signal:
+[No intrinsic cord signal change identified. / Cord signal change at level ___ in keeping with ___.]
+
+POSTERIOR ELEMENTS AND LIGAMENTS:
+Posterior longitudinal ligament:
+Ligamentum flavum:
+Interspinous ligaments:
+
+PARASPINAL SOFT TISSUES:
+
+IMPRESSION:
+1.

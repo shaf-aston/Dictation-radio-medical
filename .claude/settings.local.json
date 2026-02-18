@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"c:/Users/Shaf/Downloads/radio dictate/.venv/Scripts/python.exe\" -m py_compile app.py)",
+      "Bash(.venv/Scripts/python:*)"
+    ]
+  }
+}
