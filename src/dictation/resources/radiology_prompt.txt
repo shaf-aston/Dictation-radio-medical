@@ -1,5 +1,5 @@
 # Domain-specific Whisper initial prompt to prime vocabulary for radiology.
-# Loaded by src/core/transcriber.py. Whisper truncates from the front and keeps
+# Loaded by src/dictation/transcriber.py. Whisper truncates from the front and keeps
 # the last ~224 tokens — so the most universal terms and example phrasing
 # appear at the END of this file.
 #

@@ -22,9 +22,11 @@ Always run from the **project root**. `src.*` imports break if you run from insi
 
 ```
 src/
-├── core/
-│   ├── audio.py
-│   ├── transcriber.py
+├── dictation/                The full speech→corrected-text pipeline
+│   ├── audio.py              Recorder (sounddevice → WAV)
+│   ├── transcriber.py        faster-whisper wrapper + segment hallucination filter
+│   ├── worker.py             LiveTranscribeWorker (QThread, sliding window)
+│   ├── text_diff.py          boundary deduplication for the sliding window
 │   ├── postprocess/          Package: 10-stage correction pipeline
 │   │   ├── __init__.py       (public API)
 │   │   ├── hallucinations.py (stage 0)
@@ -34,7 +36,9 @@ src/
 │   │   ├── terminology.py    (stage 5)
 │   │   ├── medical_dict_match.py (stage 7)
 │   │   └── pipeline.py       (orchestrator)
-│   ├── text_diff.py          (boundary deduplication)
+│   └── resources/
+│       └── radiology_prompt.txt   Whisper initial prompt
+├── core/                     Shared app infrastructure (non-dictation)
 │   ├── settings.py
 │   └── logging_setup.py
 ├── ui/
@@ -49,23 +53,23 @@ src/
 │   ├── medical_dict.py
 │   ├── critical_findings.py
 │   └── macros.py
-├── workers/
-│   └── transcribe_worker.py  (QThread live transcription)
 ├── features/
 │   ├── accent_corrections.py
 │   ├── adaptive_learning.py
 │   ├── audit_log.py
 │   ├── file_manager.py
 │   └── report_manager.py
-└── templates/                (plain-text report templates)
+├── resources/
+│   └── medical_terms.txt     Wordlist for medical/medical_dict.py
+└── templates/                Plain-text report templates
 ```
 
 **Data flow:**
 ```
-Mic → Recorder (core/audio.py) → WAV (data/temp/)
-    → LiveTranscribeWorker (workers/) — polls WAV on QThread
-    → Transcriber (core/transcriber.py) — faster-whisper
-    → postprocess pipeline (core/postprocess/) — 10-stage corrections
+Mic → Recorder (dictation/audio.py) → WAV (data/temp/)
+    → LiveTranscribeWorker (dictation/worker.py) — polls WAV on QThread
+    → Transcriber (dictation/transcriber.py) — faster-whisper
+    → postprocess pipeline (dictation/postprocess/) — 10-stage corrections
     → MainWindow UI → save/export (features/report_manager.py)
 ```
 
@@ -73,15 +77,22 @@ Mic → Recorder (core/audio.py) → WAV (data/temp/)
 
 ## Module map
 
-### Core modules
+### Dictation pipeline
 
 | File | What it does |
 |------|-------------|
-| `src/core/audio.py` | `Recorder` — sounddevice InputStream → WAV; exposes RMS level for VU meter |
-| `src/core/transcriber.py` | `Transcriber` — lazy-loads Whisper, transcribes file or numpy array, filters hallucinations |
+| `src/dictation/audio.py` | `Recorder` — sounddevice InputStream → WAV; exposes RMS level for VU meter |
+| `src/dictation/transcriber.py` | `Transcriber` — lazy-loads Whisper, transcribes file or numpy array, filters hallucinations |
+| `src/dictation/worker.py` | `LiveTranscribeWorker` — sliding-window transcription, commit frontier, adaptive sleep |
+| `src/dictation/text_diff.py` | `trim_committed_tail()`, `find_overlap()` — boundary deduplication for the sliding window |
+| `src/dictation/resources/radiology_prompt.txt` | Whisper initial prompt (~200 radiology terms) |
+
+### Core (shared infrastructure)
+
+| File | What it does |
+|------|-------------|
 | `src/core/settings.py` | `Settings` — JSON persistence for user prefs (model, theme, window, etc.) |
 | `src/core/logging_setup.py` | `setup_logging()` — centralized logging configuration (called once from entry points) |
-| `src/core/text_diff.py` | `trim_committed_tail()`, `find_overlap()` — boundary deduplication for sliding-window transcription |
 
 ### Postprocessing pipeline (10 stages)
 
@@ -116,7 +127,6 @@ Mic → Recorder (core/audio.py) → WAV (data/temp/)
 | `src/medical/medical_dict.py` | Large radiology term correction dict used by postprocess fuzzy matching |
 | `src/medical/macros.py` | Loads `data/macros.json`; exposes `MACROS` dict and `REGION_ORDER` |
 | `src/medical/critical_findings.py` | `scan_for_critical_findings()` — NegEx negation parser → `CriticalFinding` list |
-| `src/workers/transcribe_worker.py` | `LiveTranscribeWorker` — sliding-window transcription, commit frontier, adaptive sleep |
 | `src/features/accent_corrections.py` | Per-accent regex tables; `apply_accent_corrections(text, accent)`, `suggest_accent()` |
 | `src/features/adaptive_learning.py` | `AdaptiveLearning` singleton — learns from edits, writes `data/learned_corrections.json` |
 | `src/features/audit_log.py` | Append-only JSON-lines audit log → `data/audit.log` (8-year retention, never auto-delete) |
@@ -152,7 +162,7 @@ debounce. User can reset all learned data from the UI.
 
 ```python
 # Always — absolute from project root
-from src.core.transcriber import Transcriber
+from src.dictation.transcriber import Transcriber
 from src.features.file_manager import temp_dir
 
 # Never — these break outside src/

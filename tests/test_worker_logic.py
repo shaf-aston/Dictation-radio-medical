@@ -9,14 +9,14 @@ from runtime_stubs import install_test_runtime_stubs
 install_test_runtime_stubs()
 
 import src.features.adaptive_learning as adaptive_learning  # noqa: E402
-import src.workers.transcribe_worker as transcribe_worker  # noqa: E402
-from src.core.postprocess import (  # noqa: E402
+import src.dictation.worker as transcribe_worker  # noqa: E402
+from src.dictation.postprocess import (  # noqa: E402
     apply_correction_commands,
     filter_hallucinations,
     postprocess_transcript,
     postprocess_transcript_with_changes,
 )
-from src.workers.transcribe_worker import (  # noqa: E402
+from src.dictation.worker import (  # noqa: E402
     LiveTranscribeWorker,
     _OVERLAP_SEC,
     _RADIOLOGY_INITIAL_PROMPT,

@@ -2,8 +2,8 @@
 
 Lazy-loads `faster-whisper` on first transcribe() to keep startup instant.
 Applies a domain-specific initial prompt (`_RADIOLOGY_INITIAL_PROMPT`, loaded
-from src/resources/radiology_prompt.txt) to prime the model's vocabulary and
-filters per-segment hallucinations before returning text.
+from src/dictation/resources/radiology_prompt.txt) to prime the model's
+vocabulary and filters per-segment hallucinations before returning text.
 """
 
 from __future__ import annotations

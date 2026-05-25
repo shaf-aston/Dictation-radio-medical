@@ -11,7 +11,7 @@ from runtime_stubs import install_test_runtime_stubs
 
 adaptive_learning, medical_dict = install_test_runtime_stubs()
 
-import src.core.postprocess.medical_dict_match as _postprocess_dict  # noqa: E402
+import src.dictation.postprocess.medical_dict_match as _postprocess_dict  # noqa: E402
 import src.core.settings as settings_module  # noqa: E402
 import src.features.file_manager as file_manager  # noqa: E402
 

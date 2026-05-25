@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse
 import io
 import logging
 
-from src.core.transcriber import Transcriber
+from src.dictation.transcriber import Transcriber
 
 # Set up simple logging
 logging.basicConfig(level=logging.INFO)

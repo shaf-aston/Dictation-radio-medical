@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.postprocess import postprocess_transcript, postprocess_transcript_with_changes
+from src.dictation.postprocess import postprocess_transcript, postprocess_transcript_with_changes
 
 
 class TestPostprocessingPipeline:

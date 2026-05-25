@@ -105,11 +105,11 @@ For architecture details, design decisions, and module API, see
 - **Templates** — drop a new `.txt` file in `src/templates/`
 - **Macros** — edit `data/macros.json`, reload with Ctrl+R
 - **Post-processing**
-  - **Terminology corrections** — edit `src/core/postprocess/terminology.py`
+  - **Terminology corrections** — edit `src/dictation/postprocess/terminology.py`
   - **Accent-specific corrections** — edit `src/features/accent_corrections.py`
-  - **Hallucinations** — edit `src/core/postprocess/hallucinations.py`
-  - **Measurements** — edit `src/core/postprocess/measurements.py`
-- **Fuzzy matching cutoff** — tune `cutoff=0.92` in `src/core/postprocess/medical_dict_match.py` (lower = more aggressive)
+  - **Hallucinations** — edit `src/dictation/postprocess/hallucinations.py`
+  - **Measurements** — edit `src/dictation/postprocess/measurements.py`
+- **Fuzzy matching cutoff** — tune `cutoff=0.92` in `src/dictation/postprocess/medical_dict_match.py` (lower = more aggressive)
 - **Medical dictionary** — add terms to `src/resources/medical_terms.txt`
 
 ## Troubleshooting

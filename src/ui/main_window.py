@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QMainWindow, QApplication, QFileDialog, QMessageBo
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 
-from src.core.audio import Recorder
+from src.dictation.audio import Recorder
 from src.core.settings import Settings
 from src.ui.styles import DARK, LIGHT
 from src.features.report_manager import (

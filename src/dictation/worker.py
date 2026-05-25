@@ -37,8 +37,8 @@ import numpy as np
 import soundfile as sf
 from PySide6.QtCore import QObject, Signal
 
-from src.core.transcriber import Transcriber, _RADIOLOGY_INITIAL_PROMPT
-from src.core.text_diff import trim_committed_tail
+from src.dictation.transcriber import Transcriber, _RADIOLOGY_INITIAL_PROMPT
+from src.dictation.text_diff import trim_committed_tail
 from src.features.adaptive_learning import get_custom_prompt_suffix
 
 logger = logging.getLogger(__name__)

@@ -111,7 +111,7 @@ from typing import Dict, List
 import numpy as np
 from PySide6.QtCore import QObject, Signal
 
-from src.core.transcriber import Transcriber
+from src.dictation.transcriber import Transcriber
 from src.features.file_manager import temp_dir
 ```
 
@@ -127,7 +127,7 @@ def _ensure_model(self) -> None:
 
 **Always absolute** from `src`:
 ```python
-from src.core.transcriber import Transcriber   # correct
+from src.dictation.transcriber import Transcriber   # correct
 from transcriber import Transcriber            # broken outside src/
 ```
 
@@ -240,7 +240,7 @@ from typing import List
 import numpy as np
 
 # --- local imports ---
-from src.core.transcriber import Transcriber
+from src.dictation.transcriber import Transcriber
 
 logger = logging.getLogger(__name__)
 

@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QThread, QTimer
 from PySide6.QtWidgets import QMessageBox
 
-from src.core.audio import Recorder
-from src.workers.transcribe_worker import LiveTranscribeWorker
+from src.dictation.audio import Recorder
+from src.dictation.worker import LiveTranscribeWorker
 from src.features.file_manager import create_temp_wav
-from src.core.postprocess import postprocess_transcript_with_changes
+from src.dictation.postprocess import postprocess_transcript_with_changes
 from src.features.accent_corrections import ACCENT_LABELS, suggest_accent
 from src.features import audit_log
 from src.medical.critical_findings import scan_for_critical_findings, format_findings_for_dialog

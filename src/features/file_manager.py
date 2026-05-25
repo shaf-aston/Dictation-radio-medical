@@ -62,7 +62,7 @@ def medical_wordlist_path() -> Path:
 
 def radiology_prompt_path() -> Path:
     """Whisper initial-prompt text fed to the model before transcription."""
-    return _project_root() / "src" / "resources" / "radiology_prompt.txt"
+    return _project_root() / "src" / "dictation" / "resources" / "radiology_prompt.txt"
 
 def macros_file() -> Path:
     """Macros JSON file"""

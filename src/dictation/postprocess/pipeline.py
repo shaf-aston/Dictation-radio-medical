@@ -24,15 +24,15 @@ from __future__ import annotations
 import difflib
 from typing import List, Tuple
 
-from src.core.postprocess.hallucinations import filter_hallucinations
-from src.core.postprocess.voice_commands import (
+from src.dictation.postprocess.hallucinations import filter_hallucinations
+from src.dictation.postprocess.voice_commands import (
     apply_correction_commands,
     apply_spoken_commands,
 )
-from src.core.postprocess.text_utils import normalize_spaces, smart_capitalize
-from src.core.postprocess.measurements import apply_measurement_standardisation
-from src.core.postprocess.terminology import apply_terminology
-from src.core.postprocess.medical_dict_match import apply_medical_dictionary_suggestions
+from src.dictation.postprocess.text_utils import normalize_spaces, smart_capitalize
+from src.dictation.postprocess.measurements import apply_measurement_standardisation
+from src.dictation.postprocess.terminology import apply_terminology
+from src.dictation.postprocess.medical_dict_match import apply_medical_dictionary_suggestions
 from src.features.accent_corrections import apply_accent_corrections
 from src.features.adaptive_learning import apply_learned_corrections
 

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QAction, QKeySequence
 
-from src.core.transcriber import SUPPORTED_MODELS
+from src.dictation.transcriber import SUPPORTED_MODELS
 from src.features.accent_corrections import ACCENT_LABELS
 from src.medical import macros
 from src.features.file_manager import templates_dir
