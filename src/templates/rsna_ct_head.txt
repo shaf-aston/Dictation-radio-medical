@@ -1,0 +1,62 @@
+EXAMINATION: CT Head [without / without and with contrast]
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+[Non-contrast / contrast-enhanced] CT of the head.
+[Bone algorithm reconstructions performed: yes / no].
+
+FINDINGS:
+
+HAEMORRHAGE:
+Intraparenchymal haemorrhage: None identified.
+Subdural haematoma: None identified.
+Epidural haematoma: None identified.
+Subarachnoid haemorrhage: None identified.
+Intraventricular haemorrhage: None identified.
+
+BRAIN PARENCHYMA:
+Grey-white matter differentiation: Preserved.
+Cerebral hemispheres:
+Cerebellar hemispheres:
+Brainstem:
+Basal ganglia and thalami:
+
+ISCHAEMIA:
+No established infarct.
+No loss of grey-white differentiation to suggest acute ischaemia.
+[ASPECTS score if applicable: ]
+
+VENTRICLES AND CISTERNS:
+Ventricular system: Normal in size and morphology.
+Basal cisterns:
+Midline shift: None.
+
+EXTRA-AXIAL SPACES:
+Sulci: Normal for age.
+Subdural / epidural spaces:
+
+POSTERIOR FOSSA:
+Cerebellum:
+Brainstem:
+Fourth ventricle:
+
+SKULL AND SCALP:
+Calvarium: No acute fracture.
+Skull base:
+Scalp soft tissues:
+
+ORBITS (visualised):
+Globes:
+Extraocular muscles:
+
+PARANASAL SINUSES AND MASTOIDS:
+Sinuses:
+Mastoid air cells:
+
+POST-CONTRAST (if administered):
+No abnormal enhancement.
+
+IMPRESSION:
+1.

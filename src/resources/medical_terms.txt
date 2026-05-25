@@ -17104,6 +17104,9 @@ capuride
 caput
 Capzasin
 CAR
+CAR-T
+CAR-T cell
+CAR-T cells
 Carabelli
 Carabelli's
 Carac
@@ -19251,6 +19254,9 @@ check
 checkbite
 checker
 checkerboard
+checkpoint
+checkpoint inhibitor
+checkpoint inhibitors
 checkup
 chediak
 Chédiak
@@ -24321,6 +24327,8 @@ crippling
 crisantaspase
 crises
 crisis
+CRISPR
+CRISPR-Cas9
 crispation
 crispus
 crista
@@ -28807,6 +28815,9 @@ digilanid
 digilanide
 digit
 digital
+digital biomarker
+digital biomarkers
+digital health
 digitales
 digitalin
 Digitaline
@@ -40032,6 +40043,7 @@ gencold
 gendecon
 gender
 gene
+gene editing
 genearch
 genebid
 GeneChip
@@ -56621,6 +56633,7 @@ lonchothrix
 Londe
 Lone
 Long
+long COVID
 longa
 longan
 longbeak
@@ -60287,6 +60300,7 @@ MHC
 MHD
 mho
 MHSC
+mHealth
 Miacalcin
 miana
 Mianeh
@@ -61040,6 +61054,7 @@ mirincamycin
 mirror
 mirtazapine
 miryachit
+MIS-C
 misanthropia
 misanthropy
 miscarriage
@@ -78965,6 +78980,8 @@ reaggregation
 reagin
 reaginic
 real
+real-world data
+real-world evidence
 Realgar
 realimentation
 reality
@@ -80707,6 +80724,7 @@ Robitet
 robitussin
 Robles'
 Robo
+robotic-assisted
 Robson
 Robson's
 robust
@@ -95236,6 +95254,7 @@ valspodar
 Valstar
 Valtrex
 value
+value-based care
 values
 valva
 valvae
@@ -96989,6 +97008,8 @@ wean
 weaning
 weanling
 wear
+wearable
+wearables
 weather
 web
 webbed

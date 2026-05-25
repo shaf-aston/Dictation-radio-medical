@@ -1,0 +1,45 @@
+EXAMINATION: Ultrasound Pelvis – Female [Transabdominal / Transvaginal / Combined]
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+LMP:
+
+TECHNIQUE:
+[Transabdominal / Transvaginal / Combined] pelvic ultrasound.
+Bladder: [Full / Partially full / Empty].
+
+FINDINGS:
+
+UTERUS:
+Position: [Anteverted / Retroverted / Axial].
+Size: X × X × X cm.
+Myometrium: [Homogeneous / Heterogeneous].
+Fibroids: [None identified / single / multiple – describe location and size].
+Endometrium:
+  Thickness: X mm (single layer / double layer).
+  Appearance: [Normal / Describe].
+  [Phase: proliferative / secretory / postmenopausal].
+Cervix:
+
+ADNEXA:
+Right ovary:
+  Visualised: [Yes / No].
+  Size: X × X × X cm.
+  Morphology: [Normal / Describe].
+  Follicles: [Present / Absent].
+Right adnexal mass / free fluid: None.
+
+Left ovary:
+  Visualised: [Yes / No].
+  Size: X × X × X cm.
+  Morphology: [Normal / Describe].
+  Follicles: [Present / Absent].
+Left adnexal mass / free fluid: None.
+
+POUCH OF DOUGLAS:
+Free fluid: [None identified / Small / Moderate / Large].
+
+BLADDER (transabdominal):
+
+IMPRESSION:
+1.

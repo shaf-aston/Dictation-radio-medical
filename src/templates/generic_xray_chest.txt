@@ -1,0 +1,30 @@
+EXAMINATION: Chest Radiograph [PA / AP / Portable]
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+[PA / AP] chest radiograph.
+
+FINDINGS:
+
+CARDIOMEDIASTINAL CONTOURS:
+Heart size:
+Mediastinal contour:
+Hila:
+Aortic knuckle:
+
+LUNGS AND PLEURA:
+Lung volumes:
+Right lung:
+Left lung:
+Pleural spaces: No pleural effusion or pneumothorax.
+
+OSSEOUS AND SOFT TISSUES:
+Bony thorax:
+Soft tissues:
+
+LINES AND TUBES (if applicable):
+
+IMPRESSION:
+1.

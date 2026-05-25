@@ -1,0 +1,61 @@
+EXAMINATION: CT Abdomen and Pelvis [with / without / with and without contrast]
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+[Portal venous phase / Multiphase / Non-contrast] CT of the abdomen and pelvis.
+IV contrast administered: [yes / no / contraindicated].
+Oral contrast: [yes / no].
+
+FINDINGS:
+
+LIVER:
+Size:
+Parenchyma:
+Focal lesions:
+Biliary system:
+Portal vein:
+
+GALLBLADDER:
+
+PANCREAS:
+
+SPLEEN:
+
+ADRENAL GLANDS:
+Right:
+Left:
+
+KIDNEYS AND URETERS:
+Right kidney:
+Left kidney:
+Ureters:
+
+BLADDER:
+
+BOWEL:
+Small bowel:
+Large bowel:
+Appendix:
+
+PERITONEUM AND RETROPERITONEUM:
+Free fluid:
+Free air:
+Lymph nodes:
+
+VASCULATURE:
+Aorta:
+IVC:
+
+PELVIS (if applicable):
+Uterus / Prostate:
+Ovaries / Seminal vesicles:
+Pelvic lymph nodes:
+
+MUSCULOSKELETAL:
+Visualised bones:
+Soft tissues:
+
+IMPRESSION:
+1.

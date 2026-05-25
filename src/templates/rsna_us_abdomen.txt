@@ -1,0 +1,59 @@
+EXAMINATION: Ultrasound Abdomen [Upper / Complete]
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+Greyscale and colour Doppler ultrasound of the abdomen.
+[Patient fasting for X hours: yes / no].
+[Technically limited by: body habitus / bowel gas / tenderness].
+
+FINDINGS:
+
+LIVER:
+Size: [Normal / Enlarged – X cm in craniocaudal dimension].
+Echogenicity: [Normal / Increased (fatty infiltration) / Decreased / Heterogeneous].
+Surface: [Smooth / Nodular].
+Focal lesions: [None identified / describe lesion].
+Biliary: Intrahepatic bile ducts not dilated. CBD measures X mm.
+
+GALLBLADDER:
+[Visualised / Not visualised (absent / obscured by gas)].
+Wall thickness: [Normal (<3 mm) / Thickened at X mm].
+Gallstones: [None identified / single / multiple].
+Murphy's sign: [Negative / Positive / Not assessed].
+Pericholecystic fluid: None.
+
+COMMON BILE DUCT:
+Diameter: X mm. [Normal / Dilated].
+
+PANCREAS:
+[Visualised in full / Partially obscured by bowel gas].
+Size and echogenicity:
+Pancreatic duct:
+Focal lesions:
+
+SPLEEN:
+Size: [Normal / Enlarged – X cm in long axis].
+Echogenicity:
+Focal lesions: None identified.
+
+KIDNEYS:
+Right kidney: X × X cm.
+  Cortical echogenicity:
+  Collecting system:
+  Hydronephrosis: None.
+Left kidney: X × X cm.
+  Cortical echogenicity:
+  Collecting system:
+  Hydronephrosis: None.
+
+AORTA:
+Diameter: X mm. [Normal (<3 cm) / Aneurysmal].
+[Doppler waveform assessed: yes / no].
+
+ASCITES:
+[None identified / Small / Moderate / Large].
+
+IMPRESSION:
+1.

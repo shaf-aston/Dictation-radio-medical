@@ -1,0 +1,65 @@
+EXAMINATION: CT Kidney Ureter Bladder (CT KUB) – Non-contrast
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+Non-contrast CT of the abdomen and pelvis (urinary tract stone protocol).
+Coronal and sagittal reformats obtained.
+
+FINDINGS:
+
+KIDNEYS:
+Right kidney:
+  Size:
+  Parenchymal thickness:
+  Collecting system:
+  Calculi: [None identified / calculus at location, measuring X mm].
+  Perinephric fat:
+  Hydronephrosis: [None / Mild / Moderate / Severe].
+Left kidney:
+  Size:
+  Parenchymal thickness:
+  Collecting system:
+  Calculi: [None identified / calculus at location, measuring X mm].
+  Perinephric fat:
+  Hydronephrosis: [None / Mild / Moderate / Severe].
+
+URETERS:
+Right ureter:
+Left ureter:
+Ureteric calculi: [None identified / calculus at location, measuring X mm].
+Ureteric dilatation: [None / Right / Left].
+
+BLADDER:
+Wall:
+Contents:
+Bladder calculi: None identified.
+
+PROSTATE / UTERUS (if visualised):
+
+ADRENAL GLANDS:
+Right:
+Left:
+
+LIVER, SPLEEN AND PANCREAS (partially visualised):
+
+BOWEL:
+
+LYMPH NODES:
+
+AORTA:
+
+MUSCULOSKELETAL:
+Visualised bones: No acute bony abnormality.
+
+ADDITIONAL INCIDENTAL FINDINGS:
+
+IMPRESSION:
+1.
+
+Stone measurement summary (if relevant):
+  Location:
+  Size (maximum dimension):
+  CT attenuation (HU):
+  Skin-to-stone distance:

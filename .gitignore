@@ -5,3 +5,17 @@ __pycache__/
 *.wav
 *.log
 .cache/
+
+# Claude Code temp files
+tmpclaude-*
+
+# Runtime data (user-specific)
+data/
+autosave/
+dictation_settings.json
+
+.claude
+.pytest_cache/
+.pytest_temp/
+.mypy_cache/
+.ruff_cache/

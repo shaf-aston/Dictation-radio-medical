@@ -1,0 +1,51 @@
+EXAMINATION: MRI Brain [without / without and with contrast]
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+Multiplanar multisequence MRI brain.
+Sequences: axial DWI/ADC, axial FLAIR, axial T2, axial T1, axial GRE/SWI, coronal T2, sagittal T1.
+[Gadolinium contrast administered: yes / no].
+
+FINDINGS:
+
+DIFFUSION-WEIGHTED IMAGING:
+No restricted diffusion to suggest acute infarction.
+
+BRAIN PARENCHYMA:
+Cerebral hemispheres:
+Cerebellar hemispheres:
+Brainstem:
+White matter signal:
+Grey-white matter differentiation:
+
+HAEMORRHAGE:
+No intracranial haemorrhage on GRE/SWI.
+
+EXTRA-AXIAL SPACES:
+Subdural / Epidural:
+Subarachnoid spaces:
+
+VENTRICLES AND MIDLINE:
+Ventricular system:
+Midline shift:
+
+POSTERIOR FOSSA:
+
+VASCULAR:
+Major flow voids:
+
+SKULL BASE AND CALVARIUM:
+Bony calvarium:
+Skull base:
+
+ORBITS (if visualised):
+
+SINUSES AND MASTOIDS (if visualised):
+
+POST-CONTRAST (if administered):
+No abnormal enhancement.
+
+IMPRESSION:
+1.

@@ -1,0 +1,62 @@
+EXAMINATION: CT Pulmonary Angiography (CTPA)
+DATE:
+CLINICAL INDICATION:
+COMPARISON:
+
+TECHNIQUE:
+CT pulmonary angiography performed following IV administration of iodinated contrast.
+Technical adequacy: [Diagnostic / Limited by motion / Limited by suboptimal contrast opacification].
+
+FINDINGS:
+
+PULMONARY ARTERIES:
+Main pulmonary artery:
+Right pulmonary artery:
+  Right interlobar artery:
+  Right upper lobe arteries:
+  Right lower lobe arteries:
+Left pulmonary artery:
+  Left interlobar artery:
+  Left upper lobe arteries:
+  Left lower lobe arteries:
+
+PULMONARY EMBOLISM:
+[No filling defect identified to suggest pulmonary embolism. /
+Filling defect(s) identified within the [location] pulmonary artery/arteries,
+consistent with acute pulmonary embolism.]
+
+Right heart strain: [No evidence of / Evidence of] right heart strain.
+  RV:LV ratio:
+  Interventricular septal morphology:
+  Contrast reflux into IVC: [absent / present].
+
+LUNGS:
+Parenchyma:
+Pulmonary infarction / consolidation:
+
+PLEURA:
+Pleural effusion: [None / Right / Left / Bilateral].
+Pneumothorax: None.
+
+MEDIASTINUM AND HILUM:
+Lymph nodes:
+Mediastinal structures:
+
+PERICARDIUM:
+
+AORTA:
+
+OSSEOUS STRUCTURES:
+
+IMPRESSION:
+1.
+
+Wells Score (if clinically applicable):
+  Clinical signs/symptoms of DVT:
+  PE most likely diagnosis:
+  Heart rate > 100 bpm:
+  Immobilisation / surgery in past 4 weeks:
+  Previous DVT/PE:
+  Haemoptysis:
+  Malignancy:
+  Total Wells score:

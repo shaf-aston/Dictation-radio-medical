@@ -2,32 +2,37 @@
 Report management: auto-save, plain-text save, and Word (.docx) export.
 Word export requires:  pip install python-docx
 """
-import os
 import logging
+import os
 from datetime import datetime
 from typing import Optional
+
+from src.features.file_manager import autosave_dir
 
 logger = logging.getLogger(__name__)
 
 try:
     from docx import Document
-    from docx.shared import Pt, Inches, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Inches, Pt, RGBColor
+
     DOCX_AVAILABLE = True
 except ImportError:
     DOCX_AVAILABLE = False
-    logger.warning("python-docx not installed – Word export unavailable. Run: pip install python-docx")
+    logger.warning(
+        "python-docx not installed – Word export unavailable. "
+        "Run: pip install python-docx"
+    )
 
-
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
-
-def get_autosave_dir() -> str:
-    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    path = os.path.join(base, "autosave")
-    os.makedirs(path, exist_ok=True)
-    return path
+# Section headers for Word export formatting (avoid generic words that could match body text)
+_SECTION_HEADERS = {
+    "TECHNIQUE", "FINDINGS", "IMPRESSION", "CONCLUSION",
+    "CLINICAL INDICATION", "CLINICAL DETAILS", "COMPARISON",
+    "TECHNIQUE:", "FINDINGS:", "IMPRESSION:", "CONCLUSION:",
+    "CLINICAL INDICATION:", "CLINICAL DETAILS:", "COMPARISON:",
+    # RSNA-style section headers
+    "EXAMINATION", "EXAMINATION:",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +47,7 @@ def autosave_report(text: str, patient_info: dict) -> Optional[str]:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         pid = (patient_info.get("id") or "unknown").strip().replace(" ", "_") or "unknown"
         filename = f"dictation_{pid}_{ts}.txt"
-        path = os.path.join(get_autosave_dir(), filename)
+        path = os.path.join(str(autosave_dir()), filename)
         with open(path, "w", encoding="utf-8") as f:
             f.write(_format_plain_text(text, patient_info))
         return path
@@ -65,12 +70,12 @@ def _format_plain_text(text: str, patient_info: dict) -> str:
     header = [
         "RADIOLOGY REPORT",
         "=" * 64,
-        f"Patient:      {patient_info.get('name', '')}",
-        f"Patient ID:   {patient_info.get('id', '')}",
-        f"Date of Birth:{patient_info.get('dob', '')}",
-        f"Study Date:   {patient_info.get('study_date', '')}",
-        f"Referring:    {patient_info.get('referring', '')}",
-        f"Accession #:  {patient_info.get('accession', '')}",
+        f"Patient:       {patient_info.get('name', '')}",
+        f"Patient ID:    {patient_info.get('id', '')}",
+        f"Date of Birth: {patient_info.get('dob', '')}",
+        f"Study Date:    {patient_info.get('study_date', '')}",
+        f"Referring:     {patient_info.get('referring', '')}",
+        f"Accession #:   {patient_info.get('accession', '')}",
         "=" * 64,
         "",
     ]
@@ -80,7 +85,7 @@ def _format_plain_text(text: str, patient_info: dict) -> str:
         f"Reported: {now}",
         "Reporting Radiologist: _________________________________",
     ]
-    return "\n".join(header) + text + "\n".join(footer)
+    return "\n".join(header) + "\n" + text + "\n" + "\n".join(footer)
 
 
 # ---------------------------------------------------------------------------
@@ -126,13 +131,6 @@ def export_to_word(path: str, text: str, patient_info: dict) -> None:
     doc.add_paragraph()  # spacer
 
     # ---- Report body ----
-    _SECTION_HEADERS = {
-        "TECHNIQUE", "FINDINGS", "IMPRESSION", "CONCLUSION",
-        "CLINICAL INDICATION", "CLINICAL DETAILS", "COMPARISON",
-        "TECHNIQUE:", "FINDINGS:", "IMPRESSION:", "CONCLUSION:",
-        "CLINICAL INDICATION:", "CLINICAL DETAILS:", "COMPARISON:",
-    }
-
     for line in text.split("\n"):
         stripped = line.strip()
         if not stripped:
@@ -143,7 +141,7 @@ def export_to_word(path: str, text: str, patient_info: dict) -> None:
         # Detect section headers: all-caps words or known headers ending with ':'
         is_header = (
             upper in _SECTION_HEADERS
-            or (stripped.endswith(":") and stripped.upper() == stripped and len(stripped.split()) <= 4)
+            or (stripped.endswith(":") and stripped.upper() == stripped and len(stripped.split()) <= 5)
             or any(upper.startswith(h) for h in _SECTION_HEADERS)
         )
 
