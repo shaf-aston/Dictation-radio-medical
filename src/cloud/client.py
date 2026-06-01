@@ -1,0 +1,200 @@
+"""Lightning AI REST client.
+
+Wraps the Lightning AI HTTP API for the four operations the app needs: upload a
+training batch, submit a training job, poll job status, and download the
+resulting model artefact. The REST surface (rather than the heavier SDK or SSH)
+keeps this dependency-light and firewall-friendly — only ``httpx`` is required,
+which the project already ships.
+
+Credentials: the API key is read from the OS keychain via :mod:`keyring` and is
+never written to ``dictation_settings.json`` or any log. The project id (not a
+secret) lives in settings.
+
+Note on endpoints: Lightning AI's exact REST paths evolve; they are centralised
+as constants here so a future API change is a one-file edit. Job submission is
+modelled as "create a job from a script + args"; adapt the payload in
+``submit_training_job`` to match the deployed Lightning AI Jobs API.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Optional
+
+from src.cloud.exceptions import AuthError, CloudError, QuotaError
+
+logger = logging.getLogger(__name__)
+
+_KEYRING_SERVICE = "radio-dictate"
+_KEYRING_KEY = "lightning_api_key"
+_BASE_URL = "https://lightning.ai/api/v1"
+_TIMEOUT = 60.0
+
+
+def store_api_key(api_key: str) -> None:
+    """Persist the Lightning AI API key in the OS keychain."""
+    import keyring
+    keyring.set_password(_KEYRING_SERVICE, _KEYRING_KEY, api_key)
+    logger.info("Lightning AI API key stored in OS keychain")
+
+
+def get_api_key() -> Optional[str]:
+    """Retrieve the API key from the OS keychain, or None if unset."""
+    try:
+        import keyring
+        return keyring.get_password(_KEYRING_SERVICE, _KEYRING_KEY)
+    except Exception as exc:
+        logger.warning("Could not read API key from keychain: %s", exc)
+        return None
+
+
+def clear_api_key() -> None:
+    """Remove the stored API key from the OS keychain."""
+    try:
+        import keyring
+        keyring.delete_password(_KEYRING_SERVICE, _KEYRING_KEY)
+    except Exception:
+        pass
+
+
+class LightningAIClient:
+    """Minimal REST wrapper for Lightning AI training jobs."""
+
+    def __init__(self, project_id: str, api_key: Optional[str] = None,
+                 base_url: str = _BASE_URL) -> None:
+        self.project_id = project_id
+        self._api_key = api_key or get_api_key()
+        self._base_url = base_url.rstrip("/")
+        if not self._api_key:
+            raise AuthError("No Lightning AI API key configured.")
+
+    # ------------------------------------------------------------------
+    # HTTP plumbing
+    # ------------------------------------------------------------------
+
+    def _headers(self) -> dict:
+        return {
+            "Authorization": f"Bearer {self._api_key}",
+            "Accept": "application/json",
+        }
+
+    def _request(self, method: str, path: str, **kwargs):
+        import httpx
+        url = f"{self._base_url}{path}"
+        try:
+            with httpx.Client(timeout=_TIMEOUT) as client:
+                resp = client.request(method, url, headers=self._headers(), **kwargs)
+        except httpx.HTTPError as exc:
+            raise CloudError(f"Network error calling {path}: {exc}") from exc
+        if resp.status_code in (401, 403):
+            raise AuthError(f"Authentication rejected by Lightning AI ({resp.status_code}).")
+        if resp.status_code == 429:
+            raise QuotaError("Lightning AI rate limit / quota exceeded.")
+        if resp.status_code >= 400:
+            raise CloudError(f"Lightning AI error {resp.status_code}: {resp.text[:200]}")
+        return resp
+
+    def check_connectivity(self) -> bool:
+        """Lightweight reachability + auth probe."""
+        try:
+            self._request("GET", f"/projects/{self.project_id}")
+            return True
+        except CloudError as exc:
+            logger.warning("Connectivity check failed: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
+    # Data upload
+    # ------------------------------------------------------------------
+
+    def upload_training_data(self, archive_path: Path) -> str:
+        """Upload a batch archive to Lightning storage; return its cloud URL."""
+        archive_path = Path(archive_path)
+        with open(archive_path, "rb") as fh:
+            files = {"file": (archive_path.name, fh, "application/gzip")}
+            resp = self._request(
+                "POST",
+                f"/projects/{self.project_id}/storage/upload",
+                files=files,
+            )
+        data = resp.json()
+        url = data.get("url") or data.get("path")
+        if not url:
+            raise CloudError("Upload succeeded but no storage URL returned.")
+        logger.info("Uploaded %s → %s", archive_path.name, url)
+        return url
+
+    # ------------------------------------------------------------------
+    # Training jobs
+    # ------------------------------------------------------------------
+
+    def submit_training_job(
+        self, batch_id: str, data_url: str, base_model: str,
+        lora_rank: int = 8, epochs: int = 5,
+    ) -> str:
+        """Submit a fine-tuning job; return the Lightning job id."""
+        payload = {
+            "name": f"radio-dictate-{batch_id}",
+            "entrypoint": "scripts/lightning/train_whisper.py",
+            "compute": {"type": "gpu", "name": "A10G"},
+            "args": {
+                "base-model": base_model,
+                "batch-id": batch_id,
+                "data-url": data_url,
+                "lora-rank": lora_rank,
+                "epochs": epochs,
+                "output-path": f"models/{batch_id}/",
+            },
+        }
+        resp = self._request(
+            "POST", f"/projects/{self.project_id}/jobs", json=payload
+        )
+        job_id = resp.json().get("id") or resp.json().get("job_id")
+        if not job_id:
+            raise CloudError("Job submission returned no job id.")
+        logger.info("Submitted training job %s for batch %s", job_id, batch_id)
+        return job_id
+
+    def get_job_status(self, job_id: str) -> dict:
+        """Return ``{status, progress, error, artifact_url}`` for a job.
+
+        ``status`` is normalised to one of: queued, running, completed, failed.
+        """
+        resp = self._request("GET", f"/projects/{self.project_id}/jobs/{job_id}")
+        data = resp.json()
+        raw = (data.get("status") or "").lower()
+        status = {
+            "pending": "queued", "queued": "queued",
+            "running": "running", "in_progress": "running",
+            "completed": "completed", "succeeded": "completed", "success": "completed",
+            "failed": "failed", "error": "failed", "cancelled": "failed",
+        }.get(raw, raw or "queued")
+        return {
+            "status": status,
+            "progress": data.get("progress"),
+            "error": data.get("error"),
+            "artifact_url": data.get("artifact_url") or data.get("artifacts_url"),
+        }
+
+    # ------------------------------------------------------------------
+    # Artefact download
+    # ------------------------------------------------------------------
+
+    def download_artifact(self, artifact_url: str, dest_dir: Path) -> Path:
+        """Download a model artefact archive and return the local archive path."""
+        import httpx
+        dest_dir = Path(dest_dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / "model_artifact.tar.gz"
+        try:
+            with httpx.Client(timeout=None) as client:
+                with client.stream("GET", artifact_url, headers=self._headers()) as resp:
+                    resp.raise_for_status()
+                    with open(dest, "wb") as fh:
+                        for chunk in resp.iter_bytes(chunk_size=1 << 20):
+                            fh.write(chunk)
+        except httpx.HTTPError as exc:
+            raise CloudError(f"Artifact download failed: {exc}") from exc
+        logger.info("Downloaded artifact → %s", dest)
+        return dest

@@ -123,9 +123,18 @@ class AdaptiveLearning:
             self._word_corrections[wrong] = correct
             self._dirty = True
             self._rebuild_patterns()
-        
+
         logger.debug("Learned correction: '%s' → '%s'", wrong, correct)
         self._maybe_save()
+
+        # Forward to the cloud training collector (no-op unless the user has
+        # opted in). Kept as a lazy, fire-and-forget call so this module never
+        # hard-depends on the training/cloud subsystem.
+        try:
+            from src.training.collector import get_correction_collector
+            get_correction_collector().record_text_correction(wrong, correct)
+        except Exception:
+            pass
     
     def learn_term(self, term: str) -> None:
         """Add a term to the custom vocabulary (protects from 'correction')."""

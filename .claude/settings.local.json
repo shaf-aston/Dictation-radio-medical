@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Read(//c/c/Users/Shaf/Downloads/Final Year Project pack folder/Sales roleplay chatbot/**)",
-      "Bash(*)"
-    ],
-    "deny": ["Bash(rm *)", "Bash(rmdir *)", "Bash(del *)", "Bash(erase *)"]
-  }
-}

@@ -23,12 +23,12 @@ class TestPlainTextFormatting:
     """The plain-text header should include every patient field and the body."""
 
     def test_header_contains_each_patient_field(self) -> None:
-        out = report_manager._format_plain_text(BODY, PATIENT)
+        out = report_manager.format_plain_text_report(BODY, PATIENT)
         for value in PATIENT.values():
             assert value in out
 
     def test_body_appears_after_header(self) -> None:
-        out = report_manager._format_plain_text(BODY, PATIENT)
+        out = report_manager.format_plain_text_report(BODY, PATIENT)
         assert "FINDINGS:" in out
         assert "RADIOLOGY REPORT" in out
         assert out.index("RADIOLOGY REPORT") < out.index("FINDINGS:")

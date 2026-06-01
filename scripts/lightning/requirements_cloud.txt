@@ -1,0 +1,13 @@
+# Dependencies for the Lightning AI training environment ONLY.
+# These are NOT installed locally — the local app uses faster-whisper for
+# inference. Install these inside the Lightning AI Studio / job image.
+lightning>=2.3
+torch>=2.2
+transformers>=4.40
+peft>=0.11            # LoRA adapters — small datasets, avoids catastrophic forgetting
+datasets>=2.19
+accelerate>=0.30
+ctranslate2>=4.0      # for the post-training CT2 conversion
+soundfile>=0.12
+librosa>=0.10         # resampling audio clips to 16kHz for Whisper
+jiwer>=3.0            # word error rate on the held-out validation split

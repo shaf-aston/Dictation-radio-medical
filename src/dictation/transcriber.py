@@ -9,7 +9,9 @@ vocabulary and filters per-segment hallucinations before returning text.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.features.file_manager import radiology_prompt_path
 
@@ -48,6 +50,9 @@ class Transcriber:
         compute_type: ctranslate2 quantisation; auto-selected if None.
         use_msk_prompt: Inject the radiology initial prompt before each
             transcription.
+        model_path: Optional local CTranslate2 model directory (a fine-tuned
+            model downloaded from Lightning AI). When set it overrides
+            ``model_size`` — faster-whisper loads the model straight from disk.
     """
 
     def __init__(
@@ -56,11 +61,13 @@ class Transcriber:
         device: str = "auto",
         compute_type: Optional[str] = None,
         use_msk_prompt: bool = True,
+        model_path: Optional[Union[str, Path]] = None,
     ) -> None:
         self.model_size = model_size
         self.device = device
         self.compute_type = compute_type
         self.use_msk_prompt = use_msk_prompt
+        self.model_path = str(model_path) if model_path else None
         self._model: Optional[Any] = None  # WhisperModel, loaded lazily
 
     # ------------------------------------------------------------------
@@ -70,7 +77,8 @@ class Transcriber:
     def _ensure_model(self) -> None:
         if self._model is not None:
             return
-        
+
+        t_start = time.time()
         # Lazy import: only load heavy ctranslate2 dependency when first needed
         from faster_whisper import WhisperModel
 
@@ -80,6 +88,10 @@ class Transcriber:
             else ["int8", "float32"]
         )
 
+        # A fine-tuned model directory is passed verbatim to faster-whisper,
+        # which accepts a local path in place of a named model size.
+        model_ref = self.model_path or self.model_size
+
         last_err: Optional[Exception] = None
         for ct in compute_types:
             if ct is None:
@@ -87,20 +99,21 @@ class Transcriber:
             try:
                 logger.info(
                     "Loading Whisper model: %s  device=%s  compute_type=%s",
-                    self.model_size, self.device, ct,
+                    model_ref, self.device, ct,
                 )
                 self._model = WhisperModel(
-                    self.model_size, device=self.device, compute_type=ct
+                    model_ref, device=self.device, compute_type=ct
                 )
                 self.compute_type = ct
-                logger.info("Model loaded successfully with compute_type=%s", ct)
+                elapsed = time.time() - t_start
+                logger.info("Model loaded successfully with compute_type=%s [%.2fs]", ct, elapsed)
                 return
             except Exception as exc:
                 logger.warning("Failed to load with compute_type=%s: %s", ct, exc)
                 last_err = exc
 
         raise RuntimeError(
-            f"Failed to load Whisper model '{self.model_size}'. Last error: {last_err}"
+            f"Failed to load Whisper model '{model_ref}'. Last error: {last_err}"
         )
 
     # ------------------------------------------------------------------
@@ -161,10 +174,12 @@ class Transcriber:
             temperature=[0.0, 0.2, 0.4, 0.6, 0.8],
         )
 
+        t_transcribe = time.time()
         try:
             segments_gen, info = self._model.transcribe(audio, **kwargs)
-        except Exception:
-            # VAD may fail on some systems – retry without it
+        except Exception as exc:
+            logger.warning("Transcription failed (vad_filter=%s): %s — retrying without VAD",
+                           kwargs.get("vad_filter"), exc)
             kwargs["vad_filter"] = False
             segments_gen, info = self._model.transcribe(audio, **kwargs)
 
@@ -195,6 +210,8 @@ class Transcriber:
             parts.append(seg_text)
             prev_end = seg.end
 
+        elapsed = time.time() - t_transcribe
+        logger.info("Transcription [%.2fs]", elapsed)
         return "".join(parts).strip(), seg_list
 
 

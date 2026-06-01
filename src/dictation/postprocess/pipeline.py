@@ -22,6 +22,8 @@ Stage order
 from __future__ import annotations
 
 import difflib
+import logging
+import time
 from typing import List, Tuple
 
 from src.dictation.postprocess.hallucinations import filter_hallucinations
@@ -35,6 +37,9 @@ from src.dictation.postprocess.terminology import apply_terminology
 from src.dictation.postprocess.medical_dict_match import apply_medical_dictionary_suggestions
 from src.features.accent_corrections import apply_accent_corrections
 from src.features.adaptive_learning import apply_learned_corrections
+from src.dictation.postprocess.analysis import PipelineAnalyzer
+
+logger = logging.getLogger(__name__)
 
 
 def postprocess_transcript(text: str, accent: str = "neutral") -> str:
@@ -49,16 +54,32 @@ def postprocess_transcript(text: str, accent: str = "neutral") -> str:
     Returns:
         Cleaned, terminology-corrected, capitalised text.
     """
-    text = filter_hallucinations(text)
-    text = apply_correction_commands(text)
-    text = apply_spoken_commands(text)
-    text = normalize_spaces(text)
-    text = apply_measurement_standardisation(text)
-    text = apply_terminology(text)
-    text = apply_accent_corrections(text, accent)
-    text = apply_medical_dictionary_suggestions(text)
-    text = apply_learned_corrections(text)
-    text = smart_capitalize(text)
+    t_start = time.time()
+    analyzer = PipelineAnalyzer()
+    analyzer.record_input(text)
+
+    stages = [
+        ("filter_hallucinations", filter_hallucinations, None),
+        ("apply_correction_commands", apply_correction_commands, None),
+        ("apply_spoken_commands", apply_spoken_commands, None),
+        ("normalize_spaces", normalize_spaces, None),
+        ("apply_measurement_standardisation", apply_measurement_standardisation, None),
+        ("apply_terminology", apply_terminology, None),
+        ("apply_accent_corrections", apply_accent_corrections, accent),
+        ("apply_medical_dictionary_suggestions", apply_medical_dictionary_suggestions, None),
+        ("apply_learned_corrections", apply_learned_corrections, None),
+        ("smart_capitalize", smart_capitalize, None),
+    ]
+
+    for stage_name, func, extra_arg in stages:
+        stage_start = time.time()
+        text = func(text, extra_arg) if extra_arg else func(text)
+        stage_duration = time.time() - stage_start
+        analyzer.record_stage(stage_name, text, stage_duration)
+
+    elapsed = time.time() - t_start
+    analyzer.save_analysis(accent)
+    logger.info("Post-processing [%.2fs]", elapsed)
     return text
 
 
@@ -71,6 +92,7 @@ def postprocess_transcript_with_changes(
         Tuple of ``(processed_text, changes)`` where ``changes`` lists up to
         eight ``"orig" → "repl"`` substitutions for the corrections banner.
     """
+    t_start = time.time()
     original_words = text.split()
     processed = postprocess_transcript(text, accent)
     processed_words = processed.split()
@@ -88,4 +110,7 @@ def postprocess_transcript_with_changes(
         if len(changes) >= 8:
             break
 
+    elapsed = time.time() - t_start
+    logger.info("Post-processing with changes [%.2fs]", elapsed)
     return processed, changes
+

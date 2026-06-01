@@ -9,9 +9,10 @@ import logging
 import warnings
 from datetime import datetime
 from typing import Optional
+from functools import partial
 
 from PySide6.QtWidgets import QMainWindow, QApplication, QFileDialog, QMessageBox
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 
 from src.dictation.audio import Recorder
@@ -22,7 +23,7 @@ from src.features.report_manager import (
 )
 from src.medical import macros
 from src.medical.macros import reload_macros
-from src.features.file_manager import startup_cleanup, autosave_dir, macros_file
+from src.features.file_manager import startup_cleanup, autosave_dir, macros_file, templates_dir
 from src.features.adaptive_learning import get_adaptive_learning, learn_from_edit
 from src.features import audit_log
 
@@ -33,14 +34,12 @@ from src.ui.views import (
 
 # Recording control
 from src.ui.recording_session import (
-    on_start_recording, on_stop_recording, on_partial_text, on_transcription_finished,
-    setup_level_timer
+    on_start_recording, on_stop_recording, setup_level_timer
 )
 
 # Dialog handling
 from src.ui.dialogs import (
-    show_learning_consent_if_needed, show_disclaimer_if_needed, validate_template_fields,
-    on_show_learning_stats, on_reset_learning
+    show_learning_consent_if_needed, show_disclaimer_if_needed, validate_template_fields
 )
 
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="pkg_resources")
@@ -117,6 +116,11 @@ class MainWindow(QMainWindow):
         show_learning_consent_if_needed(self)
         show_disclaimer_if_needed(self)
 
+        # Background services: cloud training monitor + local report analysis.
+        self._cloud_monitor = None
+        self._cloud_monitor_thread = None
+        self._start_background_services()
+
         # Load macro region from settings
         region = self.settings.get("last_macro_region", "Knee")
         if region in macros.REGION_ORDER:
@@ -136,8 +140,56 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _setup_shortcuts(self) -> None:
-        QShortcut(QKeySequence("F5"), self, self.on_start_recording)
-        QShortcut(QKeySequence("F6"), self, self.on_stop_recording)
+        QShortcut(QKeySequence("F5"), self, partial(on_start_recording, self))
+        QShortcut(QKeySequence("F6"), self, partial(on_stop_recording, self))
+
+    # ------------------------------------------------------------------
+    # Background services (cloud training + report analysis)
+    # ------------------------------------------------------------------
+
+    def _start_background_services(self) -> None:
+        """Launch the cloud job monitor and a one-shot report analysis pass.
+
+        Both degrade silently: the monitor is inert unless cloud training is
+        enabled, and report analysis is skipped if disabled in settings. Failures
+        here must never block app startup.
+        """
+        if self.settings.get("cloud_enabled", False):
+            try:
+                from PySide6.QtCore import QThread
+                from src.cloud.job_monitor import CloudJobMonitor
+                self._cloud_monitor_thread = QThread()
+                self._cloud_monitor = CloudJobMonitor()
+                self._cloud_monitor.moveToThread(self._cloud_monitor_thread)
+                self._cloud_monitor_thread.started.connect(self._cloud_monitor.run)
+                self._cloud_monitor.model_available.connect(self._on_model_available)
+                self._cloud_monitor_thread.start()
+            except Exception as exc:
+                logger.warning("Could not start cloud monitor: %s", exc)
+
+        if self.settings.get("report_analysis_enabled", True):
+            try:
+                from PySide6.QtCore import QThreadPool, QRunnable
+
+                class _AnalysisTask(QRunnable):
+                    def run(self) -> None:
+                        try:
+                            from src.features.report_analyzer import ReportAnalyzer
+                            ReportAnalyzer().analyze_and_save()
+                        except Exception as exc:  # background, never fatal
+                            logger.debug("Report analysis failed: %s", exc)
+
+                QThreadPool.globalInstance().start(_AnalysisTask())
+            except Exception as exc:
+                logger.debug("Could not schedule report analysis: %s", exc)
+
+    def _on_model_available(self, version: str) -> None:
+        """A fine-tuned model finished training — offer to activate it."""
+        try:
+            from src.ui.dialogs import show_model_update_notification
+            show_model_update_notification(self, version)
+        except Exception as exc:
+            logger.warning("Model update notification failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Auto-save timer
@@ -161,21 +213,6 @@ class MainWindow(QMainWindow):
             logger.info("Auto-saved to %s", path)
             audit_log.log_autosave(path, self._get_patient_info().get("id", ""))
 
-    # ------------------------------------------------------------------
-    # Recording control
-    # ------------------------------------------------------------------
-
-    def on_start_recording(self) -> None:
-        on_start_recording(self)
-
-    def on_stop_recording(self) -> None:
-        on_stop_recording(self)
-
-    def _on_partial_text(self, full_transcript: str) -> None:
-        on_partial_text(self, full_transcript)
-
-    def _on_transcription_finished(self) -> None:
-        on_transcription_finished(self)
 
     # ------------------------------------------------------------------
     # Theme
@@ -218,7 +255,6 @@ class MainWindow(QMainWindow):
         self._change_font_size(-1)
 
     def _change_font_size(self, delta: int) -> None:
-        from PySide6.QtGui import QFont
         size = self.settings.get("font_size", 13) + delta
         size = max(8, min(size, 28))
         self.settings.set("font_size", size)
@@ -231,7 +267,6 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def on_insert_template(self) -> None:
-        from src.features.file_manager import templates_dir
         name = self.template_combo.currentText()
         if not name:
             return
@@ -249,9 +284,6 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Macro management
     # ------------------------------------------------------------------
-
-    def _rebuild_macro_buttons(self, region: str = "") -> None:
-        rebuild_macro_buttons(self, region)
 
     def _insert_macro(self, text: str) -> None:
         current = self.editor.toPlainText()
@@ -276,7 +308,7 @@ class MainWindow(QMainWindow):
             else:
                 self.macro_region_combo.setCurrentIndex(0)
 
-            self._rebuild_macro_buttons(self.macro_region_combo.currentText())
+            rebuild_macro_buttons(self, self.macro_region_combo.currentText())
             self._show_status("Macros reloaded", 2000)
         except Exception as exc:
             QMessageBox.warning(self, "Reload Error", f"Failed to reload macros:\n{exc}")
@@ -326,7 +358,7 @@ class MainWindow(QMainWindow):
             with open(path, "r", encoding="utf-8") as fh:
                 self.editor.setPlainText(fh.read())
             self.settings.add_recent_report(path)
-            self._rebuild_recent_menu()
+            rebuild_recent_menu(self)
             self._show_status(f"Opened: {os.path.basename(path)}", 2000)
         except Exception as exc:
             QMessageBox.critical(self, "Open Error", str(exc))
@@ -348,7 +380,7 @@ class MainWindow(QMainWindow):
             text = self.editor.toPlainText()
             save_report_txt(path, text, self._get_patient_info())
             self.settings.add_recent_report(path)
-            self._rebuild_recent_menu()
+            rebuild_recent_menu(self)
             self._show_status(f"Saved: {os.path.basename(path)}", 2000)
             pid = self._get_patient_info().get("id", "")
             audit_log.log_report_saved(path, pid, len(text.split()))
@@ -376,7 +408,7 @@ class MainWindow(QMainWindow):
             text = self.editor.toPlainText()
             export_to_word(path, text, self._get_patient_info())
             self.settings.add_recent_report(path)
-            self._rebuild_recent_menu()
+            rebuild_recent_menu(self)
             self._show_status(f"Exported: {os.path.basename(path)}", 2000)
             pid = self._get_patient_info().get("id", "")
             audit_log.log_report_exported(path, pid, "docx")
@@ -392,9 +424,6 @@ class MainWindow(QMainWindow):
     # Recent reports menu
     # ------------------------------------------------------------------
 
-    def _rebuild_recent_menu(self) -> None:
-        rebuild_recent_menu(self)
-
     def _open_recent(self, path: str) -> None:
         try:
             with open(path, "r", encoding="utf-8") as fh:
@@ -403,15 +432,6 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Open Error", str(exc))
 
-    # ------------------------------------------------------------------
-    # Learning / settings dialogs
-    # ------------------------------------------------------------------
-
-    def on_show_learning_stats(self) -> None:
-        on_show_learning_stats(self)
-
-    def on_reset_learning(self) -> None:
-        on_reset_learning(self)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -462,13 +482,36 @@ class MainWindow(QMainWindow):
         self.settings.set("splitter_sizes", self.splitter.sizes())
         self.settings.save()
 
+        # Make sure any active recording session is finalized before exit.
+        if self.recorder.is_recording:
+            on_stop_recording(self)
+        elif self.live_worker is not None:
+            self.live_worker.finalize()
+        if self.live_thread is not None:
+            self.live_thread.quit()
+
+        # Stop the cloud job monitor thread if running.
+        if self._cloud_monitor is not None:
+            try:
+                self._cloud_monitor.stop()
+                if self._cloud_monitor_thread is not None:
+                    self._cloud_monitor_thread.quit()
+                    self._cloud_monitor_thread.wait(2000)
+            except Exception:
+                pass
+
+        # Persist any open training-capture session (review-time corrections).
+        try:
+            from src.ui.recording_session import finalize_training_capture
+            finalize_training_capture()
+        except Exception:
+            pass
+
         # Save adaptive learning data on exit
         try:
             get_adaptive_learning().force_save()
         except Exception:
             pass
-        if self.recorder.is_recording:
-            self.recorder.stop()
         super().closeEvent(event)
 
 

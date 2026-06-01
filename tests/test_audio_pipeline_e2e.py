@@ -7,7 +7,6 @@ which requires heavy dependencies (Whisper model, audioprocessing libraries).
 
 from __future__ import annotations
 
-import pytest
 
 from src.dictation.postprocess import postprocess_transcript, postprocess_transcript_with_changes
 

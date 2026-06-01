@@ -9,26 +9,95 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QThread, QTimer
 from PySide6.QtWidgets import QMessageBox
 
-from src.dictation.audio import Recorder
 from src.dictation.worker import LiveTranscribeWorker
 from src.features.file_manager import create_temp_wav
 from src.dictation.postprocess import postprocess_transcript_with_changes
 from src.features.accent_corrections import ACCENT_LABELS, suggest_accent
 from src.features import audit_log
 from src.medical.critical_findings import scan_for_critical_findings, format_findings_for_dialog
+from src.ui.styles import COLOR_HEALTHY, COLOR_CLIPPING, COLOR_LOW, LEVEL_BAR_STYLESHEET
 
 if TYPE_CHECKING:
-    from src.ui.app import MainWindow
+    from src.ui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
 
-_COLOR_HEALTHY = "#4CAF50"
-_COLOR_CLIPPING = "#F44336"
-_COLOR_LOW = "#FF9800"
-_LEVEL_BAR_STYLESHEET = (
-    "QProgressBar { border: 1px solid #555; border-radius: 3px; background: #222; }"
-    "QProgressBar::chunk { background: {color}; border-radius: 2px; }"
-)
+
+# ---------------------------------------------------------------------------
+# Cloud training capture helpers (all no-ops unless the user has opted in)
+# ---------------------------------------------------------------------------
+
+def _active_model_path():
+    """Return the active fine-tuned model directory, or None for the base model."""
+    try:
+        from src.cloud.model_registry import ModelRegistry
+        return ModelRegistry().get_active_model_path()
+    except Exception as exc:
+        logger.debug("Model registry lookup failed: %s", exc)
+        return None
+
+
+def _start_training_capture(window: MainWindow, wav_path: str, model_size: str) -> None:
+    """Start a collector session and route voice corrections into it."""
+    try:
+        from src.training.collector import get_correction_collector
+        from src.dictation.postprocess.voice_commands import set_correction_hook
+
+        collector = get_correction_collector()
+        # Persist any previous session still open for review before reusing it.
+        collector.finalize_session()
+        accent = getattr(window, "_active_accent", "neutral")
+        version = window.settings.get("active_model_version") or model_size
+        collector.start_session(
+            session_id=os.path.basename(wav_path),
+            wav_path=wav_path,
+            patient_info=window._get_patient_info(),
+            model_version=version,
+            accent_profile=accent,
+        )
+        # Explicit "X correct word Y" voice edits feed the collector too.
+        set_correction_hook(collector.record_text_correction)
+    except Exception as exc:
+        logger.debug("Training capture not started: %s", exc)
+
+
+def _on_segments(abs_segments: list) -> None:
+    """Forward worker segments to the training collector for timing/PHI scrub."""
+    try:
+        from src.training.collector import get_correction_collector
+        get_correction_collector().update_segments(abs_segments)
+    except Exception:
+        pass
+
+
+def _prepare_training_audio() -> None:
+    """De-identify the session audio while the temp WAV still exists.
+
+    Runs when transcription ends but *before* the WAV is deleted. The session
+    stays open so spelling fixes made during review are still captured; the
+    voice-command hook is detached since voice edits only occur while recording.
+    """
+    try:
+        from src.training.collector import get_correction_collector
+        from src.dictation.postprocess.voice_commands import set_correction_hook
+        get_correction_collector().prepare_audio()
+        set_correction_hook(None)
+    except Exception as exc:
+        logger.debug("Training audio prepare failed: %s", exc)
+
+
+def finalize_training_capture() -> None:
+    """Persist captured corrections and close the open collector session.
+
+    Called at the next natural boundary — a new recording (see
+    ``_start_training_capture``) or window close — so review-time corrections
+    are included.
+    """
+    try:
+        from src.training.collector import get_correction_collector
+        get_correction_collector().finalize_session()
+    except Exception as exc:
+        logger.debug("Training capture finalize failed: %s", exc)
 
 
 def on_start_recording(window: MainWindow) -> None:
@@ -70,15 +139,23 @@ def on_start_recording(window: MainWindow) -> None:
         "accent": window._active_accent,
     })
 
+    # Use an active fine-tuned model if one has been downloaded and activated.
+    active_model_path = _active_model_path()
+
+    # Begin capturing corrections for cloud training (no-op without consent).
+    _start_training_capture(window, path, model_size)
+
     window.live_thread = QThread()
     window.live_worker = LiveTranscribeWorker(
-        path, model_size, language, vad_enabled, pause_threshold
+        path, model_size, language, vad_enabled, pause_threshold,
+        model_path=active_model_path,
     )
     window.live_worker.moveToThread(window.live_thread)
     window.live_thread.started.connect(window.live_worker.run)
-    window.live_worker.partial.connect(window._on_partial_text)
+    window.live_worker.partial.connect(lambda transcript: on_partial_text(window, transcript))
     window.live_worker.progress.connect(lambda msg: window._show_status(msg))
-    window.live_worker.finished.connect(window._on_transcription_finished)
+    window.live_worker.segments.connect(_on_segments)
+    window.live_worker.finished.connect(lambda: on_transcription_finished(window))
     window.live_worker.finished.connect(window.live_thread.quit)
     window.live_worker.finished.connect(window.live_worker.deleteLater)
     window.live_thread.finished.connect(window.live_thread.deleteLater)
@@ -94,7 +171,7 @@ def on_stop_recording(window: MainWindow) -> None:
     finally:
         window._level_timer.stop()
         window._level_bar.setValue(0)
-        window._level_bar.setStyleSheet(_LEVEL_BAR_STYLESHEET.format(color=_COLOR_HEALTHY))
+        window._level_bar.setStyleSheet(LEVEL_BAR_STYLESHEET.format(color=COLOR_HEALTHY))
         window.btn_record.setEnabled(True)
         window.btn_stop.setEnabled(False)
         window._show_status("Processing final pass...")
@@ -145,6 +222,9 @@ def on_transcription_finished(window: MainWindow) -> None:
     window.btn_record.setEnabled(True)
     window.btn_stop.setEnabled(False)
     window._show_status("Ready")
+    # De-identify the session audio while the WAV still exists; the collector
+    # session stays open so spelling fixes made during review are captured too.
+    _prepare_training_audio()
     cleanup_temp_audio(window)
     check_accent_suggestion(window)
     show_corrections_banner(window)
@@ -179,14 +259,15 @@ def check_accent_suggestion(window: MainWindow) -> None:
 
 
 def show_corrections_banner(window: MainWindow) -> None:
-    """Show a non-blocking status message summarising auto-corrections."""
-    corrections = window._corrections_pending
-    if not corrections:
+    """Display auto-corrections applied during transcription."""
+    if not window._corrections_pending:
         return
-    n = len(corrections)
-    examples = ", ".join(corrections[:3])
+
+    n = len(window._corrections_pending)
+    examples = ", ".join(window._corrections_pending[:3])
     suffix = f" (and {n - 3} more)" if n > 3 else ""
-    window._show_status(f"{n} auto-correction(s): {examples}{suffix}", 8000)
+
+    window._show_status(f"Applied {n} correction(s): {examples}{suffix}", 8000)
     window._corrections_pending = []
 
 
@@ -241,9 +322,9 @@ def update_level_display(window: MainWindow) -> None:
     clipping = window.recorder.is_clipping
     window._level_bar.setValue(int(level * 100))
     if clipping:
-        window._level_bar.setStyleSheet(_LEVEL_BAR_STYLESHEET.format(color=_COLOR_CLIPPING))
+        window._level_bar.setStyleSheet(LEVEL_BAR_STYLESHEET.format(color=COLOR_CLIPPING))
         window._show_status("Microphone clipping — reduce input gain", 1500)
     elif level < 0.03:
-        window._level_bar.setStyleSheet(_LEVEL_BAR_STYLESHEET.format(color=_COLOR_LOW))
+        window._level_bar.setStyleSheet(LEVEL_BAR_STYLESHEET.format(color=COLOR_LOW))
     else:
-        window._level_bar.setStyleSheet(_LEVEL_BAR_STYLESHEET.format(color=_COLOR_HEALTHY))
+        window._level_bar.setStyleSheet(LEVEL_BAR_STYLESHEET.format(color=COLOR_HEALTHY))

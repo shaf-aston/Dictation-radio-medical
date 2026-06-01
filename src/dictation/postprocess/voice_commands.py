@@ -10,7 +10,31 @@
 from __future__ import annotations
 
 import re
-from typing import Callable, List, Pattern, Tuple, Union
+from typing import Callable, List, Optional, Pattern, Tuple, Union
+
+# ---------------------------------------------------------------------------
+# Correction hook
+# ---------------------------------------------------------------------------
+# Optional callback fired whenever an explicit "X correct word Y" command
+# resolves. The recording session sets this (via set_correction_hook) so the
+# cloud training collector can capture the (wrong → correct) pair with audio.
+# Left None in tests / offline use so this module has no outward dependency.
+_correction_hook: Optional[Callable[[str, str], None]] = None
+
+
+def set_correction_hook(fn: Optional[Callable[[str, str], None]]) -> None:
+    """Register (or clear) the callback invoked on each resolved correction."""
+    global _correction_hook
+    _correction_hook = fn
+
+
+def _fire_correction_hook(wrong: str, correct: str) -> None:
+    if _correction_hook is not None and wrong and correct and wrong.lower() != correct.lower():
+        try:
+            _correction_hook(wrong, correct)
+        except Exception:
+            pass
+
 
 # ---------------------------------------------------------------------------
 # 1. Voice correction commands
@@ -27,12 +51,15 @@ _CORRECTION_PATTERN2 = re.compile(
 _PREV_WORD_PATTERN = re.compile(r"\b([A-Za-z0-9'-]+)\b(?!.*\b[A-Za-z0-9'-]+\b)")
 
 
+def _correction1_repl(m: re.Match) -> str:
+    _fire_correction_hook(m.group(1), m.group(3))
+    return f"{m.group(3)}{m.group(2)}"
+
+
 def apply_correction_commands(text: str) -> str:
     """Handle ``"X correct word Y"`` and ``"correct word Y"`` voice edits."""
     while True:
-        text, n = _CORRECTION_PATTERN1.subn(
-            lambda m: f"{m.group(3)}{m.group(2)}", text, count=1
-        )
+        text, n = _CORRECTION_PATTERN1.subn(_correction1_repl, text, count=1)
         if n == 0:
             break
     while True:
@@ -47,6 +74,7 @@ def apply_correction_commands(text: str) -> str:
             text = before.rstrip() + text[cmd_end:]
             continue
         ps, pe = m_prev.span(1)
+        _fire_correction_hook(m_prev.group(1), new_word)
         text = text[:ps] + new_word + text[pe:cmd_start] + text[cmd_end:]
     return text
 

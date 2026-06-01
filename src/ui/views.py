@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from functools import partial
 from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
@@ -17,17 +18,13 @@ from src.dictation.transcriber import SUPPORTED_MODELS
 from src.features.accent_corrections import ACCENT_LABELS
 from src.medical import macros
 from src.features.file_manager import templates_dir
+from src.ui.styles import COLOR_HEALTHY, LEVEL_BAR_STYLESHEET
+from src.features.report_manager import DOCX_AVAILABLE
+from src.ui.recording_session import on_start_recording, on_stop_recording
+from src.ui.dialogs import on_show_learning_stats, on_reset_learning
 
 if TYPE_CHECKING:
-    from src.ui.app import MainWindow
-
-_COLOR_HEALTHY = "#4CAF50"
-_COLOR_CLIPPING = "#F44336"
-_COLOR_LOW = "#FF9800"
-_LEVEL_BAR_STYLESHEET = (
-    "QProgressBar { border: 1px solid #555; border-radius: 3px; background: #222; }"
-    "QProgressBar::chunk { background: {color}; border-radius: 2px; }"
-)
+    from src.ui.main_window import MainWindow
 
 
 def build_ui(window: MainWindow) -> None:
@@ -127,7 +124,7 @@ def build_macros_panel(window: MainWindow) -> QFrame:
 
     window.macro_region_combo = QComboBox()
     window.macro_region_combo.addItems(macros.REGION_ORDER)
-    window.macro_region_combo.currentTextChanged.connect(window._rebuild_macro_buttons)
+    window.macro_region_combo.currentTextChanged.connect(partial(rebuild_macro_buttons, window))
     layout.addWidget(window.macro_region_combo)
 
     # Scroll area for dynamic macro buttons
@@ -220,13 +217,13 @@ def build_recording_bar(window: MainWindow) -> QFrame:
     window.btn_record = QPushButton("Record  F5")
     window.btn_record.setObjectName("btn_record")
     window.btn_record.setMinimumWidth(130)
-    window.btn_record.clicked.connect(window.on_start_recording)
+    window.btn_record.clicked.connect(partial(on_start_recording, window))
 
     window.btn_stop = QPushButton("Stop  F6")
     window.btn_stop.setObjectName("btn_stop")
     window.btn_stop.setMinimumWidth(110)
     window.btn_stop.setEnabled(False)
-    window.btn_stop.clicked.connect(window.on_stop_recording)
+    window.btn_stop.clicked.connect(partial(on_stop_recording, window))
 
     # Model / VAD controls
     window.model_combo = QComboBox()
@@ -269,7 +266,6 @@ def build_recording_bar(window: MainWindow) -> QFrame:
     btn_save.setToolTip("Save report as plain text (Ctrl+S)")
     btn_save.clicked.connect(window.on_save_txt)
 
-    from src.features.report_manager import DOCX_AVAILABLE
     window.btn_export_word = QPushButton("Export Word")
     window.btn_export_word.setObjectName("btn_word")
     window.btn_export_word.setToolTip("Export report to Word document (Ctrl+Shift+W)")
@@ -290,7 +286,7 @@ def build_recording_bar(window: MainWindow) -> QFrame:
     window._level_bar.setFixedHeight(14)
     window._level_bar.setTextVisible(False)
     window._level_bar.setToolTip("Microphone input level")
-    window._level_bar.setStyleSheet(_LEVEL_BAR_STYLESHEET.format(color=_COLOR_HEALTHY))
+    window._level_bar.setStyleSheet(LEVEL_BAR_STYLESHEET.format(color=COLOR_HEALTHY))
 
     layout.addWidget(window.btn_record)
     layout.addWidget(window.btn_stop)
@@ -327,7 +323,7 @@ def build_menu(window: MainWindow) -> None:
 
     window.recent_menu = QMenu("Recent Reports", window)
     file_menu.addMenu(window.recent_menu)
-    window._rebuild_recent_menu()
+    rebuild_recent_menu(window)
 
     file_menu.addSeparator()
     _add_action(file_menu, "Exit", window.close, "Alt+F4")
@@ -356,11 +352,9 @@ def build_menu(window: MainWindow) -> None:
     _add_action(settings_menu, "Edit Macros (JSON)", window.on_edit_macros)
     _add_action(settings_menu, "Reload Macros", window.on_reload_macros, "Ctrl+R")
     settings_menu.addSeparator()
-    _add_action(settings_menu, "Learning Statistics...", window.on_show_learning_stats)
-    _add_action(settings_menu, "Reset Learning Data...", window.on_reset_learning)
+    _add_action(settings_menu, "Learning Statistics...", partial(on_show_learning_stats, window))
+    _add_action(settings_menu, "Reset Learning Data...", partial(on_reset_learning, window))
 
-
-@staticmethod
 def _add_action(menu: QMenu, label: str, slot, shortcut: str = "") -> QAction:
     """Add an action to a menu."""
     action = QAction(label)

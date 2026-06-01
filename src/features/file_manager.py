@@ -68,6 +68,48 @@ def macros_file() -> Path:
     """Macros JSON file"""
     return _data_dir() / "macros.json"
 
+# ---------------------------------------------------------------------------
+# Cloud training storage (Lightning AI integration)
+# ---------------------------------------------------------------------------
+
+def training_dir() -> Path:
+    """Root for locally-staged training data (SQLite + audio clips)."""
+    path = _data_dir() / "training"
+    path.mkdir(exist_ok=True)
+    return path
+
+def training_audio_dir() -> Path:
+    """De-identified audio clips awaiting upload to Lightning AI."""
+    path = training_dir() / "audio_clips"
+    path.mkdir(exist_ok=True)
+    return path
+
+def staging_db_path() -> Path:
+    """SQLite database staging correction triples for cloud training."""
+    return training_dir() / "staging.db"
+
+def models_dir() -> Path:
+    """Root for fine-tuned model artefacts downloaded from Lightning AI."""
+    path = _data_dir() / "models"
+    path.mkdir(exist_ok=True)
+    return path
+
+def fine_tuned_dir() -> Path:
+    """Directory holding versioned CTranslate2 fine-tuned model folders."""
+    path = models_dir() / "fine_tuned"
+    path.mkdir(exist_ok=True)
+    return path
+
+def model_registry_path() -> Path:
+    """JSON index of downloaded fine-tuned model versions."""
+    return models_dir() / "registry.json"
+
+def analysis_dir() -> Path:
+    """Directory for local report-analysis output."""
+    path = _data_dir() / "analysis"
+    path.mkdir(exist_ok=True)
+    return path
+
 def settings_file() -> Path:
     """Settings JSON file"""
     return _project_root() / "dictation_settings.json"

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Medical blue background -->
+  <rect width="64" height="64" fill="#216BAD"/>
+
+  <!-- Microphone head (circle) -->
+  <circle cx="32" cy="20" r="6" fill="white"/>
+
+  <!-- Microphone body (rectangle) -->
+  <rect x="29" y="26" width="6" height="14" fill="white"/>
+
+  <!-- Microphone stand (small lines) -->
+  <rect x="31" y="40" width="2" height="5" fill="white"/>
+
+  <!-- Sound waves (medical/professional touch) -->
+  <circle cx="32" cy="32" r="12" fill="none" stroke="white" stroke-width="1.5" opacity="0.6"/>
+  <circle cx="32" cy="32" r="18" fill="none" stroke="white" stroke-width="1.5" opacity="0.4"/>
+</svg>

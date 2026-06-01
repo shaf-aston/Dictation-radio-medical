@@ -75,7 +75,7 @@ def main() -> int:
     print("=" * 50)
     if all_ok:
         print(f"{OK} All checks passed.")
-        print("Start the desktop app:  python -m src.ui.app")
+        print("Start the desktop app:  python -m src.ui")
         print("Start the web app:      python -m src.ui.web_app")
     else:
         print(f"{MISSING} Issues found. Run:  pip install -r requirements.txt")

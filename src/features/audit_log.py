@@ -98,3 +98,26 @@ def log_learning_reset() -> None:
 
 def log_learning_consent(enabled: bool) -> None:
     _write("learning_consent", {"enabled": enabled})
+
+
+def log_cloud_consent(enabled: bool) -> None:
+    """Logged when the user grants/revokes consent to upload training data."""
+    _write("cloud_training_consent", {"enabled": enabled})
+
+
+def log_training_upload(batch_id: str, record_count: int) -> None:
+    """Logged when a de-identified training batch is uploaded to Lightning AI."""
+    _write("training_upload", {
+        "batch_id": batch_id,
+        "record_count": record_count,
+    })
+
+
+def log_training_record_dropped(reason: str) -> None:
+    """Logged when a correction record is dropped (e.g. failed PHI validation)."""
+    _write("training_record_dropped", {"reason": reason})
+
+
+def log_model_activated(version: str, base_model: str) -> None:
+    """Logged when a fine-tuned model version becomes the active transcriber."""
+    _write("model_activated", {"version": version, "base_model": base_model})

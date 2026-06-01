@@ -28,6 +28,14 @@ _DEFAULTS: dict = {
     "window_width": 1200,
     "window_height": 760,
     "splitter_sizes": [220, 980],
+    # --- Cloud training (Lightning AI) ---
+    "cloud_enabled": False,            # master switch for all cloud features
+    "cloud_training_consent": False,   # explicit user consent to upload de-identified data
+    "lightning_project_id": "",        # Lightning AI project (API key lives in OS keychain)
+    "min_corrections_before_upload": 20,  # don't train on tiny datasets
+    "auto_download_models": True,      # auto-fetch fine-tuned models when jobs finish
+    "active_model_version": None,      # active fine-tuned version, or None for base model
+    "report_analysis_enabled": True,   # run local report pattern analysis on startup
 }
 
 

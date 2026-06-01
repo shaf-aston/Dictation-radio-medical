@@ -31,7 +31,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import List, Optional, Tuple
+from pathlib import Path
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import soundfile as sf
@@ -65,6 +66,10 @@ class LiveTranscribeWorker(QObject):
     partial = Signal(str)
     finished = Signal()
     progress = Signal(str)
+    # Absolute-timed segments for the current window, used by the cloud training
+    # collector to locate corrections in audio. Each item: {start, end, text}
+    # with timestamps offset to the full recording.
+    segments = Signal(list)
 
     def __init__(
         self,
@@ -73,6 +78,7 @@ class LiveTranscribeWorker(QObject):
         language: str,
         vad_enabled: bool,
         pause_threshold: float = 2.5,
+        model_path: Optional[Union[str, Path]] = None,
     ) -> None:
         super().__init__()
         self.audio_path = audio_path
@@ -80,6 +86,8 @@ class LiveTranscribeWorker(QObject):
         self.language = language
         self.vad_enabled = vad_enabled
         self.pause_threshold = pause_threshold
+        # Optional fine-tuned CT2 model directory (overrides model_size).
+        self.model_path = model_path
         self._keep_running = True
         self._final_requested = False
 
@@ -112,9 +120,10 @@ class LiveTranscribeWorker(QObject):
         wall_start = time.time()
         cycle_count = 0
         try:
-            logger.info("Loading model: %s", self.model_size)
             self.progress.emit("Loading model...")
-            transcriber = Transcriber(model_size=self.model_size, device="auto")
+            transcriber = Transcriber(
+                model_size=self.model_size, device="auto", model_path=self.model_path
+            )
             logger.info("Model loaded in %.2fs", time.time() - wall_start)
             self.progress.emit("Live transcribing...")
 
@@ -176,6 +185,18 @@ class LiveTranscribeWorker(QObject):
                 self._prev_segments = segments
                 self._prev_chunk_start_sec = chunk_start_sec
 
+                # Emit absolute-timed segments for the training collector.
+                if segments:
+                    abs_segments = [
+                        {
+                            "start": chunk_start_sec + float(s.get("start", 0)),
+                            "end": chunk_start_sec + float(s.get("end", 0)),
+                            "text": s.get("text", ""),
+                        }
+                        for s in segments
+                    ]
+                    self.segments.emit(abs_segments)
+
                 output = self._build_output(chunk_text, chunk_start_sec)
 
                 emitted = False
@@ -222,7 +243,10 @@ class LiveTranscribeWorker(QObject):
             if audio.ndim > 1:
                 audio = audio[:, 0]
             return audio, sr
-        except Exception:
+        except FileNotFoundError:
+            return None, 0
+        except Exception as exc:
+            logger.warning("Unexpected error reading audio %s: %s", self.audio_path, exc)
             return None, 0
 
     # ------------------------------------------------------------------

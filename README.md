@@ -15,7 +15,7 @@ python -m venv .venv
 # source .venv/bin/activate               # macOS / Linux
 pip install -r requirements.txt
 
-python -m src.ui.app                      # Desktop GUI
+python -m src.ui                           # Desktop GUI
 python -m src.ui.web_app                  # Web interface
 python scripts/verify_setup.py            # Optional dependency check
 ```
@@ -77,7 +77,7 @@ src/
 │       ├── measurements.py · terminology.py · medical_dict_match.py
 │       └── pipeline.py       (orchestrator)
 ├── ui/
-│   ├── app.py (entry point) · main_window.py · views.py
+│   ├── __init__.py · __main__.py · main_window.py · views.py
 │   ├── recording_session.py · dialogs.py
 │   └── web_app.py (FastAPI) · styles.py
 ├── medical/

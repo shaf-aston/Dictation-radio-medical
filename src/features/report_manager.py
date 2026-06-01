@@ -2,6 +2,7 @@
 Report management: auto-save, plain-text save, and Word (.docx) export.
 Word export requires:  pip install python-docx
 """
+import io
 import logging
 import os
 from datetime import datetime
@@ -49,7 +50,7 @@ def autosave_report(text: str, patient_info: dict) -> Optional[str]:
         filename = f"dictation_{pid}_{ts}.txt"
         path = os.path.join(str(autosave_dir()), filename)
         with open(path, "w", encoding="utf-8") as f:
-            f.write(_format_plain_text(text, patient_info))
+            f.write(format_plain_text_report(text, patient_info))
         return path
     except Exception as exc:
         logger.warning("Auto-save failed: %s", exc)
@@ -62,10 +63,11 @@ def autosave_report(text: str, patient_info: dict) -> Optional[str]:
 
 def save_report_txt(path: str, text: str, patient_info: dict) -> None:
     with open(path, "w", encoding="utf-8") as f:
-        f.write(_format_plain_text(text, patient_info))
+        f.write(format_plain_text_report(text, patient_info))
 
 
-def _format_plain_text(text: str, patient_info: dict) -> str:
+def format_plain_text_report(text: str, patient_info: dict) -> str:
+    """Return the formatted plain-text report body."""
     now = datetime.now().strftime("%d/%m/%Y %H:%M")
     header = [
         "RADIOLOGY REPORT",
@@ -88,17 +90,13 @@ def _format_plain_text(text: str, patient_info: dict) -> str:
     return "\n".join(header) + "\n" + text + "\n" + "\n".join(footer)
 
 
+
+
 # ---------------------------------------------------------------------------
 # Word (.docx) export
 # ---------------------------------------------------------------------------
 
-def export_to_word(path: str, text: str, patient_info: dict) -> None:
-    if not DOCX_AVAILABLE:
-        raise RuntimeError(
-            "python-docx is not installed.\n"
-            "Install it with:  pip install python-docx"
-        )
-
+def _build_word_document(text: str, patient_info: dict):
     doc = Document()
 
     # ---- Page margins ----
@@ -161,6 +159,31 @@ def export_to_word(path: str, text: str, patient_info: dict) -> None:
     sig.add_run("_________________________________")
     sig.add_run(f"\t\t\tDate: {now}")
 
+    return doc
+
+
+def export_to_word_bytes(text: str, patient_info: dict) -> bytes:
+    """Render the Word report into an in-memory ``.docx`` payload."""
+    if not DOCX_AVAILABLE:
+        raise RuntimeError(
+            "python-docx is not installed.\n"
+            "Install it with:  pip install python-docx"
+        )
+
+    doc = _build_word_document(text, patient_info)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
+def export_to_word(path: str, text: str, patient_info: dict) -> None:
+    if not DOCX_AVAILABLE:
+        raise RuntimeError(
+            "python-docx is not installed.\n"
+            "Install it with:  pip install python-docx"
+        )
+
+    doc = _build_word_document(text, patient_info)
     doc.save(path)
 
 

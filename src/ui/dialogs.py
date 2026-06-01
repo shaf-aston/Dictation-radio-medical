@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QMessageBox
 from src.features.adaptive_learning import get_adaptive_learning
 
 if TYPE_CHECKING:
-    from src.ui.app import MainWindow
+    from src.ui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,61 @@ def show_learning_consent_if_needed(window: MainWindow) -> None:
     window.settings.set("learning_consent_shown", True)
     from src.features import audit_log
     audit_log.log_learning_consent(enabled)
+
+
+def show_cloud_training_consent_dialog(window: MainWindow) -> bool:
+    """Ask the user to opt in to cloud fine-tuning. Returns the granted state.
+
+    Unlike on-device learning, this uploads de-identified audio + text to
+    Lightning AI, so consent is explicit and revocable. Persists both the
+    consent flag and the master ``cloud_enabled`` switch.
+    """
+    reply = QMessageBox.question(
+        window,
+        "Cloud Voice Training — Your Consent",
+        "To build a personalised voice model, this app can upload your "
+        "corrections — de-identified audio snippets and text — to Lightning AI "
+        "for fine-tuning.\n\n"
+        "• Patient identifiers (names, IDs, dates) are removed before upload.\n"
+        "• Spoken patient identifiers are silenced in audio clips.\n"
+        "• Records that fail the privacy check are dropped, never uploaded.\n"
+        "• You can disable this at any time; the app always works offline.\n\n"
+        "Enable cloud voice training?",
+        QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.No,
+    )
+    enabled = reply == QMessageBox.Yes
+    window.settings.batch_set({
+        "cloud_enabled": enabled,
+        "cloud_training_consent": enabled,
+    })
+    from src.features import audit_log
+    audit_log.log_cloud_consent(enabled)
+    return enabled
+
+
+def show_model_update_notification(window: MainWindow, version: str) -> None:
+    """Offer to activate a freshly-downloaded fine-tuned model."""
+    reply = QMessageBox.question(
+        window,
+        "Personalised Model Ready",
+        f"A new personalised voice model ({version}) has finished training and "
+        "downloaded successfully.\n\n"
+        "Activate it for future dictation? You can revert to the base model "
+        "any time from settings.",
+        QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.Yes,
+    )
+    if reply == QMessageBox.Yes:
+        try:
+            from src.cloud.model_registry import ModelRegistry
+            if ModelRegistry().activate_model(version):
+                window._show_status(f"Activated personalised model {version}", 4000)
+            else:
+                QMessageBox.warning(window, "Activation Failed",
+                                    f"Could not activate model {version}.")
+        except Exception as exc:
+            QMessageBox.warning(window, "Error", f"Activation failed: {exc}")
 
 
 def show_disclaimer_if_needed(window: MainWindow) -> None:
