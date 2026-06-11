@@ -110,6 +110,32 @@ def analysis_dir() -> Path:
     path.mkdir(exist_ok=True)
     return path
 
+# ---------------------------------------------------------------------------
+# Imaging assistant storage (scan classification, embeddings, datasets)
+# ---------------------------------------------------------------------------
+
+def imaging_dir() -> Path:
+    """Root for scan assistant storage (datasets, embeddings, overlays)."""
+    path = _data_dir() / "imaging"
+    path.mkdir(exist_ok=True)
+    return path
+
+def imaging_training_dir() -> Path:
+    """De-identified images staged for scan fine-tuning."""
+    path = imaging_dir() / "training"
+    path.mkdir(exist_ok=True)
+    return path
+
+def imaging_overlay_dir() -> Path:
+    """Rendered overlays from Grad-CAM localization."""
+    path = imaging_dir() / "overlays"
+    path.mkdir(exist_ok=True)
+    return path
+
+def imaging_thresholds_path() -> Path:
+    """Per-pathology confidence thresholds for abstention gate."""
+    return imaging_dir() / "thresholds.json"
+
 def settings_file() -> Path:
     """Settings JSON file"""
     return _project_root() / "dictation_settings.json"
