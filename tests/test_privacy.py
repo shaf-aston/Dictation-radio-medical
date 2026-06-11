@@ -47,3 +47,29 @@ def test_round_trip_text_then_validate():
     deid = DeIdentifier({"name": "Robert Brown", "accession": "9988776"})
     cleaned = deid.deidentify_text("Robert Brown, accession 9988776, ACL tear.")
     assert deid.validate_clean(cleaned) is True
+
+
+def test_deidentify_audio_silences_phi_preserves_findings(tmp_path):
+    """Segments whose transcript names the patient are silenced (±0.5s);
+    other audio is untouched. Guards the acoustic side of the upload gate."""
+    np = pytest.importorskip("numpy")
+    sf = pytest.importorskip("soundfile")
+
+    sr = 16000
+    audio = (0.3 * np.sin(2 * np.pi * 220 * np.arange(4 * sr) / sr)).astype("float32")
+    wav = tmp_path / "session.wav"
+    sf.write(str(wav), audio, sr)
+
+    deid = DeIdentifier({"name": "John Smith"})
+    segments = [
+        {"start": 0.5, "end": 1.5, "text": "patient John Smith referred"},  # PHI
+        {"start": 2.5, "end": 3.5, "text": "wertebra body intact"},          # finding
+    ]
+    out = deid.deidentify_audio(str(wav), segments, tmp_path / "clips", "sess1")
+    assert out is not None
+
+    clip, csr = sf.read(out, dtype="float32")
+    phi = clip[int(0.6 * csr):int(1.4 * csr)]          # inside silenced window
+    finding = clip[int(2.6 * csr):int(3.4 * csr)]      # preserved
+    assert float(np.abs(phi).max()) == 0.0
+    assert float(np.abs(finding).max()) > 0.01

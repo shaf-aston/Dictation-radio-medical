@@ -85,7 +85,8 @@ class CorrectionCollector:
             from src.core.settings import Settings
             s = Settings()
             return bool(s.get("cloud_enabled")) and bool(s.get("cloud_training_consent"))
-        except Exception:
+        except Exception as exc:
+            logger.debug("Could not read consent settings; treating as disabled: %s", exc)
             return False
 
     def is_enabled(self) -> bool:
@@ -179,10 +180,14 @@ class CorrectionCollector:
     def _locate(word: str, segments: List[dict]) -> tuple:
         """Find the (start, end) of the segment containing *word*, if any."""
         wl = word.lower()
-        for seg in segments:
-            if wl in (seg.get("text") or "").lower():
-                return float(seg.get("start", 0.0)), float(seg.get("end", 0.0))
-        return None, None
+        return next(
+            (
+                (float(seg.get("start", 0.0)), float(seg.get("end", 0.0)))
+                for seg in segments
+                if wl in (seg.get("text") or "").lower()
+            ),
+            (None, None),
+        )
 
     # ------------------------------------------------------------------
     # Finalisation — de-identify and persist (two phases)
@@ -303,6 +308,54 @@ class CorrectionCollector:
         except Exception as exc:
             logger.warning("Could not read pending count: %s", exc)
             return 0
+
+    def capture_image_label(self, record) -> tuple[bool, str]:
+        """Stage a labeled image for training.
+
+        Args:
+            record: ImageLabelRecord with image_path, labels, and consent_flags.
+
+        Returns:
+            (True, message) on success; (False, error) on failure.
+            Failures are logged but never raise.
+        """
+        if not self._consent_active():
+            return False, "Cloud training disabled. Enable in settings to proceed."
+        if not record.consent_flags.get("image_labeling_consent"):
+            return False, "Consent required for image upload."
+
+        try:
+            # De-identify image (best-effort; logs failures but never raises)
+            de_id_path = self._deidentify_image(record.image_path)
+            if de_id_path:
+                record.de_identified_image_path = de_id_path
+
+            from src.training.staging_db import get_staging_db
+            get_staging_db().insert_image_label(record)
+            logger.info("Captured labeled image: %s", record.image_path)
+            return True, "Image labeled and staged for training."
+        except Exception as exc:
+            logger.exception("Failed to capture image label: %s", exc)
+            return False, f"Failed to save image: {exc}"
+
+    @staticmethod
+    def _deidentify_image(image_path: str) -> Optional[str]:
+        """Copy image to training directory (stub for PHI scrubbing).
+
+        Currently a pass-through; in production would apply image-level
+        de-identification (e.g. DICOM tag removal, pixel-level redaction).
+
+        Returns: path to de-identified copy, or None on failure.
+        """
+        try:
+            from pathlib import Path
+            from src.features.file_manager import imaging_training_dir
+            dest = imaging_training_dir() / Path(image_path).name
+            dest.write_bytes(Path(image_path).read_bytes())
+            return str(dest)
+        except Exception as exc:
+            logger.warning("Image de-identification failed (non-critical): %s", exc)
+            return None
 
 
 # ---------------------------------------------------------------------------

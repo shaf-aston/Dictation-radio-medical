@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import List, Optional
 
 from src.training.schemas import (
-    BATCH_PENDING,
     CorrectionRecord,
+    ImageLabelRecord,
     TrainingBatch,
     UPLOAD_PENDING,
 )
@@ -52,9 +52,21 @@ CREATE TABLE IF NOT EXISTS training_batches (
     record_count     INTEGER NOT NULL,
     upload_at        TEXT,
     lightning_job_id TEXT,
-    status           TEXT NOT NULL DEFAULT 'pending'
+    status           TEXT NOT NULL DEFAULT 'pending',
+    task_type        TEXT NOT NULL DEFAULT 'whisper_voice'
 );
 
+CREATE TABLE IF NOT EXISTS image_labels (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    image_path              TEXT NOT NULL,
+    labels                  TEXT NOT NULL,
+    de_id_image_path        TEXT,
+    consent_flags           TEXT NOT NULL,
+    timestamp               TEXT NOT NULL,
+    created_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_image_labels_timestamp ON image_labels(timestamp);
 CREATE INDEX IF NOT EXISTS idx_corr_status ON correction_records(upload_status);
 CREATE INDEX IF NOT EXISTS idx_corr_batch ON correction_records(batch_id);
 """
@@ -73,8 +85,23 @@ class StagingDB:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            self._migrate()
             self._conn.commit()
         logger.info("StagingDB ready at %s", self._path)
+
+    def _migrate(self) -> None:
+        """Add columns introduced after the initial schema (idempotent).
+
+        Older databases predate the multi-task ``task_type`` column; add it in
+        place so existing voice-training data survives an app upgrade.
+        """
+        cols = {r["name"] for r in self._conn.execute(
+            "PRAGMA table_info(training_batches)").fetchall()}
+        if "task_type" not in cols:
+            self._conn.execute(
+                "ALTER TABLE training_batches "
+                "ADD COLUMN task_type TEXT NOT NULL DEFAULT 'whisper_voice'"
+            )
 
     # ------------------------------------------------------------------
     # Correction records
@@ -97,6 +124,7 @@ class StagingDB:
                 ),
             )
             self._conn.commit()
+            assert cur.lastrowid is not None
             return int(cur.lastrowid)
 
     def pending_count(self) -> int:
@@ -143,12 +171,14 @@ class StagingDB:
         with self._lock:
             cur = self._conn.execute(
                 """INSERT INTO training_batches
-                   (batch_id, created_at, record_count, status, lightning_job_id)
-                   VALUES (?, ?, ?, ?, ?)""",
+                   (batch_id, created_at, record_count, status,
+                    lightning_job_id, task_type)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
                 (batch.batch_id, batch.created_at, batch.record_count,
-                 batch.status, batch.lightning_job_id),
+                 batch.status, batch.lightning_job_id, batch.task_type),
             )
             self._conn.commit()
+            assert cur.lastrowid is not None
             return int(cur.lastrowid)
 
     def update_batch_status(
@@ -175,6 +205,49 @@ class StagingDB:
                 "SELECT * FROM training_batches WHERE status IN ('uploading', 'training')"
             ).fetchall()
         return [self._row_to_batch(r) for r in rows]
+
+    def insert_image_label(self, record: ImageLabelRecord) -> int:
+        """Insert a labeled image record. Returns the row ID."""
+        import json
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO image_labels
+                   (image_path, labels, de_id_image_path, consent_flags, timestamp)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    record.image_path,
+                    json.dumps(record.labels),
+                    record.de_identified_image_path,
+                    json.dumps(record.consent_flags),
+                    record.timestamp,
+                ),
+            )
+            self._conn.commit()
+            row_id = cur.lastrowid
+            if row_id is None:
+                raise RuntimeError("Failed to insert image label")
+            return row_id
+
+    def get_image_labels(self, limit: int = 100) -> List[ImageLabelRecord]:
+        """Retrieve recent labeled images (for training batch construction)."""
+        import json
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM image_labels ORDER BY timestamp DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        records = []
+        for r in rows:
+            record = ImageLabelRecord(
+                id=r["id"],
+                image_path=r["image_path"],
+                labels=json.loads(r["labels"]),
+                de_identified_image_path=r["de_id_image_path"],
+                consent_flags=json.loads(r["consent_flags"]),
+                timestamp=r["timestamp"],
+            )
+            records.append(record)
+        return records
 
     # ------------------------------------------------------------------
     # Helpers
@@ -205,6 +278,7 @@ class StagingDB:
             created_at=r["created_at"],
             record_count=r["record_count"],
             status=r["status"],
+            task_type=r["task_type"],
             upload_at=r["upload_at"],
             lightning_job_id=r["lightning_job_id"],
         )
