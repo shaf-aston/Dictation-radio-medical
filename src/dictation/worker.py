@@ -304,8 +304,7 @@ class LiveTranscribeWorker(QObject):
         for seg in segments:
             abs_end = chunk_start_sec + float(seg.get("end", 0))
             if abs_end > current_end and abs_end <= safe_abs:
-                text = (seg.get("text") or "").strip()
-                if text:
+                if text := (seg.get("text") or "").strip():
                     new_parts.append(text)
                 new_committed_end = abs_end
 
@@ -314,8 +313,9 @@ class LiveTranscribeWorker(QObject):
 
         addition = " ".join(new_parts)
         self._committed_text = (
-            (self._committed_text + " " + addition).strip()
-            if self._committed_text else addition
+            f"{self._committed_text} {addition}".strip()
+            if self._committed_text
+            else addition
         )
         self._committed_samples = int(new_committed_end * sr)
         logger.info(
@@ -341,8 +341,7 @@ class LiveTranscribeWorker(QObject):
         for seg in prev_segments:
             abs_end = prev_chunk_start_sec + float(seg.get("end", 0))
             if abs_end <= new_chunk_start_sec and abs_end > new_end:
-                text = (seg.get("text") or "").strip()
-                if text:
+                if text := (seg.get("text") or "").strip():
                     parts.append(text)
                 new_end = abs_end
 
@@ -351,8 +350,9 @@ class LiveTranscribeWorker(QObject):
 
         addition = " ".join(parts)
         self._committed_text = (
-            (self._committed_text + " " + addition).strip()
-            if self._committed_text else addition
+            f"{self._committed_text} {addition}".strip()
+            if self._committed_text
+            else addition
         )
         self._committed_samples = int(new_end * sr)
         logger.info(
@@ -372,7 +372,7 @@ class LiveTranscribeWorker(QObject):
         window continuity is preserved by the overlap dedup in
         :func:`trim_committed_tail` instead.
         """
-        custom_terms = get_custom_prompt_suffix()
-        if not custom_terms:
+        if custom_terms := get_custom_prompt_suffix():
+            return f"{_RADIOLOGY_INITIAL_PROMPT} {custom_terms}"
+        else:
             return _RADIOLOGY_INITIAL_PROMPT
-        return _RADIOLOGY_INITIAL_PROMPT + " " + custom_terms

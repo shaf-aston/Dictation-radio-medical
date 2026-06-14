@@ -51,13 +51,13 @@ _SAVE_DEBOUNCE_SEC = 30        # Batch saves to reduce I/O
 class AdaptiveLearning:
     """
     Singleton class managing learned corrections and user vocabulary.
-    
+
     Thread-safe for use from multiple threads (UI + worker).
     """
-    
+
     _instance: Optional["AdaptiveLearning"] = None
     _lock = threading.Lock()
-    
+
     def __new__(cls, data_dir: Optional[Path] = None):
         if cls._instance is None:
             with cls._lock:
@@ -65,61 +65,59 @@ class AdaptiveLearning:
                     cls._instance = super().__new__(cls)
                     cls._instance._initialized = False
         return cls._instance
-    
+
     def __init__(self, data_dir: Optional[Path] = None):
         if getattr(self, '_initialized', False):
             return
-        
+
         self._data_dir = data_dir or self._default_data_dir()
         self._data_lock = threading.Lock()
         self._dirty = False
         self._last_save = 0.0
-        
+
         # Learning data structures
         self._word_corrections: Dict[str, str] = {}
         self._custom_terms: Set[str] = set()
         self._term_frequency: Dict[str, int] = defaultdict(int)
         self._accent_hints: Dict[str, str] = {}
-        
+
         # Compiled patterns (rebuilt when corrections change)
         self._correction_patterns: List[Tuple[re.Pattern, str]] = []
-        
+
         # Load existing data
         self._load()
         self._initialized = True
-        
+
         logger.info("AdaptiveLearning initialized with %d corrections, %d custom terms",
                     len(self._word_corrections), len(self._custom_terms))
-    
+
     @staticmethod
     def _default_data_dir() -> Path:
         """Get default data directory."""
         from src.features.file_manager import _data_dir
         return _data_dir()
-    
+
     # ------------------------------------------------------------------
     # Learning API
     # ------------------------------------------------------------------
-    
+
     def learn_correction(self, wrong: str, correct: str) -> None:
         """Learn a word correction from user input."""
         if not wrong or not correct:
             return
         wrong = wrong.lower().strip()
         correct = correct.lower().strip()
-        
+
         if wrong == correct:
             return
         if len(wrong) < _MIN_WORD_LENGTH or len(correct) < _MIN_WORD_LENGTH:
             return
-        
+
         with self._data_lock:
-            if len(self._word_corrections) >= _MAX_CORRECTIONS:
-                # Remove oldest (first) entry
-                if self._word_corrections:
-                    oldest = next(iter(self._word_corrections))
-                    del self._word_corrections[oldest]
-            
+            if len(self._word_corrections) >= _MAX_CORRECTIONS and self._word_corrections:
+                oldest = next(iter(self._word_corrections))
+                del self._word_corrections[oldest]
+
             self._word_corrections[wrong] = correct
             self._dirty = True
             self._rebuild_patterns()
@@ -135,7 +133,7 @@ class AdaptiveLearning:
             get_correction_collector().record_text_correction(wrong, correct)
         except Exception:
             pass
-    
+
     def learn_term(self, term: str) -> None:
         """Add a term to the custom vocabulary (protects from 'correction')."""
         if not term or len(term) < _MIN_WORD_LENGTH:
@@ -143,51 +141,47 @@ class AdaptiveLearning:
         term = term.lower().strip()
 
         with self._data_lock:
-            if len(self._custom_terms) >= _MAX_CUSTOM_TERMS:
-                # Remove oldest term to make room
-                if self._custom_terms:
-                    evicted = self._custom_terms.pop()
-                    logger.warning("Custom terms full, evicted: %s", evicted)
+            if len(self._custom_terms) >= _MAX_CUSTOM_TERMS and self._custom_terms:
+                evicted = self._custom_terms.pop()
+                logger.warning("Custom terms full, evicted: %s", evicted)
 
             self._custom_terms.add(term)
             self._dirty = True
 
         self._maybe_save()
-    
+
     def record_term_usage(self, term: str) -> None:
         """Record that a term was used (for frequency weighting)."""
         if not term or len(term) < _MIN_WORD_LENGTH:
             return
         term = term.lower().strip()
-        
+
         with self._data_lock:
-            if len(self._term_frequency) >= _MAX_FREQUENCY_TERMS:
-                # Prune lowest-frequency terms
-                if self._term_frequency:
-                    min_term = min(self._term_frequency, key=lambda t: self._term_frequency[t])
-                    del self._term_frequency[min_term]
-            
+            if len(self._term_frequency) >= _MAX_FREQUENCY_TERMS and self._term_frequency:
+                min_term = min(self._term_frequency, key=lambda t: self._term_frequency[t])
+                del self._term_frequency[min_term]
+
             self._term_frequency[term] += 1
             self._dirty = True
-        
+
         # Don't save on every usage - too frequent
-    
+
     def learn_accent_pattern(self, wrong: str, correct: str) -> None:
         """Learn an accent-specific correction pattern."""
         if not wrong or not correct:
             return
-        
+
         with self._data_lock:
             self._accent_hints[wrong.lower()] = correct.lower()
             self._dirty = True
             self._rebuild_patterns()
-        
+
         self._maybe_save()
-    
+
     # ------------------------------------------------------------------
     # Query API
     # ------------------------------------------------------------------
-    
+
     def get_correction(self, word: str) -> Optional[str]:
         """Get learned correction for a word, or None if not found."""
         with self._data_lock:
@@ -272,17 +266,16 @@ class AdaptiveLearning:
 
         # Find differing words
         changes_found = 0
-        for i, (old, new) in enumerate(zip(old_words, new_words)):
+        for old, new in zip(old_words, new_words):
             if old != new:
                 changes_found += 1
-                if changes_found == 1:
-                    # Learn this single-word correction
-                    if self._is_valid_correction(old, new):
-                        self.learn_correction(old, new)
-                else:
+                if changes_found != 1:
                     # Multiple changes - too complex to learn
                     return
 
+                # Learn this single-word correction
+                if self._is_valid_correction(old, new):
+                    self.learn_correction(old, new)
         # Record frequency of terms in new text
         for word in new_words:
             if len(word) >= _MIN_WORD_LENGTH and word.isalpha():
@@ -295,28 +288,25 @@ class AdaptiveLearning:
             return False
         if not (new.replace("'", "").replace("-", "").isalpha()):
             return False
-        
+
         # Must be similar length (not wildly different words)
         len_ratio = len(old) / len(new) if new else 0
         if not (0.5 <= len_ratio <= 2.0):
             return False
-        
+
         # Must share some characters (Levenshtein-ish heuristic)
         shared = len(set(old) & set(new))
         total = len(set(old) | set(new))
-        if total > 0 and shared / total < 0.3:
-            return False
-        
-        return True
-    
+        return total <= 0 or shared / total >= 0.3
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
-    
+
     def _rebuild_patterns(self) -> None:
         """Rebuild compiled regex patterns for corrections."""
         patterns = []
-        
+
         for wrong, correct in self._word_corrections.items():
             try:
                 # Word boundary match, case insensitive
@@ -324,22 +314,22 @@ class AdaptiveLearning:
                 patterns.append((pat, correct))
             except re.error:
                 continue
-        
+
         for wrong, correct in self._accent_hints.items():
             try:
                 pat = re.compile(rf"\b{re.escape(wrong)}\b", re.IGNORECASE)
                 patterns.append((pat, correct))
             except re.error:
                 continue
-        
+
         self._correction_patterns = patterns
-    
+
     def _maybe_save(self) -> None:
         """Save data if dirty and debounce time has passed."""
         now = time.time()
         if self._dirty and (now - self._last_save) > _SAVE_DEBOUNCE_SEC:
             self._save()
-    
+
     def _save(self) -> None:
         """Persist learning data to disk."""
         path = self._data_dir / _LEARNING_FILE
@@ -361,19 +351,19 @@ class AdaptiveLearning:
                 self._last_save = time.time()
         except Exception as exc:
             logger.warning("Failed to save learning data: %s", exc)
-    
+
     def _load(self) -> None:
         """Load learning data from disk."""
         path = self._data_dir / _LEARNING_FILE
-        
+
         if not path.exists():
             logger.info("No existing learning data at %s", path)
             return
-        
+
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            
+
             with self._data_lock:
                 self._word_corrections = data.get("word_corrections", {})
                 self._custom_terms = set(data.get("custom_terms", []))

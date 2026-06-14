@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 from typing import Callable, List, Pattern, Tuple, Union
 
+from src.dictation.postprocess.rules import apply_data_rules
+
 # (compiled_pattern, replacement)
 _Rule = Tuple[Pattern, Union[str, Callable[[re.Match], str]]]
 
@@ -191,7 +193,13 @@ _RULES: List[_Rule] = [
 
 
 def apply_terminology(text: str) -> str:
-    """Apply MRI signal, MSK, and general radiology corrections in order."""
+    """Apply MRI signal, MSK, and general radiology corrections in order.
+
+    Runs the hand-tuned developer table first, then the data-driven rules from
+    ``corrections.yaml`` / the user's ``user_corrections.yaml`` (see
+    :mod:`src.dictation.postprocess.rules`) so site- and miner-added homophone
+    fixes apply without code changes.
+    """
     for pattern, repl in _RULES:
         text = pattern.sub(repl, text)  # type: ignore[arg-type]
-    return text
+    return apply_data_rules(text)

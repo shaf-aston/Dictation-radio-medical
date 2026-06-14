@@ -24,10 +24,10 @@ def _load_macros() -> MacroLibrary:
         if not path.exists():
             logger.warning(f"Macros file not found: {path}")
             return {}
-        
+
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        
+
         # Convert JSON lists [label, text] to tuples (label, text)
         return {
             region: [tuple(item) for item in phrases]
@@ -40,9 +40,8 @@ def _load_macros() -> MacroLibrary:
 def reload_macros() -> None:
     """Hot-reload macros from JSON. Updates global MACROS and REGION_ORDER."""
     global MACROS, REGION_ORDER
-    
-    new_macros = _load_macros()
-    if new_macros:
+
+    if new_macros := _load_macros():
         MACROS = new_macros
         REGION_ORDER = list(MACROS.keys())
         logger.info(f"Reloaded {len(MACROS)} macro regions")

@@ -22,14 +22,14 @@ def install_test_runtime_stubs():
         def __init__(self) -> None:
             pass
 
-    qtcore_stub.QObject = _FakeQObject
-    qtcore_stub.Signal = _FakeSignal
+    qtcore_stub.QObject = _FakeQObject  # type: ignore
+    qtcore_stub.Signal = _FakeSignal  # type: ignore
 
     sys.modules.setdefault("PySide6", pyside6_stub)
     sys.modules.setdefault("PySide6.QtCore", qtcore_stub)
 
     faster_whisper_stub = types.ModuleType("faster_whisper")
-    faster_whisper_stub.WhisperModel = object
+    faster_whisper_stub.WhisperModel = object  # type: ignore
     sys.modules.setdefault("faster_whisper", faster_whisper_stub)
     sys.modules.setdefault("soundfile", types.ModuleType("soundfile"))
 

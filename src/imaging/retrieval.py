@@ -184,7 +184,7 @@ class EmbeddingIndex:
             # HNSW search
             indices, distances = self._hnsw_index.knn_query(query_embedding[None, :], k=top_k)
             # distances from HNSW cosine are (1 - similarity); convert back
-            results = [
+            return [
                 (1.0 - float(dist), self._metadata[idx])
                 for idx, dist in zip(indices[0], distances[0])
             ]
@@ -193,11 +193,10 @@ class EmbeddingIndex:
             # For normalized vectors, cosine similarity = dot product
             similarities = np.dot(self._embeddings, query_embedding)
             top_indices = np.argsort(similarities)[-top_k:][::-1]
-            results = [
-                (float(similarities[idx]), self._metadata[idx]) for idx in top_indices
+            return [
+                (float(similarities[idx]), self._metadata[idx])
+                for idx in top_indices
             ]
-
-        return results
 
     def save(self, path: Path) -> None:
         """Save index and embeddings to disk.

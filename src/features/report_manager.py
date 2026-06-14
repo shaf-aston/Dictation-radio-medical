@@ -2,20 +2,28 @@
 Report management: auto-save, plain-text save, and Word (.docx) export.
 Word export requires:  pip install python-docx
 """
+
+from __future__ import annotations
+
 import io
 import logging
 import os
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from src.features.file_manager import autosave_dir
+
+if TYPE_CHECKING:
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Inches, Pt, RGBColor
 
 logger = logging.getLogger(__name__)
 
 try:
-    from docx import Document
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.shared import Inches, Pt, RGBColor
+    from docx import Document  # type: ignore[assignment]
+    from docx.enum.text import WD_ALIGN_PARAGRAPH  # type: ignore[assignment]
+    from docx.shared import Inches, Pt, RGBColor  # type: ignore[assignment]
 
     DOCX_AVAILABLE = True
 except ImportError:
@@ -33,6 +41,11 @@ _SECTION_HEADERS = {
     "CLINICAL INDICATION:", "CLINICAL DETAILS:", "COMPARISON:",
     # RSNA-style section headers
     "EXAMINATION", "EXAMINATION:",
+    # RCR-style (Royal College of Radiologists) section headers
+    "CLINICAL HISTORY", "CLINICAL HISTORY:", "OPINION", "OPINION:",
+    # ECR/ESR-style (European structured-reporting) section headers
+    "CLINICAL INFORMATION", "CLINICAL INFORMATION:",
+    "RECOMMENDATION", "RECOMMENDATION:", "RECOMMENDATIONS", "RECOMMENDATIONS:",
 }
 
 
@@ -136,14 +149,15 @@ def _build_word_document(text: str, patient_info: dict):
             continue
 
         upper = stripped.upper()
-        # Detect section headers: all-caps words or known headers ending with ':'
-        is_header = (
+        if (
             upper in _SECTION_HEADERS
-            or (stripped.endswith(":") and stripped.upper() == stripped and len(stripped.split()) <= 5)
+            or (
+                stripped.endswith(":")
+                and stripped.upper() == stripped
+                and len(stripped.split()) <= 5
+            )
             or any(upper.startswith(h) for h in _SECTION_HEADERS)
-        )
-
-        if is_header:
+        ):
             h = doc.add_heading(stripped, level=2)
             h.runs[0].font.color.rgb = RGBColor(0x1F, 0x49, 0x7D)
         else:

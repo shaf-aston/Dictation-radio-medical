@@ -268,10 +268,10 @@ _QUICK_SCAN_MARKERS: Dict[str, List[str]] = {
 
 def _has_potential_matches(text_lower: str, accent: str) -> bool:
     """Quick check if text might contain any matchable patterns for this accent."""
-    markers = _QUICK_SCAN_MARKERS.get(accent, [])
-    if not markers:
+    if markers := _QUICK_SCAN_MARKERS.get(accent, []):
+        return any(marker in text_lower for marker in markers)
+    else:
         return False
-    return any(marker in text_lower for marker in markers)
 
 
 def apply_accent_corrections(text: str, accent: str) -> str:
@@ -292,12 +292,12 @@ def apply_accent_corrections(text: str, accent: str) -> str:
     """
     if accent == "neutral" or accent not in ACCENT_PROFILES:
         return text
-    
+
     # Quick scan optimization: skip regex processing if no potential matches
     text_lower = text.lower()
     if not _has_potential_matches(text_lower, accent):
         return text
-    
+
     patterns = ACCENT_PROFILES.get(accent, [])
     for pattern, repl in patterns:
         text = pattern.sub(repl, text)
@@ -356,18 +356,19 @@ def suggest_accent(text: str, min_matches: int = 2) -> Optional[str]:
     """
     if not text:
         return None
-    
+
     text_lower = text.lower()
     best_accent: Optional[str] = None
     best_count = 0
-    
+
     for accent in _ACCENT_SIGNATURES:
         patterns = _get_signature_patterns(accent)
-        count = sum(1 for p in patterns if p.search(text_lower))
+        count = sum(bool(p.search(text_lower))
+                for p in patterns)
         if count >= min_matches and count > best_count:
             best_count = count
             best_accent = accent
-    
+
     return best_accent
 
 

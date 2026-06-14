@@ -30,8 +30,9 @@ logger = logging.getLogger(__name__)
 def _active_model_path():
     """Return the active fine-tuned model directory, or None for the base model."""
     try:
-        from src.cloud.model_registry import ModelRegistry
-        return ModelRegistry().get_active_model_path()
+        from src.cloud.framework.registry import ModelRegistry
+        from src.training.schemas import TASK_WHISPER_VOICE
+        return ModelRegistry().get_active_model_path(TASK_WHISPER_VOICE)
     except Exception as exc:
         logger.debug("Model registry lookup failed: %s", exc)
         return None
@@ -104,6 +105,8 @@ def on_start_recording(window: MainWindow) -> None:
     """Start a new recording session."""
     if window.recorder.is_recording:
         return
+    # Log any edits to the previous dictation before this one overwrites it.
+    window.flush_dictation_edits()
     path = create_temp_wav()
     window.current_wav_path = path
     try:
@@ -222,6 +225,10 @@ def on_transcription_finished(window: MainWindow) -> None:
     window.btn_record.setEnabled(True)
     window.btn_stop.setEnabled(False)
     window._show_status("Ready")
+    # Snapshot the dictation output so any later manual edit can be diffed
+    # against it (the "was dictation itself wrong?" signal). Flushed to the
+    # edit log when the report is committed (export / clear / close).
+    window._post_dictation_snapshot = window.editor.toPlainText()
     # De-identify the session audio while the WAV still exists; the collector
     # session stays open so spelling fixes made during review are captured too.
     _prepare_training_audio()
@@ -290,14 +297,14 @@ def check_critical_findings(window: MainWindow) -> None:
 
     msg = QMessageBox(window)
     msg.setWindowTitle("Critical / Urgent Finding Detected")
-    msg.setIcon(QMessageBox.Critical if level1 else QMessageBox.Warning)
+    msg.setIcon(QMessageBox.Icon.Critical if level1 else QMessageBox.Icon.Warning)
     msg.setText(
         "The following critical or urgent finding(s) were detected in this report.\n\n"
         "Please confirm verbal communication with the referring clinician before saving."
     )
     msg.setDetailedText(summary)
-    btn_ack = msg.addButton("I have communicated this finding", QMessageBox.AcceptRole)
-    msg.addButton("Proceed without acknowledging", QMessageBox.RejectRole)
+    btn_ack = msg.addButton("I have communicated this finding", QMessageBox.ButtonRole.AcceptRole)
+    msg.addButton("Proceed without acknowledging", QMessageBox.ButtonRole.RejectRole)
     msg.setDefaultButton(btn_ack)
     msg.exec()
 

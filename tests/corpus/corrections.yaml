@@ -1,0 +1,56 @@
+# Correction regression corpus — the safety net.
+#
+# Every mishearing we have ever fixed lives here as an input -> expected pair,
+# asserted against the FULL post-processing pipeline (postprocess_transcript).
+# Add a pair whenever you add a rule (see docs/CORRECTIONS.md). A fix that
+# regresses later turns this file red in CI.
+#
+# Include negatives too: "must NOT change" cases that prove a homophone rule
+# does not fire on ordinary English.
+#
+# Fields:
+#   in:   raw transcript fed to the pipeline
+#   out:  exact expected output
+#   note: (optional) what this case guards
+
+# --- Chest / abdomen homophones (the cases that started this) ---------------
+- in: "small amount of plural effusion bilaterally"
+  out: "Small amount of pleural effusion bilaterally"
+  note: "plural -> pleural before an anatomical word"
+
+- in: "there are coalescistic changes in the gallbladder"
+  out: "There are cholecystitis changes in the gallbladder"
+  note: "Whisper mishears cholecystitis"
+
+# --- Negatives: grammatical 'plural' must survive untouched ------------------
+- in: "the plural form of the noun"
+  out: "The plural form of the noun"
+  note: "no anatomical context -> not rewritten"
+
+- in: "plural verbs agree with plural subjects"
+  out: "Plural verbs agree with plural subjects"
+
+# --- MSK corrections (seeded from test_worker_logic.py) ----------------------
+- in: "anterior crucial ligament"
+  out: "Anterior cruciate ligament"
+
+- in: "this finding is crucial"
+  out: "This finding is crucial"
+  note: "negative: 'crucial' only -> 'cruciate' before 'ligament'"
+
+- in: "median meniscus"
+  out: "Medial meniscus"
+
+- in: "the median value is five"
+  out: "The median value is five"
+  note: "negative: 'median' only -> 'medial' in anatomical context"
+
+- in: "there is a tier of the supraspinatus"
+  out: "There is a tear of the supraspinatus"
+
+# --- Measurements ------------------------------------------------------------
+- in: "5 by 3 by 2 millimetres"
+  out: "5 x 3 x 2 mm"
+
+- in: "15 degrees"
+  out: "15°"

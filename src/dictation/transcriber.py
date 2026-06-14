@@ -108,7 +108,7 @@ class Transcriber:
                 elapsed = time.time() - t_start
                 logger.info("Model loaded successfully with compute_type=%s [%.2fs]", ct, elapsed)
                 return
-            except Exception as exc:
+            except (ValueError, RuntimeError) as exc:
                 logger.warning("Failed to load with compute_type=%s: %s", ct, exc)
                 last_err = exc
 

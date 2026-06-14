@@ -1,28 +1,31 @@
-"""Lightning AI REST client.
+"""Lightning AI REST client — task-agnostic.
 
-Wraps the Lightning AI HTTP API for the four operations the app needs: upload a
-training batch, submit a training job, poll job status, and download the
-resulting model artefact. The REST surface (rather than the heavier SDK or SSH)
-keeps this dependency-light and firewall-friendly — only ``httpx`` is required,
-which the project already ships.
+Wraps the Lightning AI HTTP API for the four operations every training task
+needs: upload a batch archive, submit a job, poll job status, and download the
+resulting artifact. The REST surface (rather than the heavier SDK or SSH) keeps
+this dependency-light and firewall-friendly — only ``httpx`` is required, which
+the project already ships.
 
 Credentials: the API key is read from the OS keychain via :mod:`keyring` and is
 never written to ``dictation_settings.json`` or any log. The project id (not a
 secret) lives in settings.
 
-Note on endpoints: Lightning AI's exact REST paths evolve; they are centralised
-as constants here so a future API change is a one-file edit. Job submission is
-modelled as "create a job from a script + args"; adapt the payload in
-``submit_training_job`` to match the deployed Lightning AI Jobs API.
+The job payload is generic: a :class:`~src.cloud.tasks.base.JobSpec` (entrypoint
++ compute + args) is supplied by the task, so adding a new model type never
+touches this file. Lightning AI's exact REST paths evolve; they are centralised
+as constants here so a future API change is a one-file edit.
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from src.cloud.exceptions import AuthError, CloudError, QuotaError
+
+if TYPE_CHECKING:
+    from src.cloud.tasks.base import JobSpec
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +57,8 @@ def clear_api_key() -> None:
     try:
         import keyring
         keyring.delete_password(_KEYRING_SERVICE, _KEYRING_KEY)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not clear API key from keychain: %s", exc)
 
 
 class LightningAIClient:
@@ -129,23 +132,17 @@ class LightningAIClient:
     # Training jobs
     # ------------------------------------------------------------------
 
-    def submit_training_job(
-        self, batch_id: str, data_url: str, base_model: str,
-        lora_rank: int = 8, epochs: int = 5,
-    ) -> str:
-        """Submit a fine-tuning job; return the Lightning job id."""
+    def submit_training_job(self, spec: "JobSpec") -> str:
+        """Submit a fine-tuning job described by *spec*; return the job id.
+
+        The task owns *spec* (name, entrypoint, compute, args), so this method
+        is identical for voice, text-correction, and scan models.
+        """
         payload = {
-            "name": f"radio-dictate-{batch_id}",
-            "entrypoint": "scripts/lightning/train_whisper.py",
-            "compute": {"type": "gpu", "name": "A10G"},
-            "args": {
-                "base-model": base_model,
-                "batch-id": batch_id,
-                "data-url": data_url,
-                "lora-rank": lora_rank,
-                "epochs": epochs,
-                "output-path": f"models/{batch_id}/",
-            },
+            "name": spec.name,
+            "entrypoint": spec.entrypoint,
+            "compute": spec.compute,
+            "args": spec.args,
         }
         resp = self._request(
             "POST", f"/projects/{self.project_id}/jobs", json=payload
@@ -153,7 +150,7 @@ class LightningAIClient:
         job_id = resp.json().get("id") or resp.json().get("job_id")
         if not job_id:
             raise CloudError("Job submission returned no job id.")
-        logger.info("Submitted training job %s for batch %s", job_id, batch_id)
+        logger.info("Submitted job %s (%s)", job_id, spec.name)
         return job_id
 
     def get_job_status(self, job_id: str) -> dict:
@@ -187,8 +184,11 @@ class LightningAIClient:
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / "model_artifact.tar.gz"
+        # Bounded read timeout: a stalled download must not hang the poll thread
+        # forever. The connect timeout is short; reads get a generous 5 min/chunk.
+        timeout = httpx.Timeout(_TIMEOUT, read=300.0)
         try:
-            with httpx.Client(timeout=None) as client:
+            with httpx.Client(timeout=timeout) as client:
                 with client.stream("GET", artifact_url, headers=self._headers()) as resp:
                     resp.raise_for_status()
                     with open(dest, "wb") as fh:

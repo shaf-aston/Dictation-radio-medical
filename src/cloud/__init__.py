@@ -2,9 +2,17 @@
 
 This package is the *only* part of the app that talks to the network. It is
 strictly optional: the local dictation pipeline never imports from here, so the
-app runs fully offline when cloud features are disabled. The flow is:
+app runs fully offline when cloud features are disabled.
 
-    stage corrections (src.training) → de-identify (privacy) → upload (uploader)
-    → train on Lightning AI → download CT2 model → register (model_registry)
-    → activate into the local Transcriber.
+Layout:
+  * :mod:`src.cloud.framework` — task-agnostic core (client, registry, sync,
+    job monitor).
+  * :mod:`src.cloud.tasks` — one plug-in per model type (voice, text, scan) that
+    supplies the parts that differ: archive layout and Lightning job spec.
+  * :mod:`src.cloud.privacy` — PHI de-identification gate (shared, task-agnostic).
+  * :mod:`src.cloud.exceptions` — the :class:`CloudError` hierarchy.
+
+Flow: stage corrections (``src.training``) → de-identify (``privacy``) → a task
+builds a batch → upload + train on Lightning AI → download artifact → register
+(``framework.registry``) → activate into the local model that consumes it.
 """

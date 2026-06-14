@@ -2,10 +2,38 @@
 
 from __future__ import annotations
 
+import importlib
+import sys
+
 import pytest
 
 from src.cloud.exceptions import PrivacyError
 from src.cloud.privacy import DeIdentifier
+
+
+@pytest.fixture
+def real_soundfile():
+    """Yield the real soundfile module, bypassing any test-harness stub.
+
+    Pops the stub (if any) before the test and restores it after so that
+    other tests that rely on the stub are unaffected.
+    """
+    stub = sys.modules.pop("soundfile", None)
+    try:
+        sf = importlib.import_module("soundfile")
+    except Exception:
+        if stub is not None:
+            sys.modules["soundfile"] = stub
+        pytest.skip("real soundfile not installed")
+    if not hasattr(sf, "write"):
+        if stub is not None:
+            sys.modules["soundfile"] = stub
+        pytest.skip("soundfile unavailable (stubbed)")
+    yield sf
+    if stub is not None:
+        sys.modules["soundfile"] = stub
+    else:
+        sys.modules.pop("soundfile", None)
 
 
 def test_redacts_patient_name():
@@ -49,11 +77,12 @@ def test_round_trip_text_then_validate():
     assert deid.validate_clean(cleaned) is True
 
 
-def test_deidentify_audio_silences_phi_preserves_findings(tmp_path):
+def test_deidentify_audio_silences_phi_preserves_findings(tmp_path, real_soundfile):
     """Segments whose transcript names the patient are silenced (±0.5s);
-    other audio is untouched. Guards the acoustic side of the upload gate."""
+    other audio is untouched. Guards the acoustic side of the upload gate.
+    """
     np = pytest.importorskip("numpy")
-    sf = pytest.importorskip("soundfile")
+    sf = real_soundfile
 
     sr = 16000
     audio = (0.3 * np.sin(2 * np.pi * 220 * np.arange(4 * sr) / sr)).astype("float32")

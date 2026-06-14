@@ -8,8 +8,6 @@ instead of the clinical findings.
 
 from __future__ import annotations
 
-import pytest
-
 from src.features.file_manager import autosave_dir
 from src.features.report_manager import format_plain_text_report
 from src.features.report_analyzer import ReportAnalyzer
@@ -36,13 +34,9 @@ def test_strip_header_returns_body_only():
 
 
 def test_top_terms_mine_findings_not_boilerplate():
-    bodies = [
-        "FINDINGS:\nThe ACL is intact. The medial meniscus shows a tear.\n\nIMPRESSION:\nMeniscal tear.",
-        "FINDINGS:\nThe ACL is intact. The lateral meniscus shows a tear.\n\nIMPRESSION:\nMeniscal tear.",
-        "FINDINGS:\nThe ACL is intact. Small joint effusion.\n\nIMPRESSION:\nEffusion.",
-    ]
-    for i, b in enumerate(bodies):
-        _write_report(b, i)
+    _write_report("FINDINGS:\nThe ACL is intact. The medial meniscus shows a tear.\n\nIMPRESSION:\nMeniscal tear.", 0)
+    _write_report("FINDINGS:\nThe ACL is intact. The lateral meniscus shows a tear.\n\nIMPRESSION:\nMeniscal tear.", 1)
+    _write_report("FINDINGS:\nThe ACL is intact. Small joint effusion.\n\nIMPRESSION:\nEffusion.", 2)
 
     a = ReportAnalyzer().analyze_all_reports()
     assert a.report_count == 3
@@ -54,8 +48,9 @@ def test_top_terms_mine_findings_not_boilerplate():
 
 
 def test_recurring_sentence_becomes_template():
-    for i in range(3):
-        _write_report("FINDINGS:\nThe ACL is intact.\n\nIMPRESSION:\nNormal study.", i)
+    _write_report("FINDINGS:\nThe ACL is intact.\n\nIMPRESSION:\nNormal study.", 0)
+    _write_report("FINDINGS:\nThe ACL is intact.\n\nIMPRESSION:\nNormal study.", 1)
+    _write_report("FINDINGS:\nThe ACL is intact.\n\nIMPRESSION:\nNormal study.", 2)
     a = ReportAnalyzer().analyze_all_reports()
     suggested = " ".join(s for s, _ in a.template_suggestions)
     assert "ACL is intact" in suggested

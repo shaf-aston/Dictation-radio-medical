@@ -420,8 +420,9 @@ def on_show_learning_stats(window: MainWindow) -> None:
                     f"  (replaced: {ed.get('replace', 0)}, "
                     f"inserted: {ed.get('insert', 0)}, deleted: {ed.get('delete', 0)})\n"
                 )
-                recent = [e for e in load_edits() if e.get("op") == "replace"][-5:]
-                if recent:
+                if recent := [
+                    e for e in load_edits() if e.get("op") == "replace"
+                ][-5:]:
                     msg += "Recent dictation fixes:\n"
                     for e in recent:
                         msg += f"  • {e['before']} → {e['after']}\n"

@@ -1,3 +1,7 @@
+"""Microphone capture: streams audio chunks to a growing WAV file on disk."""
+
+from __future__ import annotations
+
 import logging
 import threading
 from typing import Any, Optional
@@ -55,8 +59,11 @@ class Recorder:
             with self._lock:
                 if self._sf is not None:
                     self._sf.write(indata.copy())
-            # Compute RMS level from int16 samples normalised to [-1, 1]
-            float_data = indata.astype(np.float32) / 32768.0
+            # Normalize to [-1, 1]: driver may deliver int16 or float32
+            if indata.dtype.kind == "i":
+                float_data = indata.astype(np.float32) / 32768.0
+            else:
+                float_data = indata.astype(np.float32)
             rms = float(np.sqrt(np.mean(float_data ** 2)))
             self._current_level = min(rms * 8.0, 1.0)   # scale: 0.125 RMS ≈ full bar
             self._is_clipping = bool(np.any(np.abs(float_data) >= _CLIP_THRESHOLD))

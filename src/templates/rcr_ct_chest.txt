@@ -1,0 +1,51 @@
+EXAMINATION: CT Chest [without / without and with contrast / high resolution]
+DATE:
+CLINICAL HISTORY:
+COMPARISON:
+
+TECHNIQUE:
+[Non-contrast / contrast-enhanced] CT thorax.
+[High-resolution (HRCT) sequences included: yes / no].
+IV contrast administered: [yes / no].
+
+FINDINGS:
+
+AIRWAYS:
+Trachea:
+Main bronchi:
+Segmental bronchi:
+
+LUNGS:
+Right upper lobe:
+Right middle lobe:
+Right lower lobe:
+Left upper lobe:
+Left lower lobe / lingula:
+
+PLEURA:
+Right pleural space: No effusion. No pneumothorax.
+Left pleural space: No effusion. No pneumothorax.
+
+MEDIASTINUM:
+Trachea and central airways:
+Heart and pericardium:
+Great vessels:
+Oesophagus:
+Lymph nodes:
+
+CHEST WALL AND DIAPHRAGM:
+Chest wall:
+Diaphragm:
+
+OSSEOUS STRUCTURES:
+Vertebral column:
+Ribs:
+Sternum:
+
+UPPER ABDOMEN (visualised):
+Liver:
+Spleen:
+Adrenals:
+
+OPINION:
+1.

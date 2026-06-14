@@ -18,9 +18,9 @@ from src.dictation.postprocess import (  # noqa: E402
 )
 from src.dictation.worker import (  # noqa: E402
     LiveTranscribeWorker,
-    _OVERLAP_SEC,
+    _OVERLAP_SEC,  # type: ignore
     _RADIOLOGY_INITIAL_PROMPT,
-    _WINDOW_SEC,
+    _WINDOW_SEC,  # type: ignore
 )
 
 SR = 16000

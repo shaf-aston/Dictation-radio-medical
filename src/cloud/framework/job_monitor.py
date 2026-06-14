@@ -1,9 +1,10 @@
 """Background poller that advances cloud training jobs from the UI thread.
 
 Runs on a QThread and periodically asks :class:`SyncManager` to poll in-flight
-jobs. When a job finishes and its model is downloaded + registered, it emits
-``model_available`` so the main window can offer to activate it. All heavy work
-happens inside ``SyncManager``; this class only handles timing and signalling.
+jobs (of any task type). When a job finishes and its model is downloaded +
+registered, it emits ``model_available`` so the main window can offer to activate
+it. All heavy work happens inside ``SyncManager``; this class only handles timing
+and signalling.
 
 The monitor is inert unless cloud training is enabled, so it is always safe to
 start at app launch.
@@ -37,7 +38,7 @@ class CloudJobMonitor(QObject):
 
     def run(self) -> None:
         import time
-        from src.cloud.sync_manager import SyncManager
+        from src.cloud.framework.sync import SyncManager
 
         logger.info("CloudJobMonitor started")
         try:
@@ -49,9 +50,9 @@ class CloudJobMonitor(QObject):
         while self._keep_running:
             try:
                 if SyncManager._enabled():
-                    # Kick off training if the threshold has been reached.
+                    # Kick off voice training if the threshold has been reached.
                     sync.maybe_start_training()
-                    # Advance any in-flight jobs.
+                    # Advance any in-flight jobs (all task types).
                     for version in sync.poll_and_collect():
                         self.model_available.emit(version)
             except Exception as exc:  # never let the monitor thread die

@@ -325,9 +325,7 @@ class CorrectionCollector:
             return False, "Consent required for image upload."
 
         try:
-            # De-identify image (best-effort; logs failures but never raises)
-            de_id_path = self._deidentify_image(record.image_path)
-            if de_id_path:
+            if de_id_path := self._deidentify_image(record.image_path):
                 record.de_identified_image_path = de_id_path
 
             from src.training.staging_db import get_staging_db

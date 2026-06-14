@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import subprocess
 import logging
 import warnings
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from functools import partial
 
-from PySide6.QtWidgets import QMainWindow, QApplication, QFileDialog, QMessageBox
+if TYPE_CHECKING:
+    from PySide6.QtCore import QThread
+    from src.dictation.worker import LiveTranscribeWorker
+
+from PySide6.QtWidgets import (
+    QMainWindow, QApplication, QFileDialog, QMessageBox,
+    QTextEdit, QPushButton, QComboBox, QLabel, QLineEdit,
+    QCheckBox, QFrame, QSplitter, QProgressBar, QMenu, QVBoxLayout, QWidget,
+)
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 
@@ -81,16 +90,50 @@ class MainWindow(QMainWindow):
     Ctrl+R          Reload macros from JSON
     """
 
+    # Attributes set by build_ui / build_menu / setup_level_timer
+    patient_panel: QFrame
+    patient_name: QLineEdit
+    patient_id: QLineEdit
+    patient_dob: QLineEdit
+    patient_study_date: QLineEdit
+    patient_referrer: QLineEdit
+    patient_accession: QLineEdit
+    splitter: QSplitter
+    macros_panel: QFrame
+    macro_region_combo: QComboBox
+    _macro_container: QWidget
+    _macro_layout: QVBoxLayout
+    template_combo: QComboBox
+    editor: QTextEdit
+    _info_words: QLabel
+    btn_record: QPushButton
+    btn_stop: QPushButton
+    model_combo: QComboBox
+    vad_checkbox: QCheckBox
+    language_input: QLineEdit
+    accent_combo: QComboBox
+    btn_export_word: QPushButton
+    _level_bar: QProgressBar
+    _status_label: QLabel
+    _wordcount_label: QLabel
+    _autosave_label: QLabel
+    recent_menu: QMenu
+    _level_timer: QTimer
+    _active_accent: str
+
     def __init__(self) -> None:
         super().__init__()
         self.settings = Settings()
         self.recorder = Recorder()
         self.current_wav_path: Optional[str] = None
-        self.live_thread: Optional[object] = None
-        self.live_worker: Optional[object] = None
+        self.live_thread: Optional[QThread] = None
+        self.live_worker: Optional[LiveTranscribeWorker] = None
         self._dictation_start_pos: int = 0
         self._last_editor_text: str = ""
         self._corrections_pending: list = []
+        # Snapshot of the editor right after dictation finishes; diffed against
+        # the delivered text at commit time to log what the radiologist changed.
+        self._post_dictation_snapshot: Optional[str] = None
 
         build_ui(self)
         build_menu(self)
@@ -129,8 +172,7 @@ class MainWindow(QMainWindow):
 
         # Load templates
         load_templates(self)
-        last_template = self.settings.get("last_template", "")
-        if last_template:
+        if last_template := self.settings.get("last_template", ""):
             idx = self.template_combo.findText(last_template)
             if idx >= 0:
                 self.template_combo.setCurrentIndex(idx)
@@ -157,7 +199,7 @@ class MainWindow(QMainWindow):
         if self.settings.get("cloud_enabled", False):
             try:
                 from PySide6.QtCore import QThread
-                from src.cloud.job_monitor import CloudJobMonitor
+                from src.cloud.framework.job_monitor import CloudJobMonitor
                 self._cloud_monitor_thread = QThread()
                 self._cloud_monitor = CloudJobMonitor()
                 self._cloud_monitor.moveToThread(self._cloud_monitor_thread)
@@ -206,8 +248,7 @@ class MainWindow(QMainWindow):
         text = self.editor.toPlainText().strip()
         if not text:
             return
-        path = autosave_report(text, self._get_patient_info())
-        if path:
+        if path := autosave_report(text, self._get_patient_info()):
             timestamp = datetime.now().strftime("%H:%M")
             self._autosave_label.setText(f"Auto-saved: {timestamp}")
             logger.info("Auto-saved to %s", path)
@@ -219,7 +260,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _apply_theme(self, theme: str) -> None:
-        QApplication.instance().setStyleSheet(DARK if theme == "dark" else LIGHT)
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(DARK if theme == "dark" else LIGHT)  # type: ignore[union-attr]
         self.settings.set("theme", theme)
 
     def on_toggle_theme(self) -> None:
@@ -276,7 +319,7 @@ class MainWindow(QMainWindow):
                 content = fh.read()
             self.editor.setPlainText(content)
             self.settings.set("last_template", name)
-            self._show_status("Template loaded: " + name, 2000)
+            self._show_status(f"Template loaded: {name}", 2000)
             audit_log.log_template_loaded(name)
         except Exception as exc:
             QMessageBox.warning(self, "Template Error", str(exc))
@@ -332,13 +375,15 @@ class MainWindow(QMainWindow):
 
     def on_new_report(self) -> None:
         if self.editor.toPlainText().strip():
+            _Yes = QMessageBox.StandardButton.Yes
             reply = QMessageBox.question(
                 self, "New Report",
                 "Clear the current report and start a new one?",
-                QMessageBox.Yes | QMessageBox.No,
+                _Yes | QMessageBox.StandardButton.No,
             )
-            if reply != QMessageBox.Yes:
+            if reply != _Yes:
                 return
+        self.flush_dictation_edits()
         self.editor.clear()
         self.patient_name.clear()
         self.patient_id.clear()
@@ -367,6 +412,12 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().setText(self.editor.toPlainText())
         self._show_status("Copied to clipboard.", 1500)
 
+    def _post_save(self, path: str, verb: str, log_fn) -> None:  # type: ignore[type-arg]
+        self.settings.add_recent_report(path)
+        rebuild_recent_menu(self)
+        self._show_status(f"{verb}: {os.path.basename(path)}", 2000)
+        log_fn(path, self._get_patient_info().get("id", ""))
+
     def on_save_txt(self) -> None:
         if not validate_template_fields(self):
             return
@@ -378,12 +429,10 @@ class MainWindow(QMainWindow):
             return
         try:
             text = self.editor.toPlainText()
+            self.flush_dictation_edits()
             save_report_txt(path, text, self._get_patient_info())
-            self.settings.add_recent_report(path)
-            rebuild_recent_menu(self)
-            self._show_status(f"Saved: {os.path.basename(path)}", 2000)
-            pid = self._get_patient_info().get("id", "")
-            audit_log.log_report_saved(path, pid, len(text.split()))
+            self._post_save(path, "Saved",
+                            lambda p, pid: audit_log.log_report_saved(p, pid, len(text.split())))
         except Exception as exc:
             QMessageBox.critical(self, "Save Error", str(exc))
 
@@ -405,13 +454,10 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            text = self.editor.toPlainText()
-            export_to_word(path, text, self._get_patient_info())
-            self.settings.add_recent_report(path)
-            rebuild_recent_menu(self)
-            self._show_status(f"Exported: {os.path.basename(path)}", 2000)
-            pid = self._get_patient_info().get("id", "")
-            audit_log.log_report_exported(path, pid, "docx")
+            self.flush_dictation_edits()
+            export_to_word(path, self.editor.toPlainText(), self._get_patient_info())
+            self._post_save(path, "Exported",
+                            lambda p, pid: audit_log.log_report_exported(p, pid, "docx"))
         except Exception as exc:
             QMessageBox.critical(self, "Export Error", str(exc))
 
@@ -466,11 +512,29 @@ class MainWindow(QMainWindow):
 
         # Passive learning: track user edits
         if (not self.recorder.is_recording
-                and self._last_editor_text
-                and self.settings.get("learning_enabled", True)):
-            if text != self._last_editor_text:
-                learn_from_edit(self._last_editor_text, text)
+                        and self._last_editor_text
+                        and self.settings.get("learning_enabled", True)) and text != self._last_editor_text:
+            learn_from_edit(self._last_editor_text, text)
         self._last_editor_text = text
+
+    def flush_dictation_edits(self) -> None:
+        """Log how the last dictation's output differs from the delivered text.
+
+        Called at every commit point (export, save, clear, open, close, and the
+        start of the next recording). Compares the snapshot taken when dictation
+        finished against the current editor text and records the radiologist's
+        edits — the signal for whether dictation itself was mistaken. Cleared
+        after flushing so each session is logged once.
+        """
+        snapshot = self._post_dictation_snapshot
+        if snapshot is None:
+            return
+        self._post_dictation_snapshot = None
+        if not self.settings.get("learning_enabled", True):
+            return
+        with contextlib.suppress(Exception):
+            from src.features.edit_tracking import record_session_edits
+            record_session_edits(snapshot, self.editor.toPlainText())
 
     # ------------------------------------------------------------------
     # Window close – persist settings
@@ -492,26 +556,19 @@ class MainWindow(QMainWindow):
 
         # Stop the cloud job monitor thread if running.
         if self._cloud_monitor is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._cloud_monitor.stop()
                 if self._cloud_monitor_thread is not None:
                     self._cloud_monitor_thread.quit()
                     self._cloud_monitor_thread.wait(2000)
-            except Exception:
-                pass
 
         # Persist any open training-capture session (review-time corrections).
-        try:
+        with contextlib.suppress(Exception):
             from src.ui.recording_session import finalize_training_capture
             finalize_training_capture()
-        except Exception:
-            pass
-
         # Save adaptive learning data on exit
-        try:
+        with contextlib.suppress(Exception):
             get_adaptive_learning().force_save()
-        except Exception:
-            pass
         super().closeEvent(event)
 
 

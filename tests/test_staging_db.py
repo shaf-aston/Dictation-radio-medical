@@ -50,8 +50,11 @@ def test_mark_uploaded_removes_from_pending(db):
 
 
 def test_get_pending_respects_limit(db):
-    for _ in range(5):
-        db.insert_correction(_record())
+    db.insert_correction(_record())
+    db.insert_correction(_record())
+    db.insert_correction(_record())
+    db.insert_correction(_record())
+    db.insert_correction(_record())
     assert len(db.get_pending(limit=3)) == 3
 
 

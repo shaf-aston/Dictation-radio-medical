@@ -10,6 +10,8 @@ Retention: files are never deleted automatically — manual archival required
            after the institutional retention period (recommended: 8 years).
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from datetime import datetime, timezone

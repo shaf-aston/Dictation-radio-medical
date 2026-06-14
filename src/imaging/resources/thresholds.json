@@ -1,0 +1,22 @@
+{
+  "_comment": "Per-pathology probability thresholds for the chest X-ray abstention gate. A finding is surfaced ONLY if its probability is >= its threshold. Defaults are deliberately conservative (high) so the tool abstains on anything but clear cases; tune per site in data/imaging/thresholds.json. _default applies to any label without an explicit entry.",
+  "_default": 0.85,
+  "Atelectasis": 0.85,
+  "Cardiomegaly": 0.85,
+  "Consolidation": 0.88,
+  "Edema": 0.88,
+  "Effusion": 0.85,
+  "Emphysema": 0.88,
+  "Enlarged Cardiomediastinum": 0.88,
+  "Fibrosis": 0.88,
+  "Fracture": 0.9,
+  "Hernia": 0.9,
+  "Infiltration": 0.85,
+  "Lung Lesion": 0.9,
+  "Lung Opacity": 0.85,
+  "Mass": 0.9,
+  "Nodule": 0.9,
+  "Pleural_Thickening": 0.88,
+  "Pneumonia": 0.88,
+  "Pneumothorax": 0.9
+}

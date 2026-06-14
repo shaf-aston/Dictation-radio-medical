@@ -5,6 +5,8 @@ Sheets live as `.qss` files in `src/ui/styles/` and are read on import; the
 with existing callers (`from src.ui.styles import DARK, LIGHT`).
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 _STYLES_DIR = Path(__file__).resolve().parent / "styles"

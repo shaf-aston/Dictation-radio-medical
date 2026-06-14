@@ -1,0 +1,50 @@
+# Shipped correction rules — the data-driven spelling-fix layer.
+#
+# This file is REVIEWED and version-controlled. Site-specific rules added
+# through the app land in `user_corrections.yaml` (data dir), not here.
+#
+# Each rule:
+#   id:              short kebab-case identifier (for the miner / logs)
+#   pattern:         the misheard word (literal); or a raw regex if `regex: true`
+#   replacement:     the corrected text
+#   context_after:   (optional) only fire when followed by one of these words
+#   context_before:  (optional) only fire when preceded by one of these words
+#   case_sensitive:  (optional, default false)
+#   regex:           (optional, default false) treat `pattern` as raw regex
+#   note:            (optional) why the rule exists
+#
+# Context guards keep real-word homophones safe: "plural" is only rewritten to
+# "pleural" before an anatomical word, so grammatical "plural form" is left alone.
+#
+# After adding a rule here, add an input->expected pair to
+# tests/corpus/corrections.yaml and run pytest. See docs/CORRECTIONS.md.
+
+- id: pleural-homophone
+  pattern: "plural"
+  replacement: "pleural"
+  context_after:
+    - effusion
+    - effusions
+    - space
+    - spaces
+    - cavity
+    - thickening
+    - plaque
+    - plaques
+    - reaction
+    - based
+    - surface
+    - line
+    - fluid
+    - disease
+    - nodule
+    - nodules
+    - tail
+    - tails
+  note: "real-word homophone; grammatical 'plural' (form/verb/noun) is untouched"
+
+- id: cholecystitis-mishear
+  pattern: "co?al?esc?[iy]stic"
+  replacement: "cholecystitis"
+  regex: true
+  note: "Whisper mishears 'cholecystitis' as 'coalescistic' and variants"

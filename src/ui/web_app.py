@@ -61,13 +61,11 @@ class ReportRequest(BaseModel):
 
 def _model_to_dict(model: BaseModel) -> dict:
     """Return model data across Pydantic versions."""
-    if hasattr(model, "model_dump"):
-        return model.model_dump()
-    return model.dict()
+    return model.model_dump() if hasattr(model, "model_dump") else model.dict()
 
 
 def _normalize_theme(theme: object) -> str:
-    return theme if theme in {"dark", "light"} else "dark"
+    return str(theme) if str(theme) in {"dark", "light"} else "dark"
 
 
 def _settings() -> Settings:
@@ -136,17 +134,16 @@ def _template_markup() -> tuple[str, str]:
 
 def _macros_payload() -> dict:
     """Return the current macro regions and phrases in JSON-friendly form."""
-    regions = []
-    for region in macros.REGION_ORDER:
-        regions.append(
-            {
-                "name": region,
-                "phrases": [
-                    {"label": label, "text": text}
-                    for label, text in macros.MACROS.get(region, [])
-                ],
-            }
-        )
+    regions = [
+        {
+            "name": region,
+            "phrases": [
+                {"label": label, "text": text}
+                for label, text in macros.MACROS.get(region, [])
+            ],
+        }
+        for region in macros.REGION_ORDER
+    ]
     return {
         "regions": regions,
         "selected_region": _current_preferences()["macro_region"],
@@ -2077,7 +2074,9 @@ async def transcribe_audio(file: UploadFile = File(...)):
         return {"text": text}
     except Exception as e:
         logger.error("Transcription failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to transcribe audio")
+        raise HTTPException(
+            status_code=500, detail="Failed to transcribe audio"
+        ) from e
 
 
 if __name__ == "__main__":

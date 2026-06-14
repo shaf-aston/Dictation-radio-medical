@@ -8,6 +8,9 @@ Directory structure:
 - data/macros.json    User-editable quick phrases
 - templates/          Report templates (read-only)
 """
+
+from __future__ import annotations
+
 import functools
 import logging
 from datetime import datetime, timedelta
@@ -57,8 +60,18 @@ def templates_dir() -> Path:
     return _project_root() / "src" / "templates"
 
 def medical_wordlist_path() -> Path:
-    """Bundled medical terminology wordlist (read-only static resource)."""
+    """Broad generic medical wordlist — the membership net (read-only static)."""
     return _project_root() / "src" / "resources" / "medical_terms.txt"
+
+def radiology_lexicon_path() -> Path:
+    """Curated radiology lexicon — the clean spelling-correction snap targets.
+
+    Distinct from :func:`medical_wordlist_path`: that broad list answers "is this
+    already a real word?", while this curated, radiology-only list is what a
+    mis-transcribed word is *corrected to*, so typos snap to genuine radiology
+    terms rather than to generic-wordlist junk. Read-only static resource.
+    """
+    return _project_root() / "src" / "resources" / "radiology_lexicon.txt"
 
 def radiology_prompt_path() -> Path:
     """Whisper initial-prompt text fed to the model before transcription."""
@@ -67,6 +80,14 @@ def radiology_prompt_path() -> Path:
 def macros_file() -> Path:
     """Macros JSON file"""
     return _data_dir() / "macros.json"
+
+def user_corrections_path() -> Path:
+    """Site-added spelling-correction rules (YAML), editable via the app.
+
+    Kept in the data dir, separate from the shipped, version-controlled
+    ``corrections.yaml``, so an app update never clobbers a site's own rules.
+    """
+    return _data_dir() / "user_corrections.yaml"
 
 # ---------------------------------------------------------------------------
 # Cloud training storage (Lightning AI integration)
@@ -109,6 +130,14 @@ def analysis_dir() -> Path:
     path = _data_dir() / "analysis"
     path.mkdir(exist_ok=True)
     return path
+
+def dictation_edits_path() -> Path:
+    """JSONL log of post-dictation edits (the 'was dictation wrong?' signal).
+
+    Local-only, append-only; one JSON record per line. Mined by
+    ``scripts/mine_corrections.py`` and written by ``features/edit_tracking.py``.
+    """
+    return analysis_dir() / "dictation_edits.jsonl"
 
 # ---------------------------------------------------------------------------
 # Imaging assistant storage (scan classification, embeddings, datasets)

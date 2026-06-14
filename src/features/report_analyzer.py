@@ -208,9 +208,8 @@ class ReportAnalyzer:
             return phrases
         kept: List[Tuple[str, int]] = []
         for phrase, count in phrases:
-            if any(fuzz.ratio(phrase, k) > 90 for k, _ in kept):
-                continue
-            kept.append((phrase, count))
+            if all(fuzz.ratio(phrase, k) <= 90 for k, _ in kept):
+                kept.append((phrase, count))
         return kept
 
     def _body_regions(self, texts: List[str]) -> Dict[str, int]:

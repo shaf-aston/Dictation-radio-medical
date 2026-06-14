@@ -1,6 +1,9 @@
 """
 Persistent application settings stored as JSON alongside the project root.
 """
+
+from __future__ import annotations
+
 import json
 import logging
 from pathlib import Path
@@ -36,6 +39,10 @@ _DEFAULTS: dict = {
     "auto_download_models": True,      # auto-fetch fine-tuned models when jobs finish
     "active_model_version": None,      # active fine-tuned version, or None for base model
     "report_analysis_enabled": True,   # run local report pattern analysis on startup
+    # --- Learning & UI state ---
+    "learning_enabled": True,          # capture edits for adaptive learning
+    "learning_consent_shown": False,   # has user seen the learning consent dialog
+    "disclaimer_shown": False,         # has user seen the clinical disclaimer
 }
 
 

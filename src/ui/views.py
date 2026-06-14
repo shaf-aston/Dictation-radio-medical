@@ -21,7 +21,11 @@ from src.features.file_manager import templates_dir
 from src.ui.styles import COLOR_HEALTHY, LEVEL_BAR_STYLESHEET
 from src.features.report_manager import DOCX_AVAILABLE
 from src.ui.recording_session import on_start_recording, on_stop_recording
-from src.ui.dialogs import on_show_learning_stats, on_reset_learning
+from src.ui.dialogs import (
+    on_show_learning_stats, on_reset_learning, show_cloud_training_dialog,
+    show_ai_cleanup_settings_dialog, on_run_ai_cleanup, show_scan_assistant_dialog,
+    show_correction_rules_dialog,
+)
 
 if TYPE_CHECKING:
     from src.ui.main_window import MainWindow
@@ -40,7 +44,7 @@ def build_ui(window: MainWindow) -> None:
     root_layout.addWidget(window.patient_panel)
 
     # Horizontal splitter: macros | editor
-    window.splitter = QSplitter(Qt.Horizontal)
+    window.splitter = QSplitter(Qt.Orientation.Horizontal)
     window.macros_panel = build_macros_panel(window)
     window.splitter.addWidget(window.macros_panel)
     window.splitter.addWidget(build_editor_panel(window))
@@ -130,7 +134,7 @@ def build_macros_panel(window: MainWindow) -> QFrame:
     # Scroll area for dynamic macro buttons
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
-    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
     window._macro_container = QWidget()
     window._macro_layout = QVBoxLayout(window._macro_container)
@@ -208,7 +212,7 @@ def build_editor_panel(window: MainWindow) -> QWidget:
 def build_recording_bar(window: MainWindow) -> QFrame:
     """Build the recording controls and action bar."""
     bar = QFrame()
-    bar.setFrameShape(QFrame.StyledPanel)
+    bar.setFrameShape(QFrame.Shape.StyledPanel)
     layout = QHBoxLayout(bar)
     layout.setContentsMargins(6, 4, 6, 4)
     layout.setSpacing(8)
@@ -255,7 +259,7 @@ def build_recording_bar(window: MainWindow) -> QFrame:
 
     # Separator
     separator = QFrame()
-    separator.setFrameShape(QFrame.VLine)
+    separator.setFrameShape(QFrame.Shape.VLine)
 
     # Action buttons
     btn_copy = QPushButton("Copy")
@@ -345,6 +349,11 @@ def build_menu(window: MainWindow) -> None:
     _add_action(view_menu, "Increase Font Size", window.on_font_increase, "Ctrl+]")
     _add_action(view_menu, "Decrease Font Size", window.on_font_decrease, "Ctrl+[")
 
+    # Tools
+    tools_menu = menubar.addMenu("&Tools")
+    _add_action(tools_menu, "Scan Assistant...", partial(show_scan_assistant_dialog, window))
+    _add_action(tools_menu, "AI Cleanup (Groq)", partial(on_run_ai_cleanup, window))
+
     # Settings
     settings_menu = menubar.addMenu("&Settings")
     _add_action(settings_menu, "Open Auto-save Folder", window.on_open_autosave_folder)
@@ -352,8 +361,12 @@ def build_menu(window: MainWindow) -> None:
     _add_action(settings_menu, "Edit Macros (JSON)", window.on_edit_macros)
     _add_action(settings_menu, "Reload Macros", window.on_reload_macros, "Ctrl+R")
     settings_menu.addSeparator()
+    _add_action(settings_menu, "Correction Rules...", partial(show_correction_rules_dialog, window))
     _add_action(settings_menu, "Learning Statistics...", partial(on_show_learning_stats, window))
     _add_action(settings_menu, "Reset Learning Data...", partial(on_reset_learning, window))
+    settings_menu.addSeparator()
+    _add_action(settings_menu, "Cloud Voice Training...", partial(show_cloud_training_dialog, window))
+    _add_action(settings_menu, "AI Cleanup (Groq)...", partial(show_ai_cleanup_settings_dialog, window))
 
 def _add_action(menu: QMenu, label: str, slot, shortcut: str = "") -> QAction:
     """Add an action to a menu."""
@@ -384,13 +397,14 @@ def rebuild_macro_buttons(window: MainWindow, region: str = "") -> None:
     # Clear existing dynamic buttons (everything except the stretch)
     while window._macro_layout.count() > 1:
         item = window._macro_layout.takeAt(0)
-        if item.widget():
-            item.widget().deleteLater()
+        widget = item.widget() if item else None
+        if widget:
+            widget.deleteLater()
 
     for label, text in phrases:
         btn = QPushButton(label)
         btn.setToolTip(text)
-        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         btn.setStyleSheet("text-align: left; padding: 4px 6px; font-size: 11px; white-space: pre-wrap;")
         btn.clicked.connect(lambda checked=False, t=text: window._insert_macro(t))
         window._macro_layout.insertWidget(window._macro_layout.count() - 1, btn)

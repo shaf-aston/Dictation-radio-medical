@@ -42,9 +42,7 @@ def find_overlap(
 
     if m.size < min_size:
         return None
-    if m.b != 0 and m.a + m.size != len(tail):
-        return None
-    return m.a, m.b + m.size
+    return None if m.b != 0 and m.a + m.size != len(tail) else (m.a, m.b + m.size)
 
 
 def trim_committed_tail(committed: str, chunk_text: str, lookback: int = 20) -> str:

@@ -25,3 +25,11 @@ class PrivacyError(CloudError):
 
 class JobError(CloudError):
     """A training job failed on Lightning AI."""
+
+
+class ImagingError(CloudError):
+    """Scan/image analysis failed (model load, inference, or localization)."""
+
+
+class GroqError(CloudError):
+    """A Groq LLM cleanup request failed or returned unusable output."""

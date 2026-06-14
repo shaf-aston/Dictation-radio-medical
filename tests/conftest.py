@@ -36,9 +36,10 @@ def isolate_state(monkeypatch: pytest.MonkeyPatch) -> None:
         staticmethod(lambda: temp_data_dir),
     )
     adaptive_learning.AdaptiveLearning._instance = None
-    adaptive_learning._adaptive_learning = None
+    adaptive_learning._adaptive_learning = None  # type: ignore
 
-    medical_dict._TERMS = set()
-    medical_dict._COMMON_TERMS = []
-    medical_dict._FULL_TERMS_LIST = []
-    _postprocess_dict._MEDICAL_TERMS_CACHE = set()
+    medical_dict._TERMS = set()  # type: ignore
+    medical_dict._COMMON_TERMS = []  # type: ignore
+    medical_dict._FULL_TERMS_LIST = []  # type: ignore
+    medical_dict._CORRECTION_TARGETS = []  # type: ignore
+    _postprocess_dict._MEDICAL_TERMS_CACHE = set()  # type: ignore

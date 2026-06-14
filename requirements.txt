@@ -9,8 +9,19 @@ sounddevice>=0.4.7
 soundfile>=0.12.1
 numpy>=1.23.0
 
+# Efficient approximate nearest-neighbor search for embedding retrieval
+hnswlib>=0.8
+
 # Medical dictionary fuzzy matching
 rapidfuzz>=3.0.0
+
+# Offline English dictionary — the non-word guard for the spelling corrector.
+# Bundles its own frequency dict (no network). When absent, the corrector
+# degrades to a conservative ratio-only mode rather than risk over-correction.
+pyspellchecker>=0.8
+
+# Data-driven correction rules (corrections.yaml / user_corrections.yaml)
+PyYAML>=6.0
 
 # Word document export
 python-docx>=1.1.0

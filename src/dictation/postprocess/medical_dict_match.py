@@ -1,24 +1,142 @@
 """Stage 7 — fuzzy medical-dictionary correction.
 
-Replaces uncertain words with the closest entry in the bundled medical
-wordlist when similarity is at least :data:`_CUTOFF` (default 92%).
-Acronyms, protected terms, and short words are never touched.
+Replaces a misspelled word with the closest entry in the curated **radiology
+lexicon** (``medical_dict.get_correction_targets``) when it is within a small,
+length-scaled **edit distance** of that term. Acronyms, protected terms, and
+short words are never touched. Snapping to the curated lexicon — not the broad
+98k generic wordlist used for membership — is what keeps a typo from being
+pulled toward chemistry/drug junk that merely sits one edit away.
+
+Why edit distance and not a flat similarity ratio: a single typo in a
+normal-length word ("vertabra" → "vertebra", "atelactasis" → "atelectasis")
+only scores ~88–93% on a character ratio, so a flat 94% floor silently left
+the entire class of one-letter medical misspellings uncorrected. Edit
+distance separates "1 typo away from a real term" (a fix) from "a genuinely
+different word" (leave alone) the way a ratio cannot. This is the SymSpell
+acceptance model, scoped to non-dictionary words only.
 """
 
 from __future__ import annotations
 
+import logging
 import re
-from typing import Set
+from typing import Optional, Set
 
 from src.medical import medical_dict
+
+logger = logging.getLogger(__name__)
+
+try:  # rapidfuzz is a core dep, but mirror medical_dict's guard for stub envs
+    from rapidfuzz import process  # type: ignore
+    from rapidfuzz.distance import DamerauLevenshtein  # type: ignore
+    _DL_AVAILABLE = True
+except ImportError:
+    process = None  # type: ignore
+    DamerauLevenshtein = None  # type: ignore
+    _DL_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Tuning
 # ---------------------------------------------------------------------------
 
-_CUTOFF = 0.94                          # rapidfuzz similarity floor
+# Floor used in the fallback path when no English guard is available: without a
+# way to tell a real word from a non-word we keep the old conservative ratio so
+# the stage never demotes ordinary English.
+_LEGACY_CUTOFF = 0.94
 _MIN_LEN = 5                            # ignore words shorter than this
 _WORD_RE = re.compile(r"\b[A-Za-z][A-Za-z'\-]{2,}\b")
+
+
+def _max_edits(n: int) -> int:
+    """Edits we'll forgive as a typo, scaled by word length.
+
+    One edit is enough for ordinary words; long medical terms ("lymphade-
+    nopathy", "choledocholithiasis") routinely take two transcription slips,
+    so they get a little more room. Short words get none — at <5 chars a
+    single edit too easily lands on an unrelated real word.
+    """
+    if n < 5:
+        return 0
+    return 1 if n <= 9 else 2
+
+
+def _shared_prefix_len(a: str, b: str) -> int:
+    """Number of leading characters *a* and *b* have in common."""
+    n = 0
+    for ca, cb in zip(a, b):
+        if ca != cb:
+            break
+        n += 1
+    return n
+
+
+def _nearest_term(word: str, max_distance: int) -> Optional[str]:
+    """Closest medical term to *word* within *max_distance* edits, or None.
+
+    Retrieval and acceptance use the SAME metric (edit distance), so we never
+    reject a fixable typo just because some other term scored higher on a
+    different (ratio) metric. Searches the curated radiology lexicon for a
+    deterministic, truly-nearest result.
+
+    When several terms are equidistant, raw edit distance alone is a coin toss
+    that can pick a shorter unrelated word ("efusion" is one edit from both
+    "effusion" and "fusion"). A real misspelling almost always keeps the start
+    of the intended word, so ties break first on the longest shared prefix and
+    then on the closest length — steering "efusion" to "effusion".
+    """
+    if max_distance < 1:
+        return None
+    terms = medical_dict.get_correction_targets() or None
+    if not terms:
+        return None
+    # Callers only reach here when _DL_AVAILABLE is True (see the guard in
+    # _replace), which is exactly when rapidfuzz set these to real values.
+    assert process is not None and DamerauLevenshtein is not None
+    matches = process.extract(
+        word, terms, scorer=DamerauLevenshtein.distance,
+        score_cutoff=max_distance, limit=25,
+    )
+    if not matches:
+        return None
+    best = min(
+        matches,
+        key=lambda m: (m[1], -_shared_prefix_len(word, m[0]), abs(len(m[0]) - len(word))),
+    )
+    return best[0]
+
+
+# ---------------------------------------------------------------------------
+# English-word guard
+# ---------------------------------------------------------------------------
+# A genuine typo is a *non-word*. We must never "correct" a word that is already
+# valid English ("there", "around", "again") just because a real medical term
+# ("marrow" vs "narrow") sits one edit away. pyspellchecker bundles an OFFLINE
+# frequency dictionary (no network), so it's the guard. If it isn't installed,
+# `_english_known` returns None and the stage drops back to the conservative
+# ratio-only path — a missing dep can never *add* over-correction risk.
+_ENGLISH = None  # None = not yet loaded; False = unavailable; else a SpellChecker
+
+
+def _english_known(word: str) -> Optional[bool]:
+    """Return True/False if *word* is/isn't standard English, or None if no checker."""
+    global _ENGLISH
+    if _ENGLISH is None:
+        try:
+            from spellchecker import SpellChecker
+            _ENGLISH = SpellChecker()
+        except Exception:  # not installed / failed to load — guard unavailable
+            _ENGLISH = False
+            # Loud, once: without this guard the stage drops to the conservative
+            # ratio path and silently leaves the whole class of one-letter medical
+            # misspellings uncorrected. A silent degradation here is exactly how
+            # "the dictation keeps misspelling things" goes undiagnosed.
+            logger.warning(
+                "Spelling corrector degraded: pyspellchecker is not installed, so "
+                "the English-word guard is off and one-letter medical misspellings "
+                "(e.g. 'atelactasis'->'atelectasis', 'vertabra'->'vertebra') will "
+                "NOT be corrected. Install it: pip install pyspellchecker"
+            )
+    return None if _ENGLISH is False else bool(_ENGLISH.known([word]))
 
 # Inflectional suffixes the matcher must neither add nor strip. A fuzzy
 # "correction" that only changes a word's grammatical number or tense is
@@ -116,12 +234,23 @@ def _ensure_medical_terms() -> Set[str]:
 
 
 def _stems(word: str) -> Set[str]:
-    """Return stems of *word* after stripping one inflectional suffix."""
-    return {
+    """Return candidate base forms of *word* after undoing one inflection.
+
+    Covers simple suffix stripping (-s, -ed, -ing, …) plus the English ``y→ies``
+    plural ("opacities" → "opacity"). Without the ``ies→y`` case a correctly
+    spelled plural whose singular is in the wordlist (but the plural is not)
+    looks like a non-word and gets snapped to a near neighbour
+    ("opacities" → "opacifies"); restoring the singular lets the inflection
+    guard recognise it as already-correct and leave it alone.
+    """
+    stems = {
         word[: -len(suf)]
         for suf in _INFLECTIONS
         if word.endswith(suf) and len(word) - len(suf) >= _MIN_STEM
     }
+    if word.endswith("ies") and len(word) >= _MIN_STEM + 2:
+        stems.add(f"{word[:-3]}y")
+    return stems
 
 
 def _is_inflected_form(word: str, terms: Set[str]) -> bool:
@@ -158,6 +287,12 @@ def apply_medical_dictionary_suggestions(text: str) -> str:
     if not terms:
         return text
 
+    def _cased(w: str, sug: str) -> str:
+        """Re-apply *w*'s capitalisation to the lowercase suggestion."""
+        if w.isupper():
+            return sug.upper()
+        return sug[0].upper() + sug[1:] if w[0].isupper() else sug
+
     def _replace(m: re.Match) -> str:
         w = m[0]
         if w.upper() in _ACRONYMS:
@@ -168,12 +303,20 @@ def apply_medical_dictionary_suggestions(text: str) -> str:
         # An inflected form of a known term is already correct.
         if _is_inflected_form(wl, terms) or _is_inflected_form(wl, PROTECTED_TERMS):
             return w
-        sug = medical_dict.suggest_correction(wl, cutoff=_CUTOFF)
-        # Reject suggestions that differ only in inflectional suffix (number/tense).
-        if not sug or _only_inflection_differs(wl, sug):
+
+        eng = _english_known(wl)
+        if eng:
+            # A valid English word is never a typo to fix — leave it untouched,
+            # no matter how close a junk wordlist fragment sits.
             return w
-        if w.isupper():
-            return sug.upper()
-        return sug[0].upper() + sug[1:] if w[0].isupper() else sug
+        if eng is None or not _DL_AVAILABLE:
+            # No English guard (or no distance metric) available — fall back to
+            # the conservative ratio-only path so we never demote a real word.
+            sug = medical_dict.suggest_correction(wl, cutoff=_LEGACY_CUTOFF)
+            return w if not sug or _only_inflection_differs(wl, sug) else _cased(w, sug)
+        # Confirmed non-word: snap to the nearest term within a typo's edit
+        # distance — this is what catches the simple medical misspellings.
+        sug = _nearest_term(wl, _max_edits(len(wl)))
+        return w if not sug or _only_inflection_differs(wl, sug) else _cased(w, sug)
 
     return _WORD_RE.sub(_replace, text)

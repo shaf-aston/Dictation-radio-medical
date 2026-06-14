@@ -52,8 +52,8 @@ _PREV_WORD_PATTERN = re.compile(r"\b([A-Za-z0-9'-]+)\b(?!.*\b[A-Za-z0-9'-]+\b)")
 
 
 def _correction1_repl(m: re.Match) -> str:
-    _fire_correction_hook(m.group(1), m.group(3))
-    return f"{m.group(3)}{m.group(2)}"
+    _fire_correction_hook(m[1], m[3])
+    return f"{m[3]}{m[2]}"
 
 
 def apply_correction_commands(text: str) -> str:
@@ -98,13 +98,13 @@ _PERIOD_MEDICAL_BEFORE = re.compile(
 
 def _replace_colon(match: re.Match) -> str:
     if _COLON_ANATOMY_BEFORE.search(match.string[:match.start()]):
-        return match.group(0)
+        return match[0]
     return ":"
 
 
 def _replace_period(match: re.Match) -> str:
     if _PERIOD_MEDICAL_BEFORE.search(match.string[:match.start()]):
-        return match.group(0)
+        return match[0]
     return "."
 
 

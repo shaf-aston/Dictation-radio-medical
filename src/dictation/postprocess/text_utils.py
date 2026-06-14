@@ -27,9 +27,7 @@ def smart_capitalize(text: str) -> str:
         s = s.strip()
         if not s:
             return s
-        if _PRESERVE_CAPS.match(s):
-            return s
-        return s[0].upper() + s[1:]
+        return s if _PRESERVE_CAPS.match(s) else s[0].upper() + s[1:]
 
     parts = re.split(r"([.!?]+\s+)", text)
     out: List[str] = []

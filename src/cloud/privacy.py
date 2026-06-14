@@ -102,7 +102,6 @@ class DeIdentifier:
         Requires soundfile + numpy, which are already core dependencies.
         """
         try:
-            import numpy as np
             import soundfile as sf
         except Exception as exc:  # pragma: no cover - deps always present in app
             logger.warning("Audio de-identification skipped (deps missing): %s", exc)
@@ -140,7 +139,4 @@ class DeIdentifier:
     def _contains_phi(self, text: str) -> bool:
         if not text:
             return False
-        for pat in self._identifier_patterns:
-            if pat.search(text):
-                return True
-        return False
+        return any(pat.search(text) for pat in self._identifier_patterns)
