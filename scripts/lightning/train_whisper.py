@@ -134,6 +134,8 @@ def build_lightning_module(args):
     model = get_peft_model(base, lora_cfg)
     model.print_trainable_parameters()
 
+
+
     class WhisperFineTuner(L.LightningModule):
         def __init__(self):
             super().__init__()
@@ -151,8 +153,8 @@ def build_lightning_module(args):
             return out.loss
 
         def configure_optimizers(self):
-            opt = torch.optim.AdamW(self.parameters(), lr=args.lr, weight_decay=0.01)
-            return opt
+            return torch.optim.AdamW(self.parameters(), lr=args.lr, weight_decay=0.01)
+
 
     return WhisperFineTuner(), processor
 
@@ -166,7 +168,6 @@ def make_collator(processor):
         )
         label_lists = [f["labels"] for f in features]
         max_len = max(len(x) for x in label_lists)
-        pad_id = processor.tokenizer.pad_token_id
         labels = torch.full((len(label_lists), max_len), -100, dtype=torch.long)
         for i, lab in enumerate(label_lists):
             labels[i, : len(lab)] = torch.tensor(lab, dtype=torch.long)

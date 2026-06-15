@@ -1,0 +1,17 @@
+# Optional imaging extra.
+#
+# Two uses:
+#   * LOCAL: the Scan Assistant runs inference with these (torchxrayvision +
+#     torch). Install locally only if you want the scan feature; the rest of the
+#     app stays fully functional without them (all imports are lazy).
+#   * CLOUD: scripts/lightning/train_scan_classifier.py also needs these plus
+#     scikit-learn for the AUC validation gate.
+#
+# Install:  pip install -r scripts/lightning/requirements_imaging.txt
+torch>=2.2
+torchvision>=0.17
+torchxrayvision>=1.2     # validated pretrained DenseNet121 CXR weights (RSNA/NIH/CheXpert)
+scikit-image>=0.22       # image loading + resizing for the classifier
+matplotlib>=3.8          # Grad-CAM overlay rendering (headless Agg backend)
+scikit-learn>=1.4        # ROC-AUC for the training-side regression gate
+pydicom>=2.4             # optional DICOM ingest

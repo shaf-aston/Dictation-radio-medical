@@ -74,13 +74,24 @@ src/
 ├── templates/           plain-text report templates (RSNA / MSK / generic)
 └── resources/           medical_terms.txt
 
-data/                    temp WAVs · autosave/ · macros.json · audit.log · training/
+data/                    temp WAVs · autosave/ · macros.json · audit.log · training/ · medical_reference/
 dictation_settings.json  app settings
-scripts/                 verify_setup.py · lightning/ (cloud training)
+scripts/                 verify_setup.py · lightning/ (cloud training) · download_medical_references.py
 tests/                   pytest suite
 ```
 
-See [CLAUDE.md](CLAUDE.md) for architecture details and [CODING_STANDARDS.md](CODING_STANDARDS.md) for style rules.
+See [CLAUDE.md](CLAUDE.md) for architecture details, [CODING_STANDARDS.md](CODING_STANDARDS.md) for style rules, and [MEDICAL_REFERENCE_INTEGRATION.md](MEDICAL_REFERENCE_INTEGRATION.md) for training corpus setup.
+
+### Medical Reference Library
+
+Radio Dictate includes open-access radiology textbooks in `data/medical_reference/` for terminology extraction, clinical reasoning, and synthetic training data generation:
+
+- **A to Z of Chest Radiology** (Misra et al.) — chest trauma, pneumothorax, rib fractures
+- **A to Z of Emergency Radiology** (Holmes & Misra) — acute pathology patterns
+- **Basic Radiology** (Chen et al.) — fundamental imaging principles
+- **Principles of Radiographic Imaging** (Carlton et al.) — radiographic physics
+
+See [data/ORGANIZATION.md](data/ORGANIZATION.md) for folder structure and [data/medical_reference/metadata.json](data/medical_reference/metadata.json) for corpus inventory.
 
 ## Customisation
 

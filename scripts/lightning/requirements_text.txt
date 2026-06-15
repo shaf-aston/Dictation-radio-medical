@@ -1,0 +1,8 @@
+# Dependencies for the Lightning AI text-corrector training job ONLY.
+# Not installed locally — the local app loads a trained corrector for inference
+# via transformers if/when one is activated. Install inside the Lightning job image.
+torch>=2.2
+transformers>=4.40
+datasets>=2.19
+accelerate>=0.30
+sentencepiece>=0.2       # T5 tokenizer
