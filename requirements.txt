@@ -20,6 +20,18 @@ rapidfuzz>=3.0.0
 # degrades to a conservative ratio-only mode rather than risk over-correction.
 pyspellchecker>=0.8
 
+# Fast fuzzy-correction index (SymSpell) for the medical dictionary: a
+# deletion-dictionary over the ~98k-term wordlist keeps "nearest known term
+# within edit distance N" lookups sub-millisecond even with a large candidate
+# pool. When absent, the corrector falls back to the slower rapidfuzz ratio path.
+# editdistpy is symspellpy's fast (C) distance backend — since symspellpy 6.10 it
+# is an OPTIONAL extra, and without it get_symspell()'s lookups raise ImportError
+# and silently drop to the ~200x slower rapidfuzz 98k-term scan (which also fails
+# to correct one-letter medical typos). Pin it explicitly so a fresh install gets
+# the fast, correct path by default.
+symspellpy>=6.7.7
+editdistpy>=0.1.3
+
 # Data-driven correction rules (corrections.yaml / user_corrections.yaml)
 PyYAML>=6.0
 

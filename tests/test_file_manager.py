@@ -41,10 +41,16 @@ class TestDirectoryCreation:
         assert path.is_dir()
         assert path.name == "autosave"
 
-    def test_resources_dir_is_created(self) -> None:
-        path = fm.resources_dir()
+    def test_cache_dir_is_created(self) -> None:
+        path = fm.cache_dir()
         assert path.is_dir()
-        assert path.name == "resources"
+        assert path.name == "cache"
+
+    def test_cache_paths_live_under_cache_dir(self) -> None:
+        cache = fm.cache_dir()
+        assert fm.medical_dict_cache_path().parent == cache
+        assert fm.whisper_cache_dir().parent == cache
+        assert fm.imaging_embeddings_dir().parent == cache
 
 
 class TestTempWavLifecycle:
@@ -88,3 +94,38 @@ class TestAutosaveCleanup:
         fm.cleanup_old_autosaves(retention_days=30)
 
         assert new.exists()
+
+
+class TestLegacyCacheCleanup:
+    """Startup cleanup removes pre-data/cache/ homes and nothing else."""
+
+    def test_legacy_dirs_removed_and_siblings_untouched(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        data = tmp_path / "data"
+        legacy_resources = data / "resources"
+        legacy_embeddings = data / "imaging" / "embeddings"
+        legacy_resources.mkdir(parents=True)
+        legacy_embeddings.mkdir(parents=True)
+        (legacy_resources / "medical_symspell.pkl").write_bytes(b"stale")
+        (legacy_embeddings / "embeddings.npz").write_bytes(b"stale")
+        # Non-derived neighbours that must survive.
+        datasets = data / "imaging" / "datasets.json"
+        datasets.write_text("{}")
+        autosave = data / "autosave"
+        autosave.mkdir()
+        (autosave / "report.txt").write_text("keep")
+
+        monkeypatch.setattr(fm, "_data_dir", lambda: data)
+        fm._remove_legacy_cache_locations()
+
+        assert not legacy_resources.exists()
+        assert not legacy_embeddings.exists()
+        assert datasets.read_text() == "{}"
+        assert (autosave / "report.txt").read_text() == "keep"
+
+    def test_noop_when_no_legacy_dirs(self, tmp_path: Path, monkeypatch) -> None:
+        data = tmp_path / "data"
+        data.mkdir()
+        monkeypatch.setattr(fm, "_data_dir", lambda: data)
+        fm._remove_legacy_cache_locations()  # must not raise

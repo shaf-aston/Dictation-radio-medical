@@ -253,8 +253,10 @@ def test_embedding_index_search(embedding_sample):
 
     results = index.search(embedding_sample, top_k=2)
     assert len(results) == 2
-    # First result should be the query itself or closest
-    assert all(isinstance(score, float) and isinstance(path, str) for score, path in results)
+    # Metadata is now structured; bare-path inputs are upgraded to dicts.
+    assert all(
+        isinstance(score, float) and isinstance(meta["path"], str)
+        for score, meta in results)
 
 
 def test_embedding_index_search_without_build():
@@ -279,7 +281,8 @@ def test_embedding_index_save_load(tmp_path, embedding_sample):
     index2 = EmbeddingIndex()
     index2.load(save_path)
 
-    assert index2._metadata == metadata
+    # Bare-path metadata is upgraded to structured dicts on build/load.
+    assert [m["path"] for m in index2._metadata] == metadata
     assert index2._embeddings is not None
     assert np.allclose(index2._embeddings, np.array(embeddings))
 

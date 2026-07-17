@@ -5,12 +5,24 @@ from __future__ import annotations
 import re
 from typing import List
 
+_RE_HSPACE = re.compile(r"[^\S\n]+")
+_RE_PREPUNCT = re.compile(r"[ \t]+([.,;:!?)])")
+_RE_SENT = re.compile(r"([.!?]+\s+)")
+# Whisper decoding near-silence emits stray punctuation runs (", , . . ,").
+# After _RE_PREPUNCT strips the inner spaces these collapse to ",,..," — so fold
+# any run of two-or-more punctuation marks (optionally space-separated) down to
+# its first mark. Single spaced marks are left alone: those are the legitimate
+# output of the spoken-punctuation stage (" : ", " . ") and get joined by
+# _RE_PREPUNCT below.
+_RE_PUNCT_RUN = re.compile(r"([.,;:!?])[.,;:!?\s]*[.,;:!?]")
+
 
 def normalize_spaces(text: str) -> str:
-    """Collapse horizontal whitespace and remove spaces before punctuation."""
-    text = re.sub(r"[^\S\n]+", " ", text)
-    text = re.sub(r"[ \t]+([.,;:!?)])", r"\1", text)
-    return text.strip()
+    """Collapse horizontal whitespace, strip hallucinated punctuation runs, close gaps."""
+    text = _RE_HSPACE.sub(" ", text)
+    text = _RE_PUNCT_RUN.sub(r"\1", text)
+    text = _RE_PREPUNCT.sub(r"\1", text)
+    return _RE_HSPACE.sub(" ", text).strip()
 
 
 # Tokens whose canonical case is already uppercase — leave them alone.
@@ -29,7 +41,7 @@ def smart_capitalize(text: str) -> str:
             return s
         return s if _PRESERVE_CAPS.match(s) else s[0].upper() + s[1:]
 
-    parts = re.split(r"([.!?]+\s+)", text)
+    parts = _RE_SENT.split(text)
     out: List[str] = []
     for i in range(0, len(parts), 2):
         out.append(_cap(parts[i]))

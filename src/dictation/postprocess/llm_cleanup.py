@@ -9,7 +9,7 @@ document ("AI Cleanup"), and it is off by default.
 Safety / privacy:
   * Off unless ``groq_cleanup_enabled`` AND ``cloud_training_consent`` are set —
     the same consent the cloud-training path uses (no extra surprise network).
-  * Text is run through :class:`~src.cloud.privacy.DeIdentifier` BEFORE it leaves
+  * Text is run through :class:`~src.medical.deid.DeIdentifier` BEFORE it leaves
     the device, so patient identifiers are not sent to Groq.
   * Degrade-don't-crash: any error (missing key, network, bad JSON) returns the
     input unchanged, logged. Cleanup must never lose the radiologist's text.
@@ -26,9 +26,10 @@ import json
 import logging
 from typing import Any, List, Optional, Tuple, cast
 
+from src.core.keychain import clear_secret, get_secret, store_secret
+
 logger = logging.getLogger(__name__)
 
-_KEYRING_SERVICE = "radio-dictate"
 _KEYRING_KEY = "groq_api_key"
 _DEFAULT_MODEL = "llama-3.3-70b-versatile"
 _TIMEOUT = 30.0
@@ -64,28 +65,18 @@ _RESPONSE_SCHEMA = {
 
 def store_groq_key(api_key: str) -> None:
     """Persist the Groq API key in the OS keychain."""
-    import keyring
-    keyring.set_password(_KEYRING_SERVICE, _KEYRING_KEY, api_key)
+    store_secret(_KEYRING_KEY, api_key)
     logger.info("Groq API key stored in OS keychain")
 
 
 def get_groq_key() -> Optional[str]:
     """Retrieve the Groq API key from the OS keychain, or None if unset."""
-    try:
-        import keyring
-        return keyring.get_password(_KEYRING_SERVICE, _KEYRING_KEY)
-    except Exception as exc:
-        logger.warning("Could not read Groq key from keychain: %s", exc)
-        return None
+    return get_secret(_KEYRING_KEY)
 
 
 def clear_groq_key() -> None:
     """Remove the stored Groq API key from the OS keychain."""
-    try:
-        import keyring
-        keyring.delete_password(_KEYRING_SERVICE, _KEYRING_KEY)
-    except Exception as exc:
-        logger.debug("Could not clear Groq key from keychain: %s", exc)
+    clear_secret(_KEYRING_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +127,7 @@ def clean_with_llm(
         return text, []
 
     # PHI never leaves the device: scrub before sending.
-    from src.cloud.privacy import DeIdentifier
+    from src.medical.deid import DeIdentifier
     deid = DeIdentifier(patient_info or {})
     safe_text = deid.deidentify_text(text)
 

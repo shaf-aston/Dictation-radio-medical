@@ -12,23 +12,23 @@ Retention: files are never deleted automatically — manual archival required
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from src.core.json_store import append_jsonl
+
 logger = logging.getLogger(__name__)
 
-_LOG_FILENAME = "audit.log"
 _log_path: Optional[Path] = None
 
 
 def _get_log_path() -> Path:
     global _log_path
     if _log_path is None:
-        from src.features.file_manager import _data_dir
-        _log_path = _data_dir() / _LOG_FILENAME
+        from src.features.file_manager import audit_log_path
+        _log_path = audit_log_path()
     return _log_path
 
 
@@ -39,11 +39,7 @@ def _write(action: str, detail: Dict[str, Any]) -> None:
         "action": action,
         **detail,
     }
-    try:
-        with open(_get_log_path(), "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry) + "\n")
-    except Exception as exc:
-        logger.warning("Audit log write failed: %s", exc)
+    append_jsonl(_get_log_path(), [entry])
 
 
 # ---------------------------------------------------------------------------

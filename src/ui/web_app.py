@@ -1,9 +1,10 @@
 import html
 import io
 import json
+
+import anyio
 import logging
 import time
-from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
@@ -13,11 +14,22 @@ from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.core.settings import Settings
-from src.dictation.postprocess.pipeline import postprocess_transcript
+from src.core import perf
+from src.core.patient_schema import PATIENT_KEYS, empty_patient_info
+from src.core.settings import Settings, get_default
+from src.dictation.postprocess.pipeline import (
+    CLEANUP_LEVEL_LABELS,
+    CLEANUP_LEVELS,
+    postprocess_transcript,
+)
 from src.dictation.transcriber import SUPPORTED_MODELS, Transcriber
 from src.features.accent_corrections import ACCENT_LABELS
-from src.features.file_manager import templates_dir
+from src.features.file_manager import (
+    report_filename,
+    settings_file,
+    startup_cleanup,
+    templates_dir,
+)
 from src.features.report_manager import DOCX_AVAILABLE, export_to_word_bytes, format_plain_text_report
 from src.medical import macros
 from src.medical.macros import reload_macros
@@ -42,6 +54,7 @@ class PreferencesUpdate(BaseModel):
     language: str = "en"
     vad_filter: bool = True
     accent: str = "neutral"
+    cleanup_level: str = "medium"
     macro_region: str = ""
 
 
@@ -52,6 +65,17 @@ class PatientInfo(BaseModel):
     study_date: str = ""
     referring: str = ""
     accession: str = ""
+
+
+# The API contract must not drift from the fields the de-identifier scrubs and
+# the report header prints. Adding a field to the shared schema without adding
+# it here fails at import, loudly, rather than silently shipping an
+# un-scrubbed identifier to the transport layer.
+if tuple(PatientInfo.model_fields) != PATIENT_KEYS:
+    raise RuntimeError(
+        f"PatientInfo fields {tuple(PatientInfo.model_fields)} do not match the "
+        f"shared patient schema {PATIENT_KEYS}"
+    )
 
 
 class ReportRequest(BaseModel):
@@ -68,8 +92,32 @@ def _normalize_theme(theme: object) -> str:
     return str(theme) if str(theme) in {"dark", "light"} else "dark"
 
 
+#: Settings keys the browser client mirrors. The *values* come from
+#: ``settings._DEFAULTS`` — re-listing them here is how the web and desktop
+#: defaults drifted apart.
+_PREFERENCE_KEYS = (
+    "model_size", "language", "vad_filter", "accent", "cleanup_level",
+)
+
+_settings_instance: Optional[Settings] = None
+
+
 def _settings() -> Settings:
-    return Settings()
+    """The process-wide settings object.
+
+    Previously a fresh ``Settings()`` per call, which re-read and re-parsed the
+    JSON file from disk on every request *and* several times per page render.
+    Cached and refreshed only when the file actually changes, so an edit made in
+    the desktop app is still picked up. The cache is rebuilt if the settings
+    *path* itself changes underneath us.
+    """
+    global _settings_instance
+    path = settings_file()
+    if _settings_instance is None or _settings_instance.path != path:
+        _settings_instance = Settings()
+    else:
+        _settings_instance.refresh()
+    return _settings_instance
 
 
 def _current_theme() -> str:
@@ -78,27 +126,12 @@ def _current_theme() -> str:
 
 def _current_preferences() -> dict:
     settings = _settings()
-    macro_region = settings.get("last_macro_region", macros.REGION_ORDER[0] if macros.REGION_ORDER else "")
+    prefs = {key: settings.get(key, get_default(key)) for key in _PREFERENCE_KEYS}
+    macro_region = settings.get("last_macro_region", "")
     if macro_region not in macros.REGION_ORDER and macros.REGION_ORDER:
         macro_region = macros.REGION_ORDER[0]
-    return {
-        "model_size": settings.get("model_size", "base"),
-        "language": settings.get("language", "en"),
-        "vad_filter": settings.get("vad_filter", True),
-        "accent": settings.get("accent", "neutral"),
-        "macro_region": macro_region,
-    }
-
-
-def _current_patient_defaults() -> dict:
-    return {
-        "name": "",
-        "id": "",
-        "dob": "",
-        "study_date": "",
-        "referring": "",
-        "accession": "",
-    }
+    prefs["macro_region"] = macro_region
+    return prefs
 
 
 def _template_names() -> list[str]:
@@ -160,11 +193,15 @@ def _bootstrap_payload() -> dict:
         "templates": templates,
         "selected_template": selected_template,
         "preferences": _current_preferences(),
-        "patient_defaults": _current_patient_defaults(),
+        "patient_defaults": empty_patient_info(),
         "supported_models": SUPPORTED_MODELS,
         "accent_options": [
             {"key": key, "label": label}
             for key, label in ACCENT_LABELS.items()
+        ],
+        "cleanup_options": [
+            {"key": key, "label": label}
+            for key, label in CLEANUP_LEVEL_LABELS.items()
         ],
         "macros": _macros_payload(),
         "docx_available": DOCX_AVAILABLE,
@@ -222,9 +259,10 @@ def _get_transcriber() -> Transcriber:
 
 
 def _download_filename(patient: dict, ext: str) -> str:
-    pid = (patient.get("id") or "unknown").strip().replace(" ", "_") or "unknown"
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"dictation_{pid}_{ts}.{ext}"
+    """Attachment filename for a report download (shared builder, sanitised)."""
+    return report_filename(
+        patient, f".{ext}", prefix="dictation_", fallback_id="unknown"
+    )
 
 
 @asynccontextmanager
@@ -234,8 +272,31 @@ async def lifespan(_: FastAPI):
     logger.info("Preparing web app state...")
     transcriber = None
     transcriber_model_size = None
+    # Same startup housekeeping as the desktop GUI (temp files, old
+    # autosaves, legacy cache locations) — a web-only user must not miss it.
+    startup_cleanup(_settings().get("autosave_retention_days", 30))
+    _warm_up_singletons()
     yield
     logger.info("Shutting down")
+
+
+def _warm_up_singletons() -> None:
+    """Pre-build the slow spelling index and Whisper model off the request path.
+
+    Left lazy, both are built on the *first* ``/transcribe`` call and stall it by
+    seconds. Warming at startup on a background thread makes the first real
+    request fast. Best-effort: warm-up never blocks or fails app startup.
+    """
+    from src.dictation.warmup import (
+        postprocess_warmers,
+        transcriber_warmer,
+        warm_up_async,
+    )
+
+    model_size = _settings().get("model_size", "base")
+    if model_size not in SUPPORTED_MODELS:
+        model_size = "base"
+    warm_up_async(postprocess_warmers() + [transcriber_warmer(model_size)])
 
 
 app = FastAPI(title="Radio Dictate Web", lifespan=lifespan)
@@ -248,7 +309,34 @@ HTML_TEMPLATE = r"""
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="dark light">
     <title>Radio Dictate - Web Workstation</title>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        /* Self-hosted icons (offline-safe: no external CDN). Each .fa-* class masks
+           an inline SVG so currentColor still applies and the existing markup +
+           JS class-swaps keep working unchanged. */
+        .fas { display: inline-block; width: 1em; height: 1em; vertical-align: -0.125em;
+            background-color: currentColor;
+            -webkit-mask: var(--fa) no-repeat center / contain;
+            mask: var(--fa) no-repeat center / contain; }
+        .fa-spin { animation: fa-spin 1s linear infinite; }
+        @keyframes fa-spin { to { transform: rotate(360deg); } }
+        .fa-stethoscope { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M4 3v6a5 5 0 0 0 10 0V3'/><path d='M4 3H2M14 3h-2M9 18a4 4 0 0 0 8 0v-3'/><circle cx='20' cy='10' r='2'/></svg>"); }
+        .fa-moon { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'/></svg>"); }
+        .fa-sun { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='4'/><path d='M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'/></svg>"); }
+        .fa-file-circle-plus { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/><path d='M14 2v6h6'/><path d='M12 11v6M9 14h6'/></svg>"); }
+        .fa-trash { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6'/></svg>"); }
+        .fa-file-arrow-down { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/><path d='M14 2v6h6'/><path d='M12 12v6M9 15l3 3 3-3'/></svg>"); }
+        .fa-file-word { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/><path d='M14 2v6h6'/><path d='M8 13l1.5 5 1.5-4 1.5 4 1.5-5'/></svg>"); }
+        .fa-copy { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg>"); }
+        .fa-circle-info { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><path d='M12 16v-4M12 8h.01'/></svg>"); }
+        .fa-sliders { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6'/></svg>"); }
+        .fa-chevron-down { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>"); }
+        .fa-rotate-right { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a9 9 0 1 1-3-6.7L21 8'/><path d='M21 3v5h-5'/></svg>"); }
+        .fa-file-import { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/><path d='M14 2v6h6'/><path d='M3 12h8M8 9l3 3-3 3'/></svg>"); }
+        .fa-microphone { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z'/><path d='M19 10v1a7 7 0 0 1-14 0v-1M12 18v4M8 22h8'/></svg>"); }
+        .fa-spinner { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8'/></svg>"); }
+        .fa-check { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M20 6L9 17l-5-5'/></svg>"); }
+        .fa-stop { --fa: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='6' y='6' width='12' height='12' rx='2'/></svg>"); }
+    </style>
     <style>
         :root {
             --bg: #f4f7fb;
@@ -1094,6 +1182,10 @@ HTML_TEMPLATE = r"""
                             <label for="accentSelect">Accent</label>
                             <select id="accentSelect"></select>
                         </div>
+                        <div class="field field--compact">
+                            <label for="cleanupSelect" title="How much the pipeline rewrites your dictated words">Cleanup</label>
+                            <select id="cleanupSelect"></select>
+                        </div>
                         <label class="check-field" for="vadCheckbox">
                             <input id="vadCheckbox" type="checkbox">
                             <span>VAD</span>
@@ -1181,6 +1273,7 @@ HTML_TEMPLATE = r"""
         const modelSelect = document.getElementById('modelSelect');
         const languageInput = document.getElementById('languageInput');
         const accentSelect = document.getElementById('accentSelect');
+        const cleanupSelect = document.getElementById('cleanupSelect');
         const vadCheckbox = document.getElementById('vadCheckbox');
         const reloadMacrosBtn = document.getElementById('reloadMacrosBtn');
         const macroRegionSelect = document.getElementById('macroRegionSelect');
@@ -1364,6 +1457,16 @@ HTML_TEMPLATE = r"""
             });
         }
 
+        function populateCleanupOptions() {
+            cleanupSelect.innerHTML = '';
+            (BOOTSTRAP.cleanup_options || []).forEach((level) => {
+                const option = document.createElement('option');
+                option.value = level.key;
+                option.textContent = level.label;
+                cleanupSelect.appendChild(option);
+            });
+        }
+
         function populateMacroRegions() {
             macroRegionSelect.innerHTML = '';
             (BOOTSTRAP.macros?.regions || []).forEach((region) => {
@@ -1451,6 +1554,7 @@ HTML_TEMPLATE = r"""
             modelSelect.value = prefs.model_size || (BOOTSTRAP.supported_models || [])[0] || 'base';
             languageInput.value = prefs.language || 'en';
             accentSelect.value = prefs.accent || 'neutral';
+            cleanupSelect.value = prefs.cleanup_level || 'medium';
             vadCheckbox.checked = Boolean(prefs.vad_filter);
             macroRegionSelect.value = prefs.macro_region || currentMacroRegion();
             if (!macroRegionSelect.value && macroRegionSelect.options.length > 0) {
@@ -1477,6 +1581,7 @@ HTML_TEMPLATE = r"""
         function applyBootstrapState() {
             populateModelOptions();
             populateAccentOptions();
+            populateCleanupOptions();
             populateMacroRegions();
             loadPatientFromStorage();
             loadReportSettingsFromServer();
@@ -1515,6 +1620,7 @@ HTML_TEMPLATE = r"""
                 language: languageInput.value.trim() || 'en',
                 vad_filter: vadCheckbox.checked,
                 accent: accentSelect.value || 'neutral',
+                cleanup_level: cleanupSelect.value || 'medium',
                 macro_region: macroRegionSelect.value || '',
             };
 
@@ -1536,6 +1642,7 @@ HTML_TEMPLATE = r"""
                 modelSelect.value = BOOTSTRAP.preferences.model_size || payload.model_size;
                 languageInput.value = BOOTSTRAP.preferences.language || payload.language;
                 accentSelect.value = BOOTSTRAP.preferences.accent || payload.accent;
+                cleanupSelect.value = BOOTSTRAP.preferences.cleanup_level || payload.cleanup_level;
                 vadCheckbox.checked = Boolean(BOOTSTRAP.preferences.vad_filter);
                 macroRegionSelect.value = BOOTSTRAP.preferences.macro_region || payload.macro_region;
                 renderMacros(currentMacroRegion());
@@ -1774,6 +1881,7 @@ HTML_TEMPLATE = r"""
         modelSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });
         languageInput.addEventListener('input', () => { schedulePreferenceSave(); updateSettingsBadge(); });
         accentSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });
+        cleanupSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });
         vadCheckbox.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });
         macroRegionSelect.addEventListener('change', () => {
             renderMacros(currentMacroRegion());
@@ -1948,6 +2056,7 @@ async def set_preferences(payload: PreferencesUpdate):
         raise HTTPException(status_code=422, detail="Unsupported model size")
 
     accent = payload.accent if payload.accent in ACCENT_LABELS else "neutral"
+    cleanup_level = payload.cleanup_level if payload.cleanup_level in CLEANUP_LEVELS else "medium"
     language = payload.language.strip() or "en"
     macro_region = payload.macro_region.strip()
     if macro_region not in macros.REGION_ORDER and macros.REGION_ORDER:
@@ -1959,6 +2068,7 @@ async def set_preferences(payload: PreferencesUpdate):
         "language": language,
         "vad_filter": bool(payload.vad_filter),
         "accent": accent,
+        "cleanup_level": cleanup_level,
         "last_macro_region": macro_region,
     })
 
@@ -2039,10 +2149,23 @@ async def export_word_endpoint(payload: ReportRequest):
     return Response(content=docx_bytes, media_type=DOCX_MIME, headers=headers)
 
 
+@app.get("/api/debug/perf")
+async def perf_endpoint():
+    """Rolling stage timings for this process (local only, nothing is sent out).
+
+    This is the "tracking" surface: it shows where dictation time actually goes
+    — per post-process stage, per transcription — so a slowdown can be pointed
+    at rather than guessed at.
+    """
+    return {"stages": perf.snapshot()}
+
+
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
-    # Read uploaded bytes with size limit (50MB max)
-    max_size = 50 * 1024 * 1024  # 50MB
+    settings = _settings()
+    max_size = int(settings.get("max_upload_mb", get_default("max_upload_mb"))) * 1024 * 1024
+    # Read one byte past the limit: enough to detect an oversized upload without
+    # buffering the whole of it.
     audio_bytes = await file.read(max_size + 1)
 
     if len(audio_bytes) > max_size:
@@ -2057,20 +2180,31 @@ async def transcribe_audio(file: UploadFile = File(...)):
     try:
         t_start = time.time()
         prefs = _current_preferences()
-        t_transcribe_start = time.time()
-        text, _ = _get_transcriber().transcribe(
-            file_like,
-            language=prefs["language"],
-            vad_filter=bool(prefs["vad_filter"]),
-            beam_size=1,
-            condition_on_previous_text=False,
-            pause_threshold=_settings().get("pause_threshold", 2.5),
-        )
-        transcribe_time = time.time() - t_transcribe_start
-        text = postprocess_transcript(text, accent=prefs["accent"])
-        total_time = time.time() - t_start
-        logger.info("Request [%.2fs] (transcribe: [%.2fs], post-process: [%.2fs])",
-                    total_time, transcribe_time, total_time - transcribe_time)
+        pause_threshold = settings.get("pause_threshold", 2.5)
+        # This is a one-shot batch transcription of the whole clip (not the
+        # latency-critical live loop), so use a proper beam search for accuracy.
+        beam_size = int(settings.get("beam_size", 5))
+
+        # Whisper transcription and post-processing are synchronous and
+        # multi-second/CPU-bound. Run them in a worker thread so a request does
+        # not block the event loop and stall every other concurrent request.
+        def _transcribe() -> str:
+            with perf.stage("web.transcribe"):
+                text, _ = _get_transcriber().transcribe(
+                    file_like,
+                    language=prefs["language"],
+                    vad_filter=bool(prefs["vad_filter"]),
+                    beam_size=beam_size,
+                    condition_on_previous_text=False,
+                    pause_threshold=pause_threshold,
+                )
+            with perf.stage("web.postprocess"):
+                return postprocess_transcript(
+                    text, accent=prefs["accent"], cleanup_level=prefs["cleanup_level"]
+                )
+
+        text = await anyio.to_thread.run_sync(_transcribe)
+        perf.record("web.request", time.time() - t_start)
         return {"text": text}
     except Exception as e:
         logger.error("Transcription failed: %s", e, exc_info=True)
@@ -2082,5 +2216,10 @@ async def transcribe_audio(file: UploadFile = File(...)):
 if __name__ == "__main__":
     import uvicorn
 
+    settings = _settings()
     logging.basicConfig(level=logging.INFO)
-    uvicorn.run(app, host="127.0.0.1", port=8005)
+    uvicorn.run(
+        app,
+        host=str(settings.get("web_host", get_default("web_host"))),
+        port=int(settings.get("web_port", get_default("web_port"))),
+    )

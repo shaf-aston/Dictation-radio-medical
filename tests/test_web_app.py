@@ -188,6 +188,7 @@ def test_get_preferences_reflects_persisted_settings(monkeypatch) -> None:
         "language": "en-GB",
         "vad_filter": False,
         "accent": "east_asian",
+        "cleanup_level": "medium",
         "macro_region": "Knee",
     }
 
@@ -211,6 +212,32 @@ def test_put_preferences_persists_settings(monkeypatch) -> None:
     assert response.status_code == 200
     assert settings.get("model_size") == "base"
     assert settings.get("last_macro_region") in {"Spine", web_app.macros.REGION_ORDER[0]}
+
+
+def test_put_preferences_rejects_bogus_cleanup_level(monkeypatch) -> None:
+    """An out-of-range cleanup_level from a client is coerced to 'medium'.
+
+    This is a trust boundary: the value reaches the pipeline and gates AI
+    cleanup, so an arbitrary string must not be persisted verbatim.
+    """
+    settings = DummySettings({"theme": "dark"})
+    monkeypatch.setattr(web_app, "_settings", lambda: settings)
+
+    with _client(monkeypatch) as client:
+        response = client.put(
+            "/api/preferences",
+            json={
+                "model_size": "base",
+                "language": "en",
+                "vad_filter": False,
+                "accent": "neutral",
+                "cleanup_level": "bogus",
+                "macro_region": "Spine",
+            },
+        )
+
+    assert response.status_code == 200
+    assert settings.get("cleanup_level") == "medium"
 
 
 def test_get_macros_returns_regions(monkeypatch) -> None:

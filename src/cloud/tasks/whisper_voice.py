@@ -11,16 +11,11 @@ Archive layout (consumed by ``scripts/lightning/train_whisper.py``):
 
 from __future__ import annotations
 
-import io
-import json
 import logging
-import tarfile
-import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
-from src.cloud.tasks.base import JobSpec
+from src.cloud.tasks.base import JobSpec, base_job_args, base_manifest, write_manifest_archive
 from src.training.schemas import TASK_WHISPER_VOICE, CorrectionRecord
 
 logger = logging.getLogger(__name__)
@@ -35,13 +30,7 @@ class WhisperVoiceTask:
         self, batch_id: str, records: List[CorrectionRecord], base_model: str
     ) -> Path:
         """Write a tar.gz of audio clips + manifest.json to a temp file."""
-        manifest = {
-            "batch_id": batch_id,
-            "base_model": base_model,
-            "task_type": self.task_type,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "records": [],
-        }
+        manifest = {**base_manifest(batch_id, self.task_type, base_model), "records": []}
         # Deduplicate audio clips — many records share one session clip.
         audio_members: dict = {}
         for rec in records:
@@ -59,14 +48,7 @@ class WhisperVoiceTask:
                 entry["audio_file"] = arcname
             manifest["records"].append(entry)
 
-        tmp = Path(tempfile.gettempdir()) / f"{batch_id}.tar.gz"
-        with tarfile.open(tmp, "w:gz") as tar:
-            manifest_bytes = json.dumps(manifest, indent=2).encode("utf-8")
-            info = tarfile.TarInfo("manifest.json")
-            info.size = len(manifest_bytes)
-            tar.addfile(info, io.BytesIO(manifest_bytes))
-            for src_path, arcname in audio_members.items():
-                tar.add(src_path, arcname=arcname)
+        tmp = write_manifest_archive(batch_id, manifest, audio_members)
         logger.info("Built voice batch %s (%d records, %d clips)",
                     tmp.name, len(records), len(audio_members))
         return tmp
@@ -79,12 +61,5 @@ class WhisperVoiceTask:
             name=f"radio-dictate-voice-{batch_id}",
             entrypoint="scripts/lightning/train_whisper.py",
             compute={"type": "gpu", "name": "A10G"},
-            args={
-                "base-model": base_model,
-                "batch-id": batch_id,
-                "data-url": data_url,
-                "lora-rank": lora_rank,
-                "epochs": epochs,
-                "output-path": f"models/{batch_id}/",
-            },
+            args={**base_job_args(batch_id, data_url, base_model, epochs), "lora-rank": lora_rank},
         )

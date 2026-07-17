@@ -5,10 +5,10 @@ Loads from data/macros.json for user editability.
 Each entry is [button_label, report_text].
 """
 
-import json
 import logging
 from typing import Dict, List, Tuple
 
+from src.core.json_store import read_json
 from src.features.file_manager import macros_file
 
 logger = logging.getLogger(__name__)
@@ -19,22 +19,15 @@ MacroLibrary = Dict[str, List[MacroEntry]]
 
 def _load_macros() -> MacroLibrary:
     """Load macros from JSON file."""
+    data = read_json(macros_file(), {})
     try:
-        path = macros_file()
-        if not path.exists():
-            logger.warning(f"Macros file not found: {path}")
-            return {}
-
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
         # Convert JSON lists [label, text] to tuples (label, text)
         return {
             region: [tuple(item) for item in phrases]
             for region, phrases in data.items()
         }
-    except Exception as exc:
-        logger.error(f"Failed to load macros: {exc}")
+    except (AttributeError, TypeError) as exc:
+        logger.error("Malformed macros file: %s", exc)
         return {}
 
 def reload_macros() -> None:

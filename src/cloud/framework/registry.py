@@ -9,13 +9,13 @@ Activation is reversible via ``rollback_to_base(task_type)``.
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
+from src.core.json_store import read_json, write_json
 from src.training.schemas import TASK_WHISPER_VOICE, ModelVersion
 
 logger = logging.getLogger(__name__)
@@ -36,14 +36,7 @@ class ModelRegistry:
     # ------------------------------------------------------------------
 
     def _load(self) -> dict:
-        if not self._path.is_file():
-            return {"active": {}, "models": []}
-        try:
-            with open(self._path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception as exc:
-            logger.warning("Could not read model registry: %s", exc)
-            return {"active": {}, "models": []}
+        data = read_json(self._path, {"active": {}, "models": []})
         return self._normalize(data)
 
     @staticmethod
@@ -60,12 +53,7 @@ class ModelRegistry:
         return data
 
     def _save(self, data: dict) -> None:
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-        except Exception as exc:
-            logger.warning("Could not write model registry: %s", exc)
+        write_json(self._path, data)
 
     # ------------------------------------------------------------------
     # Registration

@@ -4,25 +4,37 @@ Persistent application settings stored as JSON alongside the project root.
 
 from __future__ import annotations
 
-import json
-import logging
 from pathlib import Path
 from typing import Any, List
 
+from src.core.json_store import read_json, write_json
 from src.features.file_manager import settings_file
-
-logger = logging.getLogger(__name__)
 
 _DEFAULTS: dict = {
     "model_size": "base",
     "language": "en",
     "vad_filter": True,
     "accent": "neutral",
+    "cleanup_level": "medium",  # post-dictation cleanup intensity: soft/medium/hard
     "theme": "dark",
     "font_size": 13,
     "auto_save_interval": 60,   # seconds
     "pause_threshold": 2.5,     # seconds silence → new paragraph
+    # --- Live transcription speed/quality knobs (see src/dictation/worker.py) ---
+    # live_window_sec = hard ceiling on audio sent to Whisper per cycle (safety).
+    # commit_lag_sec  = trailing audio kept un-committed (revisable). The steady-
+    # state window ≈ commit_lag_sec + 3s overlap, so LOWER commit_lag_sec = faster
+    # live transcription (less re-decoding) at a small accuracy cost; raise it for
+    # steadier text. Must stay above the 3s overlap. 25/8 restores pre-tuning size.
+    "live_window_sec": 25.0,
+    "commit_lag_sec": 8.0,
+    "beam_size": 5,             # beam width for one-shot (web) batch transcription
+    "silence_rms_floor": 0.002,  # skip live cycles quieter than this (anti-hallucination)
     "autosave_retention_days": 30,  # days to keep autosave files
+    # --- Web front-end (src/ui/web_app.py) ---
+    "web_host": "127.0.0.1",    # loopback only — the app is offline by default
+    "web_port": 8005,
+    "max_upload_mb": 50,        # reject audio uploads larger than this
     "recent_reports": [],
     "patient_info_visible": True,
     "macros_panel_visible": True,
@@ -46,30 +58,54 @@ _DEFAULTS: dict = {
 }
 
 
+def get_default(key: str) -> Any:
+    """The shipped default for *key* — the single source of truth for defaults.
+
+    Callers that mirror settings elsewhere (the web client's preferences
+    payload) read defaults from here rather than re-listing them, which is how
+    the desktop and web defaults drifted apart before.
+    """
+    return _DEFAULTS.get(key)
+
+
 class Settings:
     def __init__(self) -> None:
         self._data: dict = {}
         self._path: Path = settings_file()
+        self._mtime: float = -1.0
         self.load()
 
+    @property
+    def path(self) -> Path:
+        """The settings file this instance is bound to."""
+        return self._path
+
     def load(self) -> None:
-        if self._path.is_file():
-            try:
-                with open(self._path, "r", encoding="utf-8") as f:
-                    self._data = json.load(f)
-            except Exception as exc:
-                logger.warning("Could not load settings: %s", exc)
-                self._data = {}
+        self._data = read_json(self._path, {})
         for key, val in _DEFAULTS.items():
             if key not in self._data:
                 self._data[key] = val
+        self._mtime = self._current_mtime()
+
+    def refresh(self) -> None:
+        """Re-read the file if it changed on disk since the last load.
+
+        Lets a long-lived instance be cached (avoiding a re-parse per access)
+        without going stale when the other front-end, or the user, edits
+        ``dictation_settings.json``. A stat is cheap; a parse is not.
+        """
+        if self._current_mtime() != self._mtime:
+            self.load()
+
+    def _current_mtime(self) -> float:
+        try:
+            return self._path.stat().st_mtime
+        except OSError:
+            return -1.0
 
     def save(self) -> None:
-        try:
-            with open(self._path, "w", encoding="utf-8") as f:
-                json.dump(self._data, f, indent=2)
-        except Exception as exc:
-            logger.warning("Could not save settings: %s", exc)
+        write_json(self._path, self._data)
+        self._mtime = self._current_mtime()
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, _DEFAULTS.get(key, default))

@@ -16,12 +16,12 @@ can lower a threshold deliberately, but the shipped behaviour errs toward silenc
 
 from __future__ import annotations
 
-import json
 import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List
 
+from src.core.json_store import read_json
 from src.imaging.schemas import ImagingFinding, PathologyScore
 
 logger = logging.getLogger(__name__)
@@ -34,11 +34,7 @@ _FALLBACK_THRESHOLD = 0.85
 def _packaged_thresholds() -> Dict[str, float]:
     """Load the packaged default thresholds shipped with the app."""
     path = Path(__file__).parent / "resources" / "thresholds.json"
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("Could not read packaged thresholds (%s); using fallback", exc)
-        return {_DEFAULT_KEY: _FALLBACK_THRESHOLD}
+    raw = read_json(path, {_DEFAULT_KEY: _FALLBACK_THRESHOLD})
     return {k: float(v) for k, v in raw.items() if not k.startswith("_comment")}
 
 
@@ -49,15 +45,11 @@ def load_thresholds() -> Dict[str, float]:
     per-key, so a site can tune individual pathologies without restating them all.
     """
     thresholds = dict(_packaged_thresholds())
+    from src.features.file_manager import imaging_thresholds_path
+    user = read_json(imaging_thresholds_path(), {})
     try:
-        from src.features.file_manager import imaging_thresholds_path
-        user_path = imaging_thresholds_path()
-        if user_path.is_file():
-            user = json.loads(user_path.read_text(encoding="utf-8"))
-            thresholds |= {
-                k: float(v) for k, v in user.items() if not k.startswith("_")
-            }
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        thresholds |= {k: float(v) for k, v in user.items() if not k.startswith("_")}
+    except (TypeError, ValueError) as exc:
         logger.warning("Ignoring unreadable user thresholds: %s", exc)
     return thresholds
 

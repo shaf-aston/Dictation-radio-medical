@@ -11,7 +11,8 @@ import os
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from src.features.file_manager import autosave_dir
+from src.core.patient_schema import PATIENT_FIELDS
+from src.features.file_manager import autosave_dir, report_filename
 
 if TYPE_CHECKING:
     from docx import Document
@@ -58,9 +59,9 @@ def autosave_report(text: str, patient_info: dict) -> Optional[str]:
     if not text.strip():
         return None
     try:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        pid = (patient_info.get("id") or "unknown").strip().replace(" ", "_") or "unknown"
-        filename = f"dictation_{pid}_{ts}.txt"
+        filename = report_filename(
+            patient_info, ".txt", prefix="dictation_", fallback_id="unknown"
+        )
         path = os.path.join(str(autosave_dir()), filename)
         with open(path, "w", encoding="utf-8") as f:
             f.write(format_plain_text_report(text, patient_info))
@@ -82,26 +83,25 @@ def save_report_txt(path: str, text: str, patient_info: dict) -> None:
 def format_plain_text_report(text: str, patient_info: dict) -> str:
     """Return the formatted plain-text report body."""
     now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    rule = "=" * 64
+    label_width = max(len(label) for _, label in PATIENT_FIELDS) + 2
     header = [
         "RADIOLOGY REPORT",
-        "=" * 64,
-        f"Patient:       {patient_info.get('name', '')}",
-        f"Patient ID:    {patient_info.get('id', '')}",
-        f"Date of Birth: {patient_info.get('dob', '')}",
-        f"Study Date:    {patient_info.get('study_date', '')}",
-        f"Referring:     {patient_info.get('referring', '')}",
-        f"Accession #:   {patient_info.get('accession', '')}",
-        "=" * 64,
+        rule,
+        *(
+            f"{label + ':':<{label_width}}{patient_info.get(key, '')}"
+            for key, label in PATIENT_FIELDS
+        ),
+        rule,
         "",
     ]
     footer = [
         "",
-        "=" * 64,
+        rule,
         f"Reported: {now}",
         "Reporting Radiologist: _________________________________",
     ]
     return "\n".join(header) + "\n" + text + "\n" + "\n".join(footer)
-
 
 
 
@@ -123,21 +123,14 @@ def _build_word_document(text: str, patient_info: dict):
     title = doc.add_heading("RADIOLOGY REPORT", level=1)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    # ---- Patient info table ----
-    tbl = doc.add_table(rows=3, cols=4)
+    # ---- Patient info table (two label/value pairs per row) ----
+    rows = (len(PATIENT_FIELDS) + 1) // 2
+    tbl = doc.add_table(rows=rows, cols=4)
     tbl.style = "Table Grid"
-    _tbl_cell(tbl, 0, 0, "Patient Name:", bold=True)
-    _tbl_cell(tbl, 0, 1, patient_info.get("name", ""))
-    _tbl_cell(tbl, 0, 2, "Patient ID:", bold=True)
-    _tbl_cell(tbl, 0, 3, patient_info.get("id", ""))
-    _tbl_cell(tbl, 1, 0, "Date of Birth:", bold=True)
-    _tbl_cell(tbl, 1, 1, patient_info.get("dob", ""))
-    _tbl_cell(tbl, 1, 2, "Study Date:", bold=True)
-    _tbl_cell(tbl, 1, 3, patient_info.get("study_date", ""))
-    _tbl_cell(tbl, 2, 0, "Referring Clinician:", bold=True)
-    _tbl_cell(tbl, 2, 1, patient_info.get("referring", ""))
-    _tbl_cell(tbl, 2, 2, "Accession #:", bold=True)
-    _tbl_cell(tbl, 2, 3, patient_info.get("accession", ""))
+    for index, (key, label) in enumerate(PATIENT_FIELDS):
+        row, col = divmod(index, 2)
+        _tbl_cell(tbl, row, col * 2, f"{label}:", bold=True)
+        _tbl_cell(tbl, row, col * 2 + 1, patient_info.get(key, ""))
 
     doc.add_paragraph()  # spacer
 

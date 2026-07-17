@@ -9,35 +9,64 @@ Two wordlists with two distinct jobs (keeping them separate is what fixes the
   curated radiology lexicon. The generic list ships in-repo; if it is missing on
   first use (e.g. a fresh checkout without LFS), a one-time download refills it.
 
-* **Correction targets** — :func:`get_correction_targets` answers *"what real
-  radiology term should this typo become?"*. This MUST be clean, so it is only
-  the curated radiology lexicon (``src/resources/radiology_lexicon.txt``). The
-  generic list is deliberately excluded here: its chemistry/drug/obscure-procedure
-  entries are exactly what used to pull a misspelling toward junk.
+* **Correction targets** — :func:`get_correction_targets` returns the curated
+  radiology lexicon (``src/resources/radiology_lexicon.txt``), the terms a typo
+  should preferentially snap to.
 
-After first load everything is cached in-memory.
+:func:`get_symspell` builds a SymSpell index over the *membership* set (so any
+of the ~98k known terms is a valid correction, not just the 756-term curated
+lexicon — terms like "esophageal" or "thyroid" are only in the generic list),
+with correction-target entries given a large frequency boost so a tied edit
+distance still prefers the clean radiology spelling (e.g. "efusion" ->
+"effusion", not "fusion").
+
+After first load everything is cached in-memory (the SymSpell index is also
+cached to disk — see :func:`get_symspell`).
 """
 
 from __future__ import annotations
 
 import logging
+import pickle
 import threading
-import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Set
 
 if TYPE_CHECKING:
-    from rapidfuzz import fuzz, process
+    from symspellpy import SymSpell
 
 try:
-    from rapidfuzz import process, fuzz  # type: ignore[assignment]
-    RAPIDFUZZ_AVAILABLE = True
+    from symspellpy import SymSpell  # type: ignore[assignment]
+    SYMSPELL_AVAILABLE = True
 except ImportError:
-    RAPIDFUZZ_AVAILABLE = False
+    SYMSPELL_AVAILABLE = False
 
-from src.features.file_manager import medical_wordlist_path, radiology_lexicon_path
+from src.features.file_manager import (
+    medical_dict_cache_path,
+    medical_wordlist_path,
+    radiology_lexicon_path,
+)
 
 logger = logging.getLogger(__name__)
+
+# rapidfuzz is only needed by suggest_correction()'s fallback path, which runs
+# only when the SymSpell index is unavailable. Importing it eagerly cost ~1.77s
+# at every cold start (its C-extension pulls in a large module tree) for a path
+# that never executes in the fully-installed config — so it is loaded lazily on
+# first use. `_rapidfuzz()` caches the result; None means "not installed".
+_RAPIDFUZZ: "Optional[object]" = None  # (process, fuzz) once loaded; False if absent
+
+
+def _rapidfuzz():  # type: ignore[no-untyped-def]
+    """Lazy-load rapidfuzz. Returns (process, fuzz) or None if not installed."""
+    global _RAPIDFUZZ
+    if _RAPIDFUZZ is None:
+        try:
+            from rapidfuzz import process, fuzz  # noqa: PLC0415
+            _RAPIDFUZZ = (process, fuzz)
+        except ImportError:
+            _RAPIDFUZZ = False
+    return _RAPIDFUZZ or None
 
 # Lazy-loaded singleton state
 _TERMS: Optional[Set[str]] = None                # Membership: generic ∪ lexicon
@@ -57,6 +86,8 @@ _MIN_VALID_TERMS = 1000
 
 
 def _download_wordlist(path: Path) -> bool:
+    import urllib.request  # noqa: PLC0415 — lazy: only the rare one-time refill
+
     try:
         with urllib.request.urlopen(_WORDLIST_URL, timeout=10) as resp:
             content = resp.read()
@@ -162,6 +193,80 @@ def get_correction_targets() -> List[str]:
         return _CORRECTION_TARGETS or []
 
 
+# ---------------------------------------------------------------------------
+# SymSpell index — fast nearest-term lookup over the full membership wordlist
+# ---------------------------------------------------------------------------
+# Lexicon entries get a large frequency boost so that when a typo is
+# equidistant from a curated radiology term and a generic-wordlist term
+# ("efusion" -> "effusion" vs "fusion"), SymSpell's frequency-ranked
+# suggestions prefer the clean radiology spelling.
+_LEXICON_BOOST = 10_000
+
+_SYMSPELL: Optional["SymSpell"] = None
+_SYMSPELL_SIGNATURE: Optional[tuple] = None
+
+
+def _build_symspell(terms: Set[str], lexicon: List[str]) -> "SymSpell":
+    sym = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
+    for term in terms:
+        sym.create_dictionary_entry(term, 1)
+    for term in lexicon:
+        sym.create_dictionary_entry(term, _LEXICON_BOOST)
+    return sym
+
+
+def _load_symspell_cache(path: Path, signature: tuple) -> Optional["SymSpell"]:
+    if not path.is_file():
+        return None
+    try:
+        with open(path, "rb") as f:
+            cached_signature, sym = pickle.load(f)
+    except Exception as exc:
+        logger.warning("Could not load SymSpell cache: %s", exc)
+        return None
+    return sym if cached_signature == signature else None
+
+
+def _save_symspell_cache(path: Path, signature: tuple, sym: "SymSpell") -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "wb") as f:
+            pickle.dump((signature, sym), f)
+    except OSError as exc:
+        logger.warning("Could not write SymSpell cache: %s", exc)
+
+
+def get_symspell() -> Optional["SymSpell"]:
+    """SymSpell index over the full membership wordlist (generic ∪ curated
+    lexicon), used to find the nearest known term to a non-word within a
+    length-scaled edit distance.
+
+    Building this from ~98k terms takes a few seconds, so the result is cached
+    on disk (:func:`~src.features.file_manager.medical_dict_cache_path`) and
+    rebuilt only when the term counts change (e.g. the bundled wordlist or
+    lexicon is updated). Returns None if symspellpy is not installed — callers
+    fall back to the slower rapidfuzz ratio path.
+    """
+    global _SYMSPELL, _SYMSPELL_SIGNATURE
+    if not SYMSPELL_AVAILABLE:
+        return None
+    terms = get_medical_terms()
+    lexicon = get_correction_targets()
+    signature = (len(terms), len(lexicon))
+    if _SYMSPELL is not None and _SYMSPELL_SIGNATURE == signature:
+        return _SYMSPELL
+    with _LOCK:
+        if _SYMSPELL is not None and _SYMSPELL_SIGNATURE == signature:
+            return _SYMSPELL
+        cache_path = medical_dict_cache_path()
+        sym = _load_symspell_cache(cache_path, signature)
+        if sym is None:
+            sym = _build_symspell(terms, lexicon)
+            _save_symspell_cache(cache_path, signature, sym)
+        _SYMSPELL, _SYMSPELL_SIGNATURE = sym, signature
+    return _SYMSPELL
+
+
 def suggest_correction(word: str, cutoff: float = 0.9) -> Optional[str]:
     """
     Suggest a close medical term using rapidfuzz (fast) or fallback to set lookup.
@@ -175,18 +280,12 @@ def suggest_correction(word: str, cutoff: float = 0.9) -> Optional[str]:
     if word_lower in terms:
         return word_lower
 
-    if RAPIDFUZZ_AVAILABLE and _COMMON_TERMS:
+    rf = _rapidfuzz()
+    if rf and _FULL_TERMS_LIST:
+        process, fuzz = rf
         result = process.extractOne(
             word_lower,
-            _COMMON_TERMS,
-            scorer=fuzz.ratio,
-            score_cutoff=cutoff * 100
-        )
-        if result:
-            return result[0]
-        result = process.extractOne(
-            word_lower,
-            _FULL_TERMS_LIST or list(terms),
+            _FULL_TERMS_LIST,
             scorer=fuzz.ratio,
             score_cutoff=cutoff * 100,
         )

@@ -8,13 +8,17 @@ without torch installed — matching the project's lightweight, file-first style
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # Standard disclaimer attached to every result. Outputs are assistive only.
 DISCLAIMER = (
     "AI-assisted suggestion for radiologist review only — NOT a diagnosis. "
     "This model is not FDA-cleared or CE-marked. Confirm all findings clinically."
 )
+
+# Default TorchXRayVision base weights (every output head trained, "all"). Single
+# source of truth shared by the classifier and the scan fine-tuning task.
+DEFAULT_SCAN_WEIGHTS = "densenet121-res224-all"
 
 # A region is an axis-aligned box in *fractional* image coordinates (0–1), so it
 # survives any later display resize: (x0, y0, x1, y1).
@@ -58,3 +62,48 @@ class ImagingResult:
     @property
     def has_findings(self) -> bool:
         return bool(self.findings)
+
+
+@dataclass
+class ReferenceCase:
+    """One labelled reference X-ray in the retrieval index.
+
+    ``labels`` are the per-pathology binary flags (``{"Fracture": 1, ...}``) used
+    for diagnosis filtering; ``attributes`` carry optional clinical context
+    (``age``, ``sex``, ``bmi``, ``view``, ``history``) used to narrow matches.
+    Both default empty so a legacy sidecar (labels only) still produces a valid
+    case — attribute filters simply don't apply to it.
+    """
+
+    path: str
+    labels: Dict[str, int] = field(default_factory=dict)
+    attributes: Dict[str, object] = field(default_factory=dict)
+
+    def to_metadata(self) -> Dict[str, object]:
+        """Serialise to the plain dict persisted in the index metadata JSON."""
+        return {"path": self.path, "labels": self.labels, "attributes": self.attributes}
+
+    @classmethod
+    def from_metadata(cls, meta: object) -> "ReferenceCase":
+        """Rebuild from persisted metadata, tolerating the legacy bare-path form.
+
+        Older indices stored each entry as just the image path string; wrap those
+        as an attribute-less case so old caches keep loading.
+        """
+        if isinstance(meta, str):
+            return cls(path=meta)
+        if isinstance(meta, dict):
+            return cls(
+                path=str(meta.get("path", "")),
+                labels=dict(meta.get("labels", {})),
+                attributes=dict(meta.get("attributes", {})),
+            )
+        raise TypeError(f"Unsupported reference metadata entry: {meta!r}")
+
+
+@dataclass
+class RetrievalMatch:
+    """A reference case returned by a retrieval query, with its score."""
+
+    case: ReferenceCase
+    similarity: float

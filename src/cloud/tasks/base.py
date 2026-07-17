@@ -14,9 +14,14 @@ and is identical across tasks.
 
 from __future__ import annotations
 
+import io
+import json
+import tarfile
+import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Protocol, runtime_checkable
+from typing import Dict, List, Optional, Protocol, runtime_checkable
 
 from src.training.schemas import CorrectionRecord
 
@@ -60,3 +65,48 @@ class TrainingTask(Protocol):
     ) -> JobSpec:
         """Describe the Lightning job that trains on the uploaded *data_url*."""
         ...
+
+
+def base_manifest(batch_id: str, task_type: str, base_model: str) -> dict:
+    """Return the four fields every task manifest starts with."""
+    return {
+        "batch_id": batch_id,
+        "base_model": base_model,
+        "task_type": task_type,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def base_job_args(
+    batch_id: str, data_url: str, base_model: str, epochs: int
+) -> dict:
+    """Return the five CLI args common to every training job."""
+    return {
+        "base-model": base_model,
+        "batch-id": batch_id,
+        "data-url": data_url,
+        "epochs": epochs,
+        "output-path": f"models/{batch_id}/",
+    }
+
+
+def write_manifest_archive(
+    batch_id: str, manifest: dict, members: Optional[Dict[str, str]] = None
+) -> Path:
+    """Write *manifest* as ``manifest.json`` plus any *members* into a tar.gz.
+
+    *members* maps a source file path to its archive name (e.g.
+    ``{"/abs/clip.wav": "audio/clip.wav"}``). Every task's ``build_archive``
+    bundles a manifest the same way; only the manifest contents and which extra
+    files ride along differ. Returns the path to a temp ``<batch_id>.tar.gz``
+    the framework uploads then deletes.
+    """
+    tmp = Path(tempfile.gettempdir()) / f"{batch_id}.tar.gz"
+    with tarfile.open(tmp, "w:gz") as tar:
+        data = json.dumps(manifest, indent=2).encode("utf-8")
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+        for src_path, arcname in (members or {}).items():
+            tar.add(src_path, arcname=arcname)
+    return tmp

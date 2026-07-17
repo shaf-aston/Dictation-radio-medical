@@ -23,13 +23,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from src.cloud.exceptions import AuthError, CloudError, QuotaError
+from src.core.keychain import clear_secret, get_secret, store_secret
 
 if TYPE_CHECKING:
     from src.cloud.tasks.base import JobSpec
 
 logger = logging.getLogger(__name__)
 
-_KEYRING_SERVICE = "radio-dictate"
 _KEYRING_KEY = "lightning_api_key"
 _BASE_URL = "https://lightning.ai/api/v1"
 _TIMEOUT = 60.0
@@ -37,28 +37,18 @@ _TIMEOUT = 60.0
 
 def store_api_key(api_key: str) -> None:
     """Persist the Lightning AI API key in the OS keychain."""
-    import keyring
-    keyring.set_password(_KEYRING_SERVICE, _KEYRING_KEY, api_key)
+    store_secret(_KEYRING_KEY, api_key)
     logger.info("Lightning AI API key stored in OS keychain")
 
 
 def get_api_key() -> Optional[str]:
     """Retrieve the API key from the OS keychain, or None if unset."""
-    try:
-        import keyring
-        return keyring.get_password(_KEYRING_SERVICE, _KEYRING_KEY)
-    except Exception as exc:
-        logger.warning("Could not read API key from keychain: %s", exc)
-        return None
+    return get_secret(_KEYRING_KEY)
 
 
 def clear_api_key() -> None:
     """Remove the stored API key from the OS keychain."""
-    try:
-        import keyring
-        keyring.delete_password(_KEYRING_SERVICE, _KEYRING_KEY)
-    except Exception as exc:
-        logger.debug("Could not clear API key from keychain: %s", exc)
+    clear_secret(_KEYRING_KEY)
 
 
 class LightningAIClient:
@@ -71,6 +61,8 @@ class LightningAIClient:
         self._base_url = base_url.rstrip("/")
         if not self._api_key:
             raise AuthError("No Lightning AI API key configured.")
+        import httpx
+        self._http = httpx.Client(timeout=_TIMEOUT, headers=self._headers())
 
     # ------------------------------------------------------------------
     # HTTP plumbing
@@ -86,8 +78,7 @@ class LightningAIClient:
         import httpx
         url = f"{self._base_url}{path}"
         try:
-            with httpx.Client(timeout=_TIMEOUT) as client:
-                resp = client.request(method, url, headers=self._headers(), **kwargs)
+            resp = self._http.request(method, url, **kwargs)
         except httpx.HTTPError as exc:
             raise CloudError(f"Network error calling {path}: {exc}") from exc
         if resp.status_code in (401, 403):
@@ -187,9 +178,15 @@ class LightningAIClient:
         # Bounded read timeout: a stalled download must not hang the poll thread
         # forever. The connect timeout is short; reads get a generous 5 min/chunk.
         timeout = httpx.Timeout(_TIMEOUT, read=300.0)
+        # Only attach the Lightning auth header when the artifact is served from
+        # the API host. Lightning typically returns a pre-signed CDN/S3 URL on a
+        # different host; sending the Bearer key there would leak it off-device.
+        from urllib.parse import urlparse
+        same_host = urlparse(artifact_url).netloc == urlparse(self._base_url).netloc
+        headers = self._headers() if same_host else {}
         try:
             with httpx.Client(timeout=timeout) as client:
-                with client.stream("GET", artifact_url, headers=self._headers()) as resp:
+                with client.stream("GET", artifact_url, headers=headers) as resp:
                     resp.raise_for_status()
                     with open(dest, "wb") as fh:
                         for chunk in resp.iter_bytes(chunk_size=1 << 20):

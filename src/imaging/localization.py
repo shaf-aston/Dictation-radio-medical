@@ -18,6 +18,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from src.imaging.classifier import Classifier
 from src.imaging.schemas import ImagingFinding, Region
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ _REGION_ACTIVATION_FRAC = 0.5
 
 
 def localize(
-    classifier, image_path: str, findings: List[ImagingFinding]
+    classifier: Classifier, image_path: str, findings: List[ImagingFinding]
 ) -> Dict[str, Region]:
     """Compute a Grad-CAM bounding region (fractional coords) per finding label.
 
@@ -47,7 +48,7 @@ def localize(
     try:
         model = classifier.model
         pathologies = classifier.pathologies
-        tensor = classifier._preprocess(image_path)
+        tensor = classifier.preprocess(image_path)
     except Exception as exc:
         logger.warning("Localization setup failed: %s", exc)
         return {}

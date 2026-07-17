@@ -1,11 +1,15 @@
 """Stage 7 — fuzzy medical-dictionary correction.
 
-Replaces a misspelled word with the closest entry in the curated **radiology
-lexicon** (``medical_dict.get_correction_targets``) when it is within a small,
-length-scaled **edit distance** of that term. Acronyms, protected terms, and
-short words are never touched. Snapping to the curated lexicon — not the broad
-98k generic wordlist used for membership — is what keeps a typo from being
-pulled toward chemistry/drug junk that merely sits one edit away.
+Replaces a misspelled word with the closest known medical term — any of the
+~98k terms in :func:`medical_dict.get_medical_terms`, not just the 756-term
+curated radiology lexicon — when it is within a small, length-scaled **edit
+distance** of that term (via :func:`medical_dict.get_symspell`). Acronyms,
+protected terms, and short words are never touched. Curated radiology-lexicon
+entries are frequency-boosted in that index, so a tied edit distance still
+prefers the clean radiology spelling ("efusion" -> "effusion", not "fusion")
+rather than the alternative of restricting the candidate pool to the lexicon
+alone — which left common terms like "esophageal" or "thyroid" uncorrectable
+simply because they weren't in that smaller list.
 
 Why edit distance and not a flat similarity ratio: a single typo in a
 normal-length word ("vertabra" → "vertebra", "atelactasis" → "atelectasis")
@@ -26,14 +30,12 @@ from src.medical import medical_dict
 
 logger = logging.getLogger(__name__)
 
-try:  # rapidfuzz is a core dep, but mirror medical_dict's guard for stub envs
-    from rapidfuzz import process  # type: ignore
-    from rapidfuzz.distance import DamerauLevenshtein  # type: ignore
-    _DL_AVAILABLE = True
+try:  # symspellpy is a core dep, but mirror medical_dict's guard for stub envs
+    from symspellpy import Verbosity  # type: ignore
+    _SYMSPELL_AVAILABLE = True
 except ImportError:
-    process = None  # type: ignore
-    DamerauLevenshtein = None  # type: ignore
-    _DL_AVAILABLE = False
+    Verbosity = None  # type: ignore
+    _SYMSPELL_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Tuning
@@ -60,49 +62,29 @@ def _max_edits(n: int) -> int:
     return 1 if n <= 9 else 2
 
 
-def _shared_prefix_len(a: str, b: str) -> int:
-    """Number of leading characters *a* and *b* have in common."""
-    n = 0
-    for ca, cb in zip(a, b):
-        if ca != cb:
-            break
-        n += 1
-    return n
+def _nearest_term(word: str, max_distance: int, sym: Optional[object] = None) -> Optional[str]:
+    """Closest known medical term to *word* within *max_distance* edits, or None.
 
+    Looks up the SymSpell index (:func:`medical_dict.get_symspell`), which
+    covers every term in the ~98k-word membership set with curated
+    radiology-lexicon entries frequency-boosted. ``Verbosity.CLOSEST`` returns
+    every term at the smallest edit distance found, ranked by that boosted
+    frequency — so a tie between "effusion" (lexicon) and "fusion" (generic)
+    for "efusion" resolves to "effusion".
 
-def _nearest_term(word: str, max_distance: int) -> Optional[str]:
-    """Closest medical term to *word* within *max_distance* edits, or None.
-
-    Retrieval and acceptance use the SAME metric (edit distance), so we never
-    reject a fixable typo just because some other term scored higher on a
-    different (ratio) metric. Searches the curated radiology lexicon for a
-    deterministic, truly-nearest result.
-
-    When several terms are equidistant, raw edit distance alone is a coin toss
-    that can pick a shorter unrelated word ("efusion" is one edit from both
-    "effusion" and "fusion"). A real misspelling almost always keeps the start
-    of the intended word, so ties break first on the longest shared prefix and
-    then on the closest length — steering "efusion" to "effusion".
+    *sym* lets the caller hoist :func:`medical_dict.get_symspell` out of a
+    per-word loop and reuse the one cached index across a whole document.
     """
     if max_distance < 1:
         return None
-    terms = medical_dict.get_correction_targets() or None
-    if not terms:
+    if sym is None:
+        sym = medical_dict.get_symspell()
+    if sym is None or Verbosity is None:
         return None
-    # Callers only reach here when _DL_AVAILABLE is True (see the guard in
-    # _replace), which is exactly when rapidfuzz set these to real values.
-    assert process is not None and DamerauLevenshtein is not None
-    matches = process.extract(
-        word, terms, scorer=DamerauLevenshtein.distance,
-        score_cutoff=max_distance, limit=25,
+    suggestions = sym.lookup(
+        word, Verbosity.CLOSEST, max_edit_distance=max_distance, transfer_casing=False,
     )
-    if not matches:
-        return None
-    best = min(
-        matches,
-        key=lambda m: (m[1], -_shared_prefix_len(word, m[0]), abs(len(m[0]) - len(word))),
-    )
-    return best[0]
+    return suggestions[0].term if suggestions else None
 
 
 # ---------------------------------------------------------------------------
@@ -281,11 +263,100 @@ def _only_inflection_differs(a: str, b: str) -> bool:
     return stem_len / len(a) >= 0.80 and stem_len / len(b) >= 0.80
 
 
+# British "ae"/"oe" digraphs that reduce to a single "e" in American spelling
+# (e.g. "haematology" -> "hematology", "oestrogen" -> "estrogen",
+# "leukaemia" -> "leukemia"). Correctly-spelled British medical terms are
+# often absent from both the membership set and pyspellchecker's
+# American-leaning dictionary, so without this check the fuzzy stage was
+# silently "correcting" them to American spelling ("haemodynamic" ->
+# "hemodynamic", "gynaecology" -> "gynecology") -- this only ever protects a
+# word from correction, it never rewrites the output.
+_BRITISH_DIGRAPHS = (("ae", "e"), ("oe", "e"))
+
+
+def _is_british_spelling(word: str, terms: Set[str]) -> bool:
+    """True if *word* is a correctly-spelled British variant of a known term."""
+    for uk, us in _BRITISH_DIGRAPHS:
+        if uk in word:
+            candidate = word.replace(uk, us)
+            if candidate in terms or _english_known(candidate):
+                return True
+    return False
+
+
+# Per-word decision cache. The correction verdict for a given lowercased word is
+# a pure function of that word and the load-once membership / protected / lexicon
+# sets, so it is stable for the process's life. Caching it makes a repeated word
+# — every live re-emit of a still-open sentence, every recurring anatomy term —
+# an O(1) dict hit instead of re-paying the SpellChecker + SymSpell lookups that
+# dominate this stage (measured 50ms mean / 257ms p95 without this cache). Value:
+# the lowercase correction, or None to leave the word unchanged. A signature of
+# the term-set sizes invalidates the cache transparently if the dictionary is
+# reloaded mid-session (rare).
+_DECISION_MEMO: dict = {}
+_DECISION_MEMO_SIG: Optional[tuple] = None
+# Sentinel distinguishing "cached: leave word unchanged (None)" from "not cached",
+# so a memoised None is still a hit and never recomputed.
+_MISS = object()
+
+
+def _compute_decision(wl: str, terms: Set[str], sym: Optional[object]) -> Optional[str]:
+    """Correction for already-lowercased non-word *wl*, or None to leave it alone.
+
+    Pure function of *wl* and the load-once term sets (that is what makes the
+    result safe to memoize). Casing is re-applied by the caller, never stored,
+    so the cached value is independent of how the word was capitalised in the
+    source. Mirrors the original per-word decision chain exactly — same guards,
+    same order, same fallback conditions — only refactored out of the closure so
+    it can be cached.
+    """
+    if wl in terms or wl in PROTECTED_TERMS:
+        return None
+    # An inflected form of a known term is already correct. Compute the stem set
+    # once and test it against both membership and protected sets (was two
+    # separate _stems() passes over the same word).
+    stems = _stems(wl)
+    if stems & terms or stems & PROTECTED_TERMS:
+        return None
+    # A correctly-spelled British variant ("haemodynamic", "oestrogen") of a
+    # known term is already correct, even if neither the word itself nor
+    # pyspellchecker recognises the British form directly.
+    if _is_british_spelling(wl, terms):
+        return None
+
+    eng = _english_known(wl)
+    if eng:
+        # A valid English word is never a typo to fix — leave it untouched,
+        # no matter how close a junk wordlist fragment sits.
+        return None
+    if eng is None or not _SYMSPELL_AVAILABLE:
+        # No English guard (or no SymSpell index) available — fall back to the
+        # conservative ratio-only path so we never demote a real word.
+        sug = medical_dict.suggest_correction(wl, cutoff=_LEGACY_CUTOFF)
+        return None if not sug or _only_inflection_differs(wl, sug) else sug
+    # Confirmed non-word: snap to the nearest term within a typo's edit distance
+    # — this is what catches the simple medical misspellings.
+    sug = _nearest_term(wl, _max_edits(len(wl)), sym)
+    return None if not sug or _only_inflection_differs(wl, sug) else sug
+
+
 def apply_medical_dictionary_suggestions(text: str) -> str:
     """Replace likely mis-transcribed words using high-similarity fuzzy match."""
+    global _DECISION_MEMO_SIG
     terms = _ensure_medical_terms()
     if not terms:
         return text
+
+    # Hoist the SymSpell index once per document instead of re-fetching (and
+    # re-validating its signature) inside every candidate word's lookup.
+    sym = medical_dict.get_symspell()
+
+    # Drop the per-word cache if the underlying term sets changed since it was
+    # populated (e.g. a dictionary reload) — cheap size-signature check.
+    sig = (len(terms), len(PROTECTED_TERMS))
+    if sig != _DECISION_MEMO_SIG:
+        _DECISION_MEMO.clear()
+        _DECISION_MEMO_SIG = sig
 
     def _cased(w: str, sug: str) -> str:
         """Re-apply *w*'s capitalisation to the lowercase suggestion."""
@@ -298,25 +369,12 @@ def apply_medical_dictionary_suggestions(text: str) -> str:
         if w.upper() in _ACRONYMS:
             return w
         wl = w.lower()
-        if wl in terms or wl in PROTECTED_TERMS or len(wl) < _MIN_LEN:
+        if len(wl) < _MIN_LEN:
             return w
-        # An inflected form of a known term is already correct.
-        if _is_inflected_form(wl, terms) or _is_inflected_form(wl, PROTECTED_TERMS):
-            return w
-
-        eng = _english_known(wl)
-        if eng:
-            # A valid English word is never a typo to fix — leave it untouched,
-            # no matter how close a junk wordlist fragment sits.
-            return w
-        if eng is None or not _DL_AVAILABLE:
-            # No English guard (or no distance metric) available — fall back to
-            # the conservative ratio-only path so we never demote a real word.
-            sug = medical_dict.suggest_correction(wl, cutoff=_LEGACY_CUTOFF)
-            return w if not sug or _only_inflection_differs(wl, sug) else _cased(w, sug)
-        # Confirmed non-word: snap to the nearest term within a typo's edit
-        # distance — this is what catches the simple medical misspellings.
-        sug = _nearest_term(wl, _max_edits(len(wl)))
-        return w if not sug or _only_inflection_differs(wl, sug) else _cased(w, sug)
+        sug = _DECISION_MEMO.get(wl, _MISS)
+        if sug is _MISS:
+            sug = _compute_decision(wl, terms, sym)
+            _DECISION_MEMO[wl] = sug
+        return _cased(w, sug) if sug else w
 
     return _WORD_RE.sub(_replace, text)

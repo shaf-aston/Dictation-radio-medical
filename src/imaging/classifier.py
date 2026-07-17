@@ -18,23 +18,52 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import List, Protocol, runtime_checkable
+from typing import Any, List, Protocol, runtime_checkable
 
 from src.imaging.exceptions import ImagingError
-from src.imaging.schemas import PathologyScore
+from src.imaging.schemas import DEFAULT_SCAN_WEIGHTS, PathologyScore
 
 logger = logging.getLogger(__name__)
 
-# Default TorchXRayVision weights: every output head trained ("all").
-_DEFAULT_WEIGHTS = "densenet121-res224-all"
+# Default TorchXRayVision weights: every output head trained ("all"). Defined
+# once in schemas so the fine-tuning task references the same string.
+_DEFAULT_WEIGHTS = DEFAULT_SCAN_WEIGHTS
 
 
 @runtime_checkable
 class Classifier(Protocol):
-    """A modality classifier: image path → per-label probabilities."""
+    """A modality classifier: image path → per-label probabilities.
+
+    Beyond ``predict``, this is the full contract :mod:`src.imaging.localization`
+    (Grad-CAM) and :mod:`src.imaging.retrieval` (embedding extraction) rely on —
+    ``model``, ``pathologies``, and ``preprocess`` — so any future modality
+    classifier (CT, MRI, ...) that implements this Protocol slots into both.
+    """
+
+    @property
+    def model(self) -> Any:
+        """The underlying torch module (loaded on first access).
+
+        ``Any`` because the concrete type is a torch module and torch is a
+        lazy, optional import — the Protocol must not pull it in.
+        """
+        ...
+
+    @property
+    def pathologies(self) -> List[str]:
+        """Label names, in the order ``predict`` and ``model`` output scores."""
+        ...
 
     def predict(self, image_path: str) -> List[PathologyScore]:
         """Return a :class:`PathologyScore` for every label the model emits."""
+        ...
+
+    def preprocess(self, image_path: str) -> Any:
+        """Load and normalise *image_path* into the model's expected input tensor.
+
+        ``Any`` for the same reason as :attr:`model` — the return is a torch
+        Tensor, and torch stays a lazy import.
+        """
         ...
 
 
@@ -83,8 +112,9 @@ class ChestXRayClassifier:
         """
         self._ensure_loaded()
         model = self._model
-        assert model is not None  # _ensure_loaded guarantees this
-        tensor = self._preprocess(image_path)
+        if model is None:
+            raise ImagingError("Model failed to load")
+        tensor = self.preprocess(image_path)
 
         import torch
         with torch.no_grad():
@@ -97,7 +127,7 @@ class ChestXRayClassifier:
             for label, prob in zip(self._pathologies, probs)
         ]
 
-    def _preprocess(self, image_path: str):
+    def preprocess(self, image_path: str):
         """Load and normalise an image into the model's expected 1×1×224×224 input."""
         path = Path(image_path)
         if not path.is_file():

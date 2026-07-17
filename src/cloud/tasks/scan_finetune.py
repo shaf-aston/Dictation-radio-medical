@@ -32,17 +32,15 @@ abstention thresholds (those stay a separate, per-site calibration lever; see
 
 from __future__ import annotations
 
-import io
 import json
 import logging
-import tarfile
-import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
 from src.cloud.exceptions import CloudError
-from src.cloud.tasks.base import JobSpec
+from src.cloud.tasks.base import JobSpec, base_job_args, base_manifest, write_manifest_archive
+from src.imaging.datasets import parse_label_file
+from src.imaging.schemas import DEFAULT_SCAN_WEIGHTS
 from src.training.schemas import TASK_SCAN_CLASSIFIER, CorrectionRecord
 
 logger = logging.getLogger(__name__)
@@ -109,11 +107,9 @@ class ScanClassifierTask:
         if not src_dirs:
             raise CloudError("No labelled scans available to train on.")
 
+        resolved_model = base_model or DEFAULT_SCAN_WEIGHTS
         manifest = {
-            "batch_id": batch_id,
-            "base_model": base_model or "densenet121-res224-all",
-            "task_type": self.task_type,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            **base_manifest(batch_id, self.task_type, resolved_model),
             "trauma_focus": {
                 "labels": sorted(_TRAUMA_FOCUS_LABELS),
                 "oversample_factor": _TRAUMA_OVERSAMPLE,
@@ -130,8 +126,8 @@ class ScanClassifierTask:
                 if not label_file.is_file():
                     continue  # an image without labels can't supervise training
                 try:
-                    labels = json.loads(label_file.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError) as exc:
+                    labels, _attributes = parse_label_file(label_file)
+                except (OSError, json.JSONDecodeError, ValueError) as exc:
                     logger.warning("Skipping unreadable scan label %s: %s", label_file, exc)
                     continue
                 arcname = f"images/{img.name}"
@@ -146,14 +142,7 @@ class ScanClassifierTask:
         if not manifest["examples"]:
             raise CloudError("No labelled scans available to train on.")
 
-        tmp = Path(tempfile.gettempdir()) / f"{batch_id}.tar.gz"
-        with tarfile.open(tmp, "w:gz") as tar:
-            data = json.dumps(manifest, indent=2).encode("utf-8")
-            info = tarfile.TarInfo("manifest.json")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-            for src_path, arcname in members.items():
-                tar.add(src_path, arcname=arcname)
+        tmp = write_manifest_archive(batch_id, manifest, members)
         logger.info(
             "Built scan batch %s: %d images -> %d training examples "
             "(%d trauma-positive, oversampled %dx)",
@@ -165,15 +154,10 @@ class ScanClassifierTask:
         self, batch_id: str, data_url: str, base_model: str,
         epochs: int = 10, **_,
     ) -> JobSpec:
+        resolved_model = base_model or DEFAULT_SCAN_WEIGHTS
         return JobSpec(
             name=f"radio-dictate-scan-{batch_id}",
             entrypoint="scripts/lightning/train_scan_classifier.py",
             compute={"type": "gpu", "name": "A10G"},
-            args={
-                "base-model": base_model or "densenet121-res224-all",
-                "batch-id": batch_id,
-                "data-url": data_url,
-                "epochs": epochs,
-                "output-path": f"models/{batch_id}/",
-            },
+            args=base_job_args(batch_id, data_url, resolved_model, epochs),
         )

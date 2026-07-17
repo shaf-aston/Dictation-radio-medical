@@ -45,6 +45,19 @@ def find_overlap(
     return None if m.b != 0 and m.a + m.size != len(tail) else (m.a, m.b + m.size)
 
 
+def _boundary_sep(committed: str, boundary_ws: str) -> str:
+    """Separator to use when appending new text to ``committed``.
+
+    Preserves a paragraph break present at the join boundary: if the
+    whitespace being replaced (``boundary_ws``) contains a newline — the
+    transcriber's pause rule, mirrored by ``WindowState._join_segments`` —
+    the join keeps it instead of collapsing to a space.
+    """
+    if "\n" in boundary_ws:
+        return "" if committed.endswith("\n") else "\n"
+    return "" if committed.endswith((" ", "\n")) else " "
+
+
 def trim_committed_tail(committed: str, chunk_text: str, lookback: int = 20) -> str:
     """Concatenate ``committed`` with the new portion of ``chunk_text``.
 
@@ -71,7 +84,10 @@ def trim_committed_tail(committed: str, chunk_text: str, lookback: int = 20) -> 
             return committed
         token_idx = head_indexed[new_word_idx][0]
         new_text = "".join(chunk_tokens[token_idx:])
-        sep = "" if committed.endswith((" ", "\n")) else " "
+        # The whitespace token sitting between the overlap and the new
+        # material may be a paragraph newline — keep it, don't hardcode " ".
+        boundary_ws = chunk_tokens[token_idx - 1] if token_idx > 0 else ""
+        sep = _boundary_sep(committed, boundary_ws if not boundary_ws.strip() else "")
         return committed + sep + new_text.lstrip(" ")
 
     # No clean overlap — defensive trim if chunk begins with the exact tail
@@ -82,5 +98,8 @@ def trim_committed_tail(committed: str, chunk_text: str, lookback: int = 20) -> 
         if chunk_lower.startswith(candidate):
             remainder = chunk_text.lstrip()[len(candidate):]
             return committed + remainder
-    sep = "" if committed.endswith((" ", "\n")) else " "
+    # No overlap at all — keep a leading paragraph newline on the chunk
+    # (e.g. a cross-batch pause separator from WindowState._join_segments).
+    lead_ws = chunk_text[: len(chunk_text) - len(chunk_text.lstrip())]
+    sep = _boundary_sep(committed, lead_ws)
     return committed + sep + chunk_text.lstrip()

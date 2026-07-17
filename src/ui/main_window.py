@@ -15,17 +15,20 @@ from functools import partial
 if TYPE_CHECKING:
     from PySide6.QtCore import QThread
     from src.dictation.worker import LiveTranscribeWorker
+    from src.ui.postprocess_worker import PostprocessWorker
 
 from PySide6.QtWidgets import (
     QMainWindow, QApplication, QFileDialog, QMessageBox,
     QTextEdit, QPushButton, QComboBox, QLabel, QLineEdit,
     QCheckBox, QFrame, QSplitter, QProgressBar, QMenu, QVBoxLayout, QWidget,
 )
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Slot
 from PySide6.QtGui import QKeySequence, QShortcut
 
 from src.dictation.audio import Recorder
 from src.core.settings import Settings
+from src.core.patient_schema import normalize_patient_info
+from src.features.file_manager import report_filename
 from src.ui.styles import DARK, LIGHT
 from src.features.report_manager import (
     autosave_report, save_report_txt, export_to_word, DOCX_AVAILABLE
@@ -43,7 +46,8 @@ from src.ui.views import (
 
 # Recording control
 from src.ui.recording_session import (
-    on_start_recording, on_stop_recording, setup_level_timer
+    on_partial_text, on_processed_text, on_start_recording, on_stop_recording,
+    on_transcription_finished, setup_level_timer,
 )
 
 # Dialog handling
@@ -112,6 +116,7 @@ class MainWindow(QMainWindow):
     vad_checkbox: QCheckBox
     language_input: QLineEdit
     accent_combo: QComboBox
+    cleanup_combo: QComboBox
     btn_export_word: QPushButton
     _level_bar: QProgressBar
     _status_label: QLabel
@@ -120,6 +125,7 @@ class MainWindow(QMainWindow):
     recent_menu: QMenu
     _level_timer: QTimer
     _active_accent: str
+    _active_cleanup_level: str
 
     def __init__(self) -> None:
         super().__init__()
@@ -128,12 +134,28 @@ class MainWindow(QMainWindow):
         self.current_wav_path: Optional[str] = None
         self.live_thread: Optional[QThread] = None
         self.live_worker: Optional[LiveTranscribeWorker] = None
+        # Post-processing runs off the UI thread (src/ui/postprocess_worker.py);
+        # both are created per recording and torn down when it finishes.
+        self.pp_thread: Optional[QThread] = None
+        self.pp_worker: Optional[PostprocessWorker] = None
+        self._partial_seq: int = 0
+        self._applied_seq: int = 0
+        self._last_raw_transcript: str = ""
         self._dictation_start_pos: int = 0
         self._last_editor_text: str = ""
         self._corrections_pending: list = []
+        self._corrections_seen: set = set()
         # Snapshot of the editor right after dictation finishes; diffed against
         # the delivered text at commit time to log what the radiologist changed.
         self._post_dictation_snapshot: Optional[str] = None
+        # Debounce adaptive learning: only call learn_from_edit 500 ms after the
+        # last keystroke, not on every character (avoids blocking the UI thread).
+        self._learn_prev_text: str = ""
+        self._learn_curr_text: str = ""
+        self._learn_timer = QTimer(self)
+        self._learn_timer.setSingleShot(True)
+        self._learn_timer.setInterval(500)
+        self._learn_timer.timeout.connect(self._flush_learn)
 
         build_ui(self)
         build_menu(self)
@@ -196,6 +218,34 @@ class MainWindow(QMainWindow):
         enabled, and report analysis is skipped if disabled in settings. Failures
         here must never block app startup.
         """
+        # Pre-build the slow spelling index and Whisper model in the background
+        # so the radiologist's first spoken chunk is instant, not a ~1.3 s stall.
+        try:
+            from src.dictation.warmup import (
+                postprocess_warmers,
+                transcriber_warmer,
+                warm_up_async,
+            )
+
+            model_size = self.settings.get("model_size", "base")
+            # Warm the model the recording worker will actually load: an active
+            # fine-tuned directory overrides model_size (recording_session
+            # passes it to LiveTranscribeWorker), and the process-wide model
+            # cache is keyed on that reference — warming the stock model while
+            # a fine-tune is active would miss the cache AND pin an unused
+            # model in RAM.
+            from src.ui.recording_session import _active_model_path
+
+            active_model = _active_model_path()
+            warm_up_async(postprocess_warmers() + [
+                transcriber_warmer(
+                    model_size,
+                    model_path=str(active_model) if active_model else None,
+                )
+            ])
+        except Exception as exc:  # warm-up is an optimisation, never fatal
+            logger.debug("Could not start dictation warm-up: %s", exc)
+
         if self.settings.get("cloud_enabled", False):
             try:
                 from PySide6.QtCore import QThread
@@ -263,7 +313,8 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.setStyleSheet(DARK if theme == "dark" else LIGHT)  # type: ignore[union-attr]
-        self.settings.set("theme", theme)
+        if self.settings.get("theme") != theme:
+            self.settings.set("theme", theme)
 
     def on_toggle_theme(self) -> None:
         current = self.settings.get("theme", "dark")
@@ -275,11 +326,13 @@ class MainWindow(QMainWindow):
 
     def _set_patient_panel_visible(self, visible: bool) -> None:
         self.patient_panel.setVisible(visible)
-        self.settings.set("patient_info_visible", visible)
+        if self.settings.get("patient_info_visible") != visible:
+            self.settings.set("patient_info_visible", visible)
 
     def _set_macros_panel_visible(self, visible: bool) -> None:
         self.macros_panel.setVisible(visible)
-        self.settings.set("macros_panel_visible", visible)
+        if self.settings.get("macros_panel_visible") != visible:
+            self.settings.set("macros_panel_visible", visible)
 
     def on_toggle_patient_panel(self) -> None:
         self._set_patient_panel_visible(not self.patient_panel.isVisible())
@@ -393,6 +446,11 @@ class MainWindow(QMainWindow):
         self.patient_accession.clear()
         self._show_status("New report started.")
 
+    def _load_report_from_path(self, path: str) -> None:
+        with open(path, "r", encoding="utf-8") as fh:
+            self.editor.setPlainText(fh.read())
+        self._show_status(f"Opened: {os.path.basename(path)}", 2000)
+
     def on_open_report(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self, "Open Report", "", "Text Files (*.txt);;All Files (*)"
@@ -400,11 +458,9 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            with open(path, "r", encoding="utf-8") as fh:
-                self.editor.setPlainText(fh.read())
+            self._load_report_from_path(path)
             self.settings.add_recent_report(path)
             rebuild_recent_menu(self)
-            self._show_status(f"Opened: {os.path.basename(path)}", 2000)
         except Exception as exc:
             QMessageBox.critical(self, "Open Error", str(exc))
 
@@ -472,9 +528,7 @@ class MainWindow(QMainWindow):
 
     def _open_recent(self, path: str) -> None:
         try:
-            with open(path, "r", encoding="utf-8") as fh:
-                self.editor.setPlainText(fh.read())
-            self._show_status(f"Opened: {os.path.basename(path)}", 2000)
+            self._load_report_from_path(path)
         except Exception as exc:
             QMessageBox.critical(self, "Open Error", str(exc))
 
@@ -483,20 +537,48 @@ class MainWindow(QMainWindow):
     # Helpers
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Worker slots
+    #
+    # These MUST be bound methods of this QObject, not lambdas. A signal
+    # connected to a plain callable has no receiver thread affinity, so Qt
+    # invokes it in the *emitting* thread — which for the transcription and
+    # post-process workers means touching QTextEdit from a background thread.
+    # Binding them here gives Qt a UI-thread receiver, so it queues the call.
+    # ------------------------------------------------------------------
+
+    @Slot(str, int)
+    def _on_partial_text(self, transcript: str, committed_len: int) -> None:
+        on_partial_text(self, transcript, committed_len)
+
+    @Slot(str, list, int)
+    def _on_processed_text(self, text: str, changes: list, seq: int) -> None:
+        on_processed_text(self, text, changes, seq)
+
+    @Slot(str)
+    def _on_worker_progress(self, message: str) -> None:
+        self._show_status(message)
+
+    @Slot()
+    def _on_transcription_finished(self) -> None:
+        on_transcription_finished(self)
+
     def _get_patient_info(self) -> dict:
-        return {
-            "name": self.patient_name.text().strip(),
-            "id": self.patient_id.text().strip(),
-            "dob": self.patient_dob.text().strip(),
-            "study_date": self.patient_study_date.text().strip(),
-            "referring": self.patient_referrer.text().strip(),
-            "accession": self.patient_accession.text().strip(),
+        """Read the patient form into the shared patient-info dict."""
+        fields = {
+            "name": self.patient_name,
+            "id": self.patient_id,
+            "dob": self.patient_dob,
+            "study_date": self.patient_study_date,
+            "referring": self.patient_referrer,
+            "accession": self.patient_accession,
         }
+        return normalize_patient_info(
+            {key: widget.text() for key, widget in fields.items()}
+        )
 
     def _default_filename(self, ext: str) -> str:
-        patient_id = self.patient_id.text().strip().replace(" ", "_") or "report"
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        return f"{patient_id}_{timestamp}{ext}"
+        return report_filename(self._get_patient_info(), ext)
 
     def _show_status(self, message: str, timeout: int = 0) -> None:
         self._status_label.setText(message)
@@ -510,12 +592,18 @@ class MainWindow(QMainWindow):
         self._info_words.setText(f"Words: {word_count}  |  Lines: {line_count}")
         self._wordcount_label.setText(f"Words: {word_count}")
 
-        # Passive learning: track user edits
+        # Passive learning: track user edits (debounced — fires 500 ms after
+        # the last keystroke rather than on every character).
         if (not self.recorder.is_recording
                         and self._last_editor_text
                         and self.settings.get("learning_enabled", True)) and text != self._last_editor_text:
-            learn_from_edit(self._last_editor_text, text)
+            self._learn_prev_text = self._last_editor_text
+            self._learn_curr_text = text
+            self._learn_timer.start()
         self._last_editor_text = text
+
+    def _flush_learn(self) -> None:
+        learn_from_edit(self._learn_prev_text, self._learn_curr_text)
 
     def flush_dictation_edits(self) -> None:
         """Log how the last dictation's output differs from the delivered text.
@@ -541,10 +629,11 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event) -> None:
-        self.settings.set("window_width", self.width())
-        self.settings.set("window_height", self.height())
-        self.settings.set("splitter_sizes", self.splitter.sizes())
-        self.settings.save()
+        self.settings.batch_set({
+            "window_width": self.width(),
+            "window_height": self.height(),
+            "splitter_sizes": self.splitter.sizes(),
+        })
 
         # Make sure any active recording session is finalized before exit.
         if self.recorder.is_recording:

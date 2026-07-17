@@ -223,8 +223,8 @@ class CorrectionCollector:
 
     @staticmethod
     def _deidentify_audio(patient_info, wav_path, segments, session_id):
-        from src.cloud.privacy import DeIdentifier
         from src.features.file_manager import training_audio_dir
+        from src.medical.deid import DeIdentifier
         return DeIdentifier(patient_info).deidentify_audio(
             wav_path, segments, training_audio_dir(), session_id,
         )
@@ -242,9 +242,8 @@ class CorrectionCollector:
         return self._persist(session)
 
     def _persist(self, session: _Session) -> int:
-        from src.cloud.exceptions import PrivacyError
-        from src.cloud.privacy import DeIdentifier
         from src.features import audit_log
+        from src.medical.deid import DeIdentifier, PrivacyError
         from src.training.schemas import CorrectionRecord
         from src.training.staging_db import get_staging_db
 

@@ -32,14 +32,15 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import numpy as np
 import soundfile as sf
 from PySide6.QtCore import QObject, Signal
 
+from src.core import perf
 from src.dictation.transcriber import Transcriber, _RADIOLOGY_INITIAL_PROMPT
-from src.dictation.text_diff import trim_committed_tail
+from src.dictation.window_state import WindowState
 from src.features.adaptive_learning import get_custom_prompt_suffix
 
 logger = logging.getLogger(__name__)
@@ -47,10 +48,15 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Tuning constants
 # ---------------------------------------------------------------------------
-_WINDOW_SEC = 25.0       # max audio duration to transcribe per cycle
-_OVERLAP_SEC = 3.0       # context overlap when sliding the window
+_WINDOW_SEC = 25.0       # hard ceiling on audio sent to Whisper per cycle (safety)
 _MIN_AUDIO_SEC = 0.8     # ignore audio shorter than this
 _MIN_GROWTH_SEC = 0.5    # min new audio before re-transcribing (was 0.3 — thrashed)
+_COMMIT_LAG_SEC = 8.0    # trailing audio kept un-committed (still revisable by
+                         # Whisper). Older text is frozen, so the live window
+                         # shrinks to ~_COMMIT_LAG_SEC + overlap instead of a full
+                         # _WINDOW_SEC every cycle — the main live-speed lever.
+                         # WindowState clamps it above the window overlap so the
+                         # window always re-covers the committed tail (lossless).
 _LIVE_BEAM_SIZE = 2      # beam=1 caused repetition; beam=2 still real-time
 _FINAL_BEAM_SIZE = 5     # higher quality for the final pass after stop
 
@@ -61,9 +67,15 @@ class LiveTranscribeWorker(QObject):
     Each ``partial`` emission carries the *complete* transcription
     (committed prefix + current window).  The UI must replace the
     dictated region — not append — when it receives one.
+
+    ``partial`` also carries the length of the committed prefix within that
+    text: the number of leading characters this worker will never revise.
+    Consumers use it to skip re-processing frozen text
+    (:class:`~src.dictation.postprocess.incremental.IncrementalPostprocessor`).
+    A value of ``0`` means "treat the whole text as revisable".
     """
 
-    partial = Signal(str)
+    partial = Signal(str, int)
     finished = Signal()
     progress = Signal(str)
     # Absolute-timed segments for the current window, used by the cloud training
@@ -79,6 +91,9 @@ class LiveTranscribeWorker(QObject):
         vad_enabled: bool,
         pause_threshold: float = 2.5,
         model_path: Optional[Union[str, Path]] = None,
+        window_sec: float = _WINDOW_SEC,
+        commit_lag_sec: float = _COMMIT_LAG_SEC,
+        silence_rms_floor: float = 0.002,
     ) -> None:
         super().__init__()
         self.audio_path = audio_path
@@ -86,20 +101,20 @@ class LiveTranscribeWorker(QObject):
         self.language = language
         self.vad_enabled = vad_enabled
         self.pause_threshold = pause_threshold
+        self.silence_rms_floor = max(0.0, float(silence_rms_floor))
         # Optional fine-tuned CT2 model directory (overrides model_size).
         self.model_path = model_path
+        # Pure sliding-window / commit machine (config-tunable knobs are clamped
+        # to safe bounds inside WindowState). This owns all window geometry and
+        # commit-frontier arithmetic; the worker only feeds it audio segments.
+        self._win = WindowState(window_sec, commit_lag_sec,
+                                pause_threshold=self.pause_threshold)
         self._keep_running = True
         self._final_requested = False
 
-        # Sliding-window state.
-        self._committed_text: str = ""
-        self._committed_samples: int = 0
+        # Loop-local gating (not part of the window machine).
         self._last_emitted: str = ""
         self._prev_total_samples: int = 0
-
-        # Bootstrap-commit state.
-        self._prev_segments: List[dict] = []
-        self._prev_chunk_start_sec: float = 0.0
 
     # ------------------------------------------------------------------
     # Public control
@@ -127,63 +142,97 @@ class LiveTranscribeWorker(QObject):
             logger.info("Model loaded in %.2fs", time.time() - wall_start)
             self.progress.emit("Live transcribing...")
 
+            final_grace = 0
             while self._keep_running or self._final_requested:
-                audio, sr = self._read_audio()
-                if audio is None:
+                # Frame count from the header — no decode. The audio itself is
+                # read below, and only for the window we actually transcribe.
+                total_samples, sr = self._audio_length()
+                if not sr or total_samples / sr < _MIN_AUDIO_SEC:
+                    # The WAV stops growing once recording ends, so a finalize()
+                    # on a too-short or unreadable file would spin this loop
+                    # forever. Give the recorder a short grace to flush, then
+                    # finish without a final pass.
+                    if self._final_requested:
+                        final_grace += 1
+                        if final_grace > 6:
+                            logger.warning(
+                                "Recording too short or unreadable (%s frames); "
+                                "skipping final pass", total_samples,
+                            )
+                            break
                     time.sleep(0.5)
                     continue
 
-                total_samples = len(audio)
                 total_sec = total_samples / sr
-
-                if total_sec < _MIN_AUDIO_SEC:
-                    time.sleep(0.5)
-                    continue
 
                 growth_sec = (total_samples - self._prev_total_samples) / sr
                 if growth_sec < _MIN_GROWTH_SEC and not self._final_requested:
                     time.sleep(0.4)
                     continue
-                self._prev_total_samples = total_samples
 
-                chunk, chunk_start_sec = self._window(audio, sr, total_sec)
-                windowed = chunk_start_sec > 0.0
+                if self._final_requested:
+                    # Final pass: re-transcribe the ENTIRE recording at high beam
+                    # with cross-segment context, replacing the frozen low-beam
+                    # committed prefix. This is the main accuracy win — mumbled
+                    # speech committed from the fast live pass gets a second look.
+                    audio, sr = self._read_audio()
+                    if audio is not None:
+                        self._run_final_pass(transcriber, audio, sr)
+                    self._keep_running = False
+                    self._final_requested = False
+                    break
+
+                start_sample = self._win.window_start(total_samples, sr)
+                chunk, sr = self._read_audio(start_sample)
+                if chunk is None or not len(chunk):
+                    time.sleep(0.4)
+                    continue
+                chunk_start_sec = start_sample / sr
+                windowed = start_sample > 0
                 chunk_sec = len(chunk) / sr
 
+                # Silence gate: decoding near-silence is the canonical source of
+                # ",,..," / phrase hallucinations. Skip the cycle (but consume the
+                # audio so we don't re-evaluate the same silence next loop).
+                if self._rms(chunk) < self.silence_rms_floor:
+                    self._prev_total_samples = total_samples
+                    time.sleep(0.4)
+                    continue
+
                 t0 = time.time()
-                is_final = self._final_requested
-                beam = _FINAL_BEAM_SIZE if is_final else _LIVE_BEAM_SIZE
+                beam = _LIVE_BEAM_SIZE
                 prompt = self._build_context_prompt()
                 try:
-                    chunk_text, segments = transcriber.transcribe(
-                        chunk,
-                        language=self.language,
-                        vad_filter=self.vad_enabled,
-                        beam_size=beam,
-                        pause_threshold=self.pause_threshold,
-                        condition_on_previous_text=False,
-                        initial_prompt=prompt,
-                    )
+                    with perf.stage("worker.transcribe_live"):
+                        chunk_text, segments = transcriber.transcribe(
+                            chunk,
+                            language=self.language,
+                            vad_filter=self.vad_enabled,
+                            beam_size=beam,
+                            pause_threshold=self.pause_threshold,
+                            condition_on_previous_text=False,
+                            initial_prompt=prompt,
+                            # One greedy decode per live cycle — the temperature-
+                            # fallback ladder can re-decode the window up to 5x
+                            # and higher temperatures hallucinate; the final full
+                            # pass keeps the ladder.
+                            temperature=0.0,
+                        )
                 except Exception as exc:
                     logger.warning("Transcription cycle failed: %s", exc)
                     time.sleep(0.5)
                     continue
+                # Only advance the growth baseline after a successful transcribe,
+                # so a failed cycle's audio is retried rather than skipped.
+                self._prev_total_samples = total_samples
                 elapsed = time.time() - t0
                 chunk_text = chunk_text.strip()
 
                 # Commit segments that just fell out of the sliding window
                 # so the committed prefix keeps advancing even when VAD
                 # silenced the early audio in the new chunk.
-                if (chunk_start_sec > self._prev_chunk_start_sec + 0.5
-                        and self._prev_segments):
-                    self._bootstrap_commit(
-                        self._prev_segments,
-                        self._prev_chunk_start_sec,
-                        chunk_start_sec,
-                        sr,
-                    )
-                self._prev_segments = segments
-                self._prev_chunk_start_sec = chunk_start_sec
+                self._win.maybe_bootstrap(chunk_start_sec, sr)
+                self._win.record_segments(segments, chunk_start_sec)
 
                 # Emit absolute-timed segments for the training collector.
                 if segments:
@@ -197,32 +246,31 @@ class LiveTranscribeWorker(QObject):
                     ]
                     self.segments.emit(abs_segments)
 
-                output = self._build_output(chunk_text, chunk_start_sec)
+                output = self._win.build_output(chunk_text, chunk_start_sec)
 
                 emitted = False
                 if output and output != self._last_emitted:
                     self._last_emitted = output
                     cycle_count += 1
                     emitted = True
-                    self.partial.emit(output)
+                    # The committed prefix is a literal prefix of ``output``
+                    # (see WindowState.build_output), so its length locates the
+                    # frontier.
+                    self.partial.emit(output, self._win.committed_prefix_len(output))
 
-                if total_sec > _WINDOW_SEC and segments:
-                    self._advance_commit(segments, chunk_start_sec, total_sec, sr)
+                if total_sec > self._win.commit_lag_sec and segments:
+                    self._win.advance_commit(segments, chunk_start_sec, total_sec, sr)
 
                 sleep_time = max(0.4, min(elapsed * 0.5, 2.0))
-                logger.info(
+                logger.debug(
                     "cycle=%d  total=%.1fs  chunk=%.1fs  window=%s  "
                     "committed=%.1fs  transcribe=%.2fs  sleep=%.2fs  emit=%s",
                     cycle_count, total_sec, chunk_sec,
                     "YES" if windowed else "no",
-                    self._committed_samples / sr, elapsed, sleep_time,
+                    self._win.committed_samples / sr, elapsed, sleep_time,
                     "YES" if emitted else "skip",
                 )
                 time.sleep(sleep_time)
-
-                if self._final_requested:
-                    self._keep_running = False
-                    self._final_requested = False
 
         except Exception as exc:
             logger.error("Worker error: %s", exc, exc_info=True)
@@ -231,134 +279,112 @@ class LiveTranscribeWorker(QObject):
                 "Worker finished in %.2fs, %d cycles emitted",
                 time.time() - wall_start, cycle_count,
             )
+            perf.log_summary("dictation perf")
             self.finished.emit()
 
     # ------------------------------------------------------------------
     # Audio I/O
     # ------------------------------------------------------------------
 
-    def _read_audio(self) -> Tuple[Optional[np.ndarray], int]:
+    @staticmethod
+    def _rms(chunk: np.ndarray) -> float:
+        if chunk.size == 0:
+            return 0.0
+        return float(np.sqrt(np.mean(np.square(chunk, dtype=np.float64))))
+
+    def _run_final_pass(
+        self, transcriber: Transcriber, audio: np.ndarray, sr: int
+    ) -> None:
+        """Re-transcribe the whole recording at high beam and emit as authoritative.
+
+        Bypasses the sliding window so text committed from the fast live pass
+        (beam=2) is fully re-decoded with beam=5 + cross-segment context.
+        """
+        t0 = time.time()
         try:
-            audio, sr = sf.read(self.audio_path, dtype="float32")
-            if audio.ndim > 1:
-                audio = audio[:, 0]
-            return audio, sr
-        except FileNotFoundError:
-            return None, 0
+            full_text, segments = transcriber.transcribe(
+                audio,
+                language=self.language,
+                vad_filter=self.vad_enabled,
+                beam_size=_FINAL_BEAM_SIZE,
+                pause_threshold=self.pause_threshold,
+                condition_on_previous_text=True,
+                initial_prompt=self._build_context_prompt(),
+            )
         except Exception as exc:
-            logger.warning("Unexpected error reading audio %s: %s", self.audio_path, exc)
-            return None, 0
+            logger.warning("Final transcription pass failed: %s", exc)
+            return
+        full_text = full_text.strip()
+        logger.info("final pass  dur=%.1fs  transcribe=%.2fs  chars=%d",
+                    len(audio) / sr, time.time() - t0, len(full_text))
+        if segments:
+            self.segments.emit(
+                [{"start": float(s.get("start", 0)),
+                  "end": float(s.get("end", 0)),
+                  "text": s.get("text", "")} for s in segments]
+            )
+        if full_text and full_text != self._last_emitted:
+            self._last_emitted = full_text
+            # committed_len=0: the final pass re-decodes everything, so no part
+            # of this text is a carry-over of the frozen live prefix.
+            self.partial.emit(full_text, 0)
 
-    # ------------------------------------------------------------------
-    # Sliding window
-    # ------------------------------------------------------------------
+    def _audio_length(self) -> Tuple[int, int]:
+        """Return ``(total_frames, samplerate)`` from the header — no decode.
 
-    def _window(
-        self, audio: np.ndarray, sr: int, total_sec: float
-    ) -> Tuple[np.ndarray, float]:
-        """Return ``(audio_chunk, chunk_start_seconds)``.
-
-        The chunk is capped at :data:`_WINDOW_SEC` seconds.  When prior
-        text has been committed the window starts just before the commit
-        frontier (with :data:`_OVERLAP_SEC` of context); otherwise it
-        anchors to the most recent ``_WINDOW_SEC`` of audio.
+        ``(0, 0)`` while the file is missing or unreadable (the recorder may not
+        have created it yet), which the run loop treats as "wait and retry".
         """
-        if total_sec <= _WINDOW_SEC:
-            return audio, 0.0
+        try:
+            info = sf.info(self.audio_path)
+            return int(info.frames), int(info.samplerate)
+        except (FileNotFoundError, RuntimeError):
+            return 0, 0
+        except Exception as exc:
+            logger.warning("Could not stat audio %s: %s", self.audio_path, exc)
+            return 0, 0
 
-        if self._committed_samples > 0:
-            overlap_samples = int(_OVERLAP_SEC * sr)
-            anchor = max(0, self._committed_samples - overlap_samples)
-            earliest = max(0, len(audio) - int(_WINDOW_SEC * sr))
-            start_sample = max(anchor, earliest)
-        else:
-            start_sample = max(0, len(audio) - int(_WINDOW_SEC * sr))
+    def _read_audio(self, from_sample: int = 0) -> Tuple[Optional[np.ndarray], int]:
+        """Read the growing WAV from *from_sample* onwards as mono float32.
 
-        return audio[start_sample:], start_sample / sr
+        Reading the whole file every cycle re-decodes the entire recording each
+        time — the cost grows with the session and dominates late in a long
+        dictation. The live loop only needs the sliding window, so it seeks.
 
-    # ------------------------------------------------------------------
-    # Output assembly
-    # ------------------------------------------------------------------
-
-    def _build_output(self, chunk_text: str, chunk_start_sec: float) -> str:
-        """Combine the committed prefix with the new portion of this chunk."""
-        if not self._committed_text or chunk_start_sec == 0.0:
-            return chunk_text
-        return trim_committed_tail(self._committed_text, chunk_text)
-
-    def _advance_commit(
-        self,
-        segments: List[dict],
-        chunk_start_sec: float,
-        total_sec: float,
-        sr: int,
-    ) -> None:
-        """Freeze segments that are safely behind the transcription frontier."""
-        safe_abs = total_sec - _WINDOW_SEC
-        current_end = self._committed_samples / sr
-        if safe_abs <= current_end:
-            return
-
-        new_parts: List[str] = []
-        new_committed_end = current_end
-        for seg in segments:
-            abs_end = chunk_start_sec + float(seg.get("end", 0))
-            if abs_end > current_end and abs_end <= safe_abs:
-                if text := (seg.get("text") or "").strip():
-                    new_parts.append(text)
-                new_committed_end = abs_end
-
-        if not new_parts:
-            return
-
-        addition = " ".join(new_parts)
-        self._committed_text = (
-            f"{self._committed_text} {addition}".strip()
-            if self._committed_text
-            else addition
-        )
-        self._committed_samples = int(new_committed_end * sr)
-        logger.info(
-            "commit  frontier=%.1fs  committed_now=%.1fs  added=%d chars",
-            total_sec, new_committed_end, len(addition),
-        )
-
-    def _bootstrap_commit(
-        self,
-        prev_segments: List[dict],
-        prev_chunk_start_sec: float,
-        new_chunk_start_sec: float,
-        sr: int,
-    ) -> None:
-        """Seed the commit frontier from the previous window when it slides.
-
-        Called when :meth:`_advance_commit` hasn't fired yet but the
-        window has moved forward.  Commits prior-cycle segments whose
-        absolute end timestamp is now before the new window's start.
+        Falls back to a full read if the seek fails: the header of a WAV still
+        being written is not guaranteed to describe every frame on disk.
         """
-        parts: List[str] = []
-        new_end = self._committed_samples / sr
-        for seg in prev_segments:
-            abs_end = prev_chunk_start_sec + float(seg.get("end", 0))
-            if abs_end <= new_chunk_start_sec and abs_end > new_end:
-                if text := (seg.get("text") or "").strip():
-                    parts.append(text)
-                new_end = abs_end
+        with perf.stage("worker.read_audio"):
+            try:
+                if from_sample > 0:
+                    try:
+                        with sf.SoundFile(self.audio_path) as handle:
+                            handle.seek(from_sample)
+                            audio = handle.read(dtype="float32")
+                            sr = handle.samplerate
+                        return self._to_mono(audio), sr
+                    except (RuntimeError, ValueError) as exc:
+                        logger.debug("Seek read failed (%s); full read", exc)
 
-        if not parts:
-            return
+                audio, sr = sf.read(self.audio_path, dtype="float32")
+                mono = self._to_mono(audio)
+                # The caller labels the returned chunk as starting at
+                # *from_sample* — slice the full read so segment timestamps
+                # stay correct when the seek path failed.
+                if from_sample > 0:
+                    mono = mono[from_sample:]
+                return mono, sr
+            except FileNotFoundError:
+                return None, 0
+            except Exception as exc:
+                logger.warning(
+                    "Unexpected error reading audio %s: %s", self.audio_path, exc
+                )
+                return None, 0
 
-        addition = " ".join(parts)
-        self._committed_text = (
-            f"{self._committed_text} {addition}".strip()
-            if self._committed_text
-            else addition
-        )
-        self._committed_samples = int(new_end * sr)
-        logger.info(
-            "bootstrap_commit  new_frontier=%.1fs  added=%d chars",
-            new_end, len(addition),
-        )
+    @staticmethod
+    def _to_mono(audio: np.ndarray) -> np.ndarray:
+        return audio[:, 0] if audio.ndim > 1 else audio
 
     # ------------------------------------------------------------------
     # Context prompt for Whisper

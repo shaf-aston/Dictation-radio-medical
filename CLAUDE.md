@@ -31,19 +31,30 @@ or agent for it to be picked up.
 
 ```
 src/
-├── core/        settings.py (JSON at project root) · logging_setup.py
+├── core/        settings.py (JSON at project root) · logging_setup.py ·
+│                  json_store.py (shared atomic JSON + JSONL read/write) ·
+│                  keychain.py (OS-keychain secret helpers, wraps keyring) ·
+│                  patient_schema.py (the patient-info fields, declared once) ·
+│                  perf.py (stage timings — rolling count/mean/p95/max, local only)
 ├── dictation/   the offline pipeline — has NO cloud dependency
 │   ├── audio.py          microphone capture
-│   ├── worker.py         live transcription QThread (sliding window)
+│   ├── worker.py         live transcription QThread (sliding window; reads only
+│   │                       the window off the growing WAV, never the whole file)
 │   ├── transcriber.py    faster-whisper / CTranslate2 wrapper
 │   ├── text_diff.py      incremental diff for streaming UI updates
 │   ├── postprocess/      10-stage correction pipeline (pipeline.py orchestrates)
+│   │   └── incremental.py  live path: processes only the un-committed tail,
+│   │                        caching the frozen prefix (see Live-speed design)
 │   └── resources/        radiology_prompt.txt (Whisper priming prompt, ~200 terms)
 ├── ui/          main_window.py · views.py · recording_session.py · dialogs.py
-│   ├── web_app.py        FastAPI single-page app (binds 127.0.0.1:8005)
+│   ├── postprocess_worker.py  runs the pipeline OFF the UI thread, latest-only
+│   ├── web_app.py        FastAPI single-page app (host/port from settings)
 │   ├── styles.py · styles/*.qss · frontends/   desktop + web assets
 │   └── __main__.py       enables `python -m src.ui`
-├── medical/     medical_dict.py · critical_findings.py (NegEx) · macros.py
+├── medical/     medical_dict.py · critical_findings.py (NegEx) · macros.py ·
+│                  deid.py (DeIdentifier + PrivacyError — PHI de-id, the upload
+│                  safety gate; lives here so dictation/training/cloud all import
+│                  it downward without dictation touching src.cloud.*)
 ├── features/    accent_corrections.py · adaptive_learning.py · audit_log.py
 │   └── file_manager.py · report_manager.py · report_analyzer.py
 ├── imaging/     OPTIONAL local chest X-ray assistant (offline inference)
@@ -51,7 +62,13 @@ src/
 │   ├── abstention.py     calibrated rejection gate — the imaging safety gate
 │   ├── localization.py   hand-rolled Grad-CAM → region + overlay PNG
 │   ├── analyzer.py       orchestrator: classify → abstain → localize → result
-│   ├── schemas.py        ImagingFinding / ImagingResult / DISCLAIMER
+│   ├── schemas.py        ImagingFinding / ImagingResult / DISCLAIMER ·
+│   │                      ReferenceCase / RetrievalMatch (similar-case retrieval)
+│   ├── retrieval.py      orchestration: build/cache reference index, attribute-
+│   │                      aware "find similar prior cases" for a query film
+│   ├── retrieval_embed.py  EmbeddingExtractor (DenseNet embeddings, lazy torch)
+│   ├── retrieval_index.py  EmbeddingIndex — HNSW (hnswlib) / numpy search + I/O
+│   ├── datasets.py       local labelled-image dataset loading for fine-tune/eval
 │   └── resources/        thresholds.json (default per-pathology cutoffs)
 ├── cloud/       OPTIONAL Lightning AI fine-tuning (consent-gated)
 │   ├── framework/        task-agnostic core
@@ -62,8 +79,8 @@ src/
 │   ├── tasks/            one plug-in per model type (per-task differences only)
 │   │   ├── base.py       TrainingTask Protocol + JobSpec
 │   │   └── whisper_voice.py · text_corrector.py · scan_finetune.py
-│   ├── privacy.py        PHI de-identification — the upload safety gate
-│   └── exceptions.py     CloudError hierarchy (+ ImagingError, GroqError)
+│   └── exceptions.py     CloudError hierarchy (+ ImagingError, GroqError);
+│                          re-exports PrivacyError from medical/deid.py
 ├── training/    collector.py · schemas.py · staging_db.py (SQLite)
 ├── templates/   plain-text report templates (RSNA / MSK / generic)
 └── resources/   medical_terms.txt (broad generic wordlist — membership net) ·
@@ -86,6 +103,34 @@ microphone → audio.py → worker.py (QThread, sliding window)
            → UI (views.py / web_app.py) → report_manager.py (.docx / .txt export)
 ```
 
+## Live-speed design (why dictation keeps up)
+
+The live worker re-emits the *whole* transcript every cycle. Three rules keep the
+per-cycle cost flat instead of growing with the length of the report — a long
+dictation used to get slower the longer it ran:
+
+1. **The pipeline never runs on the UI thread.** `ui/postprocess_worker.py` owns
+   a `QThread` with a one-slot mailbox: only the *latest* transcript is
+   processed (older ones are stale by definition), and each result carries a
+   sequence number so a late pass can't overwrite a newer one. Worker signals
+   are connected to **bound `MainWindow` slots, never lambdas** — a signal
+   connected to a plain callable has no receiver thread affinity, so Qt would
+   run it in the *emitting* thread and mutate the editor off the UI thread.
+2. **Only the un-committed tail is post-processed.** `postprocess/incremental.py`
+   caches the processed form of the frozen prefix and splits at a *sentence
+   boundary at or before the commit frontier* — so every piece the pipeline sees
+   starts where a sentence starts, exactly as it would inside the full document.
+   No safe boundary yet → it falls back to whole-document processing. The final
+   pass after recording stops always reprocesses the whole document, so the
+   report the radiologist reviews is never a partially-processed artefact.
+3. **Only the window is read off disk.** `worker._read_audio(from_sample)` seeks;
+   it no longer re-decodes the entire growing WAV every cycle.
+
+`core/perf.py` is the evidence for all of the above: stage timings (count / mean
+/ p95 / max) are logged when a recording ends and served at `GET
+/api/debug/perf`. It is in-process only — nothing is persisted or sent anywhere,
+so it does not weaken the offline invariant.
+
 The pipeline (`dictation/postprocess/pipeline.py`) runs, in order: hallucination
 removal → voice commands → punctuation → measurements → terminology →
 accent-specific → fuzzy medical-dictionary match → learned corrections →
@@ -99,6 +144,8 @@ typo is *snapped to* (correction targets). Keeping snap targets radiology-only i
 what stops a misspelling from being pulled toward the generic list's chemistry /
 drug / obscure-procedure junk. To improve correction of a term, add it to the
 lexicon (the spelling authority) or add a precise rule to `corrections.yaml`.
+Never feed PDF/OCR-extracted text into the lexicon — extraction noise (ligature
+splits, hyphenation artefacts) pollutes the snap targets.
 
 ## Cloud fine-tuning path (opt-in, off by default)
 
@@ -107,7 +154,7 @@ settings. With default settings nothing is retained, staged, or uploaded.
 
 ```
 dictation corrections → training/collector.py (consent-gated capture)
-   → cloud/privacy.py  de-identify TEXT + AUDIO, validate_clean()
+   → medical/deid.py  de-identify TEXT + AUDIO, validate_clean()
    → training/staging_db.py  (SQLite: data/training/staging.db)
    → cloud/tasks/<task>.build_archive()  tar.gz batch (manifest + de-id clips)
    → cloud/framework/client.py  upload + submit Lightning AI job (key from keychain)
@@ -177,6 +224,11 @@ validated data (`data/imaging/thresholds.json`).
 - **File I/O goes through `features/file_manager.py`** path helpers
   (`autosave_dir`, `staging_db_path`, `model_registry_path`, `fine_tuned_dir`,
   `imaging_thresholds_path`, `imaging_overlay_dir`, …).
+- **Every rebuildable cache lives under `data/cache/`** (`cache_dir()`:
+  SymSpell index, Whisper model downloads via `whisper_cache_dir()`, imaging
+  embeddings via `imaging_embeddings_dir()`). Deleting the folder is always
+  safe — caches rebuild or re-download on next use. Never write derived,
+  regenerable data anywhere else.
 
 ## Run & test
 

@@ -4,7 +4,9 @@ File and path management - centralized control of all project files.
 Directory structure:
 - data/temp/          Temporary audio files (cleaned on startup + after use)
 - data/autosave/      Auto-saved reports (retention: 30 days)
-- data/resources/     Resource files (medical wordlist, etc)
+- data/cache/         ALL rebuildable caches (SymSpell index, Whisper model
+                      downloads, imaging embeddings). Safe to delete whole —
+                      the app rebuilds/re-downloads on next use.
 - data/macros.json    User-editable quick phrases
 - templates/          Report templates (read-only)
 """
@@ -49,11 +51,42 @@ def autosave_dir() -> Path:
     path.mkdir(exist_ok=True)
     return path
 
-def resources_dir() -> Path:
-    """Resource files (medical wordlists, etc)"""
-    path = _data_dir() / "resources"
+def cache_dir() -> Path:
+    """Single home for every rebuildable on-disk cache.
+
+    Everything in here is derived data — the SymSpell index, downloaded
+    Whisper models, imaging embeddings. Deleting the whole folder is always
+    safe; each cache is rebuilt or re-downloaded on next use.
+    """
+    path = _data_dir() / "cache"
     path.mkdir(exist_ok=True)
     return path
+
+def whisper_cache_dir() -> Path:
+    """Download root for stock Whisper models (faster-whisper).
+
+    Keeps the multi-hundred-MB model downloads inside data/cache/ instead of
+    the hidden per-user HuggingFace cache, so they are visible and deletable
+    with the rest of the caches.
+    """
+    path = cache_dir() / "whisper"
+    path.mkdir(exist_ok=True)
+    return path
+
+def imaging_embeddings_dir() -> Path:
+    """Cache of imaging embeddings + similarity indices (rebuildable)."""
+    path = cache_dir() / "imaging_embeddings"
+    path.mkdir(exist_ok=True)
+    return path
+
+def clear_cache() -> None:
+    """Delete every cached artefact under data/cache/ (all rebuildable)."""
+    import shutil
+    try:
+        shutil.rmtree(cache_dir(), ignore_errors=True)
+        logger.info("Cleared cache directory")
+    except Exception as exc:
+        logger.warning("Cache clear failed: %s", exc)
 
 def templates_dir() -> Path:
     """Report templates"""
@@ -73,6 +106,16 @@ def radiology_lexicon_path() -> Path:
     """
     return _project_root() / "src" / "resources" / "radiology_lexicon.txt"
 
+def medical_dict_cache_path() -> Path:
+    """Cached SymSpell index built from the medical wordlist + radiology lexicon.
+
+    Rebuilding the index from ~98k terms takes a few seconds; this on-disk
+    cache (keyed by a term-count signature, see
+    :func:`src.medical.medical_dict.get_symspell`) avoids paying that cost on
+    every launch.
+    """
+    return cache_dir() / "medical_symspell.pkl"
+
 def radiology_prompt_path() -> Path:
     """Whisper initial-prompt text fed to the model before transcription."""
     return _project_root() / "src" / "dictation" / "resources" / "radiology_prompt.txt"
@@ -88,6 +131,22 @@ def user_corrections_path() -> Path:
     ``corrections.yaml``, so an app update never clobbers a site's own rules.
     """
     return _data_dir() / "user_corrections.yaml"
+
+def learned_corrections_path() -> Path:
+    """Passively-learned word corrections / custom vocabulary (JSON).
+
+    Written by ``features/adaptive_learning.py``; the canonical location lives
+    here so consumers never hand-roll the path from the data dir.
+    """
+    return _data_dir() / "learned_corrections.json"
+
+def audit_log_path() -> Path:
+    """Append-only audit log of report actions (JSON lines).
+
+    Written by ``features/audit_log.py``. Never auto-deleted (institutional
+    retention); see that module for the retention policy.
+    """
+    return _data_dir() / "audit.log"
 
 # ---------------------------------------------------------------------------
 # Cloud training storage (Lightning AI integration)
@@ -144,7 +203,11 @@ def dictation_edits_path() -> Path:
 # ---------------------------------------------------------------------------
 
 def imaging_dir() -> Path:
-    """Root for scan assistant storage (datasets, embeddings, overlays)."""
+    """Root for scan assistant storage (datasets, overlays, thresholds).
+
+    Rebuildable embedding caches live under :func:`imaging_embeddings_dir`
+    (data/cache/), not here — this dir holds only non-derived data.
+    """
     path = _data_dir() / "imaging"
     path.mkdir(exist_ok=True)
     return path
@@ -168,6 +231,29 @@ def imaging_thresholds_path() -> Path:
 def settings_file() -> Path:
     """Settings JSON file"""
     return _project_root() / "dictation_settings.json"
+
+
+# ---------------------------------------------------------------------------
+# Report file naming
+# ---------------------------------------------------------------------------
+
+def report_filename(
+    patient_info: dict, ext: str, prefix: str = "", fallback_id: str = "report"
+) -> str:
+    """Build a ``<prefix><patient-id>_<timestamp><ext>`` report filename.
+
+    The desktop save dialog, the web download header, and autosave each built
+    this name themselves and drifted apart. One builder, one naming scheme.
+
+    The patient ID is sanitised: it lands in a filename (and, on the web, in a
+    ``Content-Disposition`` header), so path separators, quotes, and control
+    characters must not survive it.
+    """
+    raw = str(patient_info.get("id") or "").strip()
+    pid = "".join(ch if (ch.isalnum() or ch in "-_") else "_" for ch in raw).strip("_")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{prefix}{pid or fallback_id}_{timestamp}{ext}"
+
 
 # ---------------------------------------------------------------------------
 # Temp WAV file management
@@ -225,6 +311,30 @@ def startup_cleanup(retention_days: int = 30) -> None:
     cleanup_temp_files()
     cleanup_old_autosaves(retention_days=retention_days)
     _remove_legacy_temp_files()
+    _remove_legacy_cache_locations()
+
+
+def _remove_legacy_cache_locations() -> None:
+    """Delete caches from their pre-data/cache/ homes (all rebuildable).
+
+    Earlier versions kept the SymSpell pickle in data/resources/ and imaging
+    embeddings in data/imaging/embeddings/. Both now live under
+    :func:`cache_dir`; the old copies are stale derived data, safe to drop.
+    """
+    import shutil
+    try:
+        count = 0
+        for legacy in (
+            _data_dir() / "resources",
+            _data_dir() / "imaging" / "embeddings",
+        ):
+            if legacy.exists():
+                shutil.rmtree(legacy, ignore_errors=True)
+                count += 1
+        if count > 0:
+            logger.info("Removed %d legacy cache location(s)", count)
+    except Exception as exc:
+        logger.warning("Legacy cache cleanup failed: %s", exc)
 
 def _remove_legacy_temp_files() -> None:
     """Remove leftover temp files and directories (tmpclaude-*, etc)."""

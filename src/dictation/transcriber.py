@@ -1,6 +1,9 @@
 """Whisper transcription wrapper tuned for radiology dictation.
 
 Lazy-loads `faster-whisper` on first transcribe() to keep startup instant.
+Model instances are shared process-wide per (model, device, compute_type) —
+which is what makes startup warmup (src/dictation/warmup.py) effective for the
+recording worker.
 Applies a domain-specific initial prompt (`_RADIOLOGY_INITIAL_PROMPT`, loaded
 from src/dictation/resources/radiology_prompt.txt) to prime the model's
 vocabulary and filters per-segment hallucinations before returning text.
@@ -9,11 +12,14 @@ vocabulary and filters per-segment hallucinations before returning text.
 from __future__ import annotations
 
 import logging
+import os
+import re
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from src.features.file_manager import radiology_prompt_path
+from src.features.file_manager import radiology_prompt_path, whisper_cache_dir
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +41,18 @@ _RADIOLOGY_INITIAL_PROMPT = _load_radiology_prompt()
 
 # Supported model sizes in order of speed (fastest first).
 SUPPORTED_MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
+
+# Process-wide model cache: (model_ref, device, requested compute_type-or-None)
+# -> (WhisperModel, resolved compute_type). Loading a model takes multiple
+# seconds and hundreds of MB; sharing one instance across Transcriber objects
+# (warmup thread, recording worker, final pass) avoids paying that twice.
+_MODEL_CACHE: Dict[Tuple[str, str, Optional[str]], Tuple[Any, str]] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
+# LRU bound: each entry pins hundreds of MB for the process lifetime, so
+# switching model size (or activating a fine-tune) must evict, not accumulate.
+# 2 tolerates one warmup/worker mismatch without reload thrash; live callers
+# holding an evicted model keep their own reference and are unaffected.
+_MODEL_CACHE_MAX = 2
 
 
 class Transcriber:
@@ -82,39 +100,78 @@ class Transcriber:
         # Lazy import: only load heavy ctranslate2 dependency when first needed
         from faster_whisper import WhisperModel
 
-        compute_types = (
-            [self.compute_type, "int8", "float32"]
-            if self.compute_type
-            else ["int8", "float32"]
-        )
-
         # A fine-tuned model directory is passed verbatim to faster-whisper,
         # which accepts a local path in place of a named model size.
         model_ref = self.model_path or self.model_size
 
-        last_err: Optional[Exception] = None
-        for ct in compute_types:
-            if ct is None:
-                continue
-            try:
-                logger.info(
-                    "Loading Whisper model: %s  device=%s  compute_type=%s",
-                    model_ref, self.device, ct,
-                )
-                self._model = WhisperModel(
-                    model_ref, device=self.device, compute_type=ct
-                )
-                self.compute_type = ct
-                elapsed = time.time() - t_start
-                logger.info("Model loaded successfully with compute_type=%s [%.2fs]", ct, elapsed)
+        # Stock models download into data/cache/whisper/ (not the hidden
+        # per-user HuggingFace cache) so every cache lives in one deletable
+        # place. Ignored by faster-whisper when model_ref is a local path.
+        download_root = str(whisper_cache_dir())
+
+        # Keyed on the *requested* compute_type (may be None) so two callers
+        # asking for the same thing share one instance. The lock covers the
+        # whole check-load-store: double loading wastes seconds and RAM, and
+        # serialising loads is fine (warmup thread vs worker QThread race).
+        cache_key = (model_ref, self.device, self.compute_type)
+        with _MODEL_CACHE_LOCK:
+            cached = _MODEL_CACHE.pop(cache_key, None)
+            if cached is not None:
+                _MODEL_CACHE[cache_key] = cached  # re-insert: LRU move-to-end
+                self._model, self.compute_type = cached
                 return
-            except (ValueError, RuntimeError) as exc:
-                logger.warning("Failed to load with compute_type=%s: %s", ct, exc)
-                last_err = exc
+
+            compute_types = (
+                [self.compute_type, "int8", "int8_float32", "float32"]
+                if self.compute_type
+                else ["int8", "int8_float32", "float32"]
+            )
+
+            # On CPU, CTranslate2 defaults to 4 intra-op threads regardless of core
+            # count — leave the OS a couple of cores and use the rest.
+            cpu_threads = 0 if self.device == "cuda" else max(4, (os.cpu_count() or 4) - 2)
+
+            last_err: Optional[Exception] = None
+            seen: set = set()
+            for ct in compute_types:
+                if ct is None or ct in seen:
+                    continue
+                seen.add(ct)
+                try:
+                    logger.info(
+                        "Loading Whisper model: %s  device=%s  compute_type=%s  cpu_threads=%d",
+                        model_ref, self.device, ct, cpu_threads,
+                    )
+                    self._model = WhisperModel(
+                        model_ref, device=self.device, compute_type=ct,
+                        cpu_threads=cpu_threads, download_root=download_root,
+                    )
+                    _MODEL_CACHE[cache_key] = (self._model, ct)
+                    while len(_MODEL_CACHE) > _MODEL_CACHE_MAX:
+                        evicted = next(iter(_MODEL_CACHE))
+                        del _MODEL_CACHE[evicted]
+                        logger.info("Evicted cached Whisper model %s", evicted)
+                    self.compute_type = ct
+                    elapsed = time.time() - t_start
+                    logger.info("Model loaded successfully with compute_type=%s [%.2fs]", ct, elapsed)
+                    return
+                except (ValueError, RuntimeError) as exc:
+                    logger.warning("Failed to load with compute_type=%s: %s", ct, exc)
+                    last_err = exc
 
         raise RuntimeError(
             f"Failed to load Whisper model '{model_ref}'. Last error: {last_err}"
         )
+
+    def preload(self) -> None:
+        """Load the Whisper model now instead of on the first ``transcribe()``.
+
+        Public warm-up seam: lets a front-end pay the multi-second model load at
+        app startup on a background thread (see :mod:`src.dictation.warmup`), so
+        the radiologist's first spoken chunk is not the thing that stalls.
+        Idempotent — a no-op once the model is loaded.
+        """
+        self._ensure_model()
 
     # ------------------------------------------------------------------
     # Transcription
@@ -129,6 +186,7 @@ class Transcriber:
         initial_prompt: Optional[str] = None,
         pause_threshold: float = 2.5,
         condition_on_previous_text: bool = True,
+        temperature: Optional[Union[float, List[float]]] = None,
     ) -> Tuple[str, List[Dict]]:
         """
         Transcribe *audio* and return (full_text, segment_list).
@@ -171,7 +229,9 @@ class Transcriber:
             # Temperature fallback: start with greedy (0.0) for deterministic
             # output; if that fails the quality checks, retry with increasing
             # temperature for diversity.  This is Whisper's built-in fallback.
-            temperature=[0.0, 0.2, 0.4, 0.6, 0.8],
+            # Callers may override (e.g. the live cycle passes 0.0 for a
+            # single greedy decode).
+            temperature=temperature if temperature is not None else [0.0, 0.2, 0.4, 0.6, 0.8],
         )
 
         t_transcribe = time.time()
@@ -241,17 +301,33 @@ _HALLUCINATION_PHRASES = {
     "you",
 }
 
+# Short phrases (<=2 words) are only hallucinations when they are the WHOLE
+# segment — matching them as a prefix silently deleted real dictation like
+# "Your report shows…" or "Young patient…". Long YouTube-outro phrases stay
+# prefix-matched (they trail into varied garbage).
+_SHORT_PHRASES = {p for p in _HALLUCINATION_PHRASES if len(p.split()) <= 2}
+_LONG_PHRASES = _HALLUCINATION_PHRASES - _SHORT_PHRASES
+
+# `(?!)` never matches — a safe alternation when a phrase set is empty (an
+# empty `(?:)` would otherwise match every segment).
+def _alt(phrases: set) -> str:
+    return "|".join(re.escape(p) for p in sorted(phrases, key=len, reverse=True)) or "(?!)"
+
+_HALLUCINATION_RE = re.compile(r"^(?:" + _alt(_LONG_PHRASES) + r")", re.IGNORECASE)
+# Whole-segment (trailing punctuation/whitespace tolerated) for short phrases.
+_HALLUCINATION_EXACT_RE = re.compile(
+    r"^(?:" + _alt(_SHORT_PHRASES) + r")[\s.,!?]*$", re.IGNORECASE
+)
+
 
 def _is_hallucination(text: str, seg: Any) -> bool:
     """Return True if a segment looks like a Whisper hallucination."""
     lower = text.lower().strip()
 
-    # 1. Known hallucination phrases
-    if lower in _HALLUCINATION_PHRASES:
+    # 1. Known hallucination phrases: long outros by prefix, short ones only
+    #    when they are the entire segment (avoids deleting "your"/"young"…).
+    if _HALLUCINATION_RE.match(lower) or _HALLUCINATION_EXACT_RE.match(lower):
         return True
-    for phrase in _HALLUCINATION_PHRASES:
-        if lower.startswith(phrase):
-            return True
 
     # 2. Very short text on a long segment (Whisper filling silence)
     duration = getattr(seg, "end", 0) - getattr(seg, "start", 0)

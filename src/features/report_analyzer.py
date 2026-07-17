@@ -13,7 +13,6 @@ writing ``data/analysis/report_analytics.json`` for the UI to surface.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from collections import Counter
@@ -22,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from src.core.json_store import write_json
 from src.features.report_manager import _SECTION_HEADERS
 
 logger = logging.getLogger(__name__)
@@ -103,12 +103,9 @@ class ReportAnalyzer:
         from src.features.file_manager import analysis_dir
         analytics = self.analyze_all_reports()
         out = analysis_dir() / "report_analytics.json"
-        try:
-            out.write_text(json.dumps(analytics.to_dict(), indent=2), encoding="utf-8")
-            logger.info("Report analytics written to %s (%d reports)",
-                        out, analytics.report_count)
-        except Exception as exc:
-            logger.warning("Could not write report analytics: %s", exc)
+        write_json(out, analytics.to_dict())
+        logger.info("Report analytics written to %s (%d reports)",
+                    out, analytics.report_count)
         return out
 
     # ------------------------------------------------------------------

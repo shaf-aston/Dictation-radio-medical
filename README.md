@@ -80,7 +80,7 @@ scripts/                 verify_setup.py · lightning/ (cloud training) · downl
 tests/                   pytest suite
 ```
 
-See [CLAUDE.md](CLAUDE.md) for architecture details, [CODING_STANDARDS.md](CODING_STANDARDS.md) for style rules, and [MEDICAL_REFERENCE_INTEGRATION.md](MEDICAL_REFERENCE_INTEGRATION.md) for training corpus setup.
+See [CLAUDE.md](CLAUDE.md) for architecture details and [CODING_STANDARDS.md](CODING_STANDARDS.md) for style rules.
 
 ### Medical Reference Library
 

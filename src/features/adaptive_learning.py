@@ -25,7 +25,6 @@ corrections.json = {
 }
 """
 
-import json
 import logging
 import re
 import threading
@@ -33,6 +32,8 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 from collections import defaultdict
+
+from src.core.json_store import read_json, write_json
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +82,11 @@ class AdaptiveLearning:
         self._term_frequency: Dict[str, int] = defaultdict(int)
         self._accent_hints: Dict[str, str] = {}
 
-        # Compiled patterns (rebuilt when corrections change)
-        self._correction_patterns: List[Tuple[re.Pattern, str]] = []
+        # Compiled patterns (rebuilt when corrections change). Each entry is
+        # ``(trigger_lower, pattern, replacement)`` — trigger_lower is the cheap
+        # substring gate so apply_learned_corrections can skip the regex when the
+        # word can't be present (see apply_learned_corrections).
+        self._correction_patterns: List[Tuple[str, re.Pattern, str]] = []
 
         # Load existing data
         self._load()
@@ -93,9 +97,9 @@ class AdaptiveLearning:
 
     @staticmethod
     def _default_data_dir() -> Path:
-        """Get default data directory."""
-        from src.features.file_manager import _data_dir
-        return _data_dir()
+        """Default storage directory (the data/ root) via the path authority."""
+        from src.features.file_manager import learned_corrections_path
+        return learned_corrections_path().parent
 
     # ------------------------------------------------------------------
     # Learning API
@@ -207,15 +211,26 @@ class AdaptiveLearning:
     # ------------------------------------------------------------------
 
     def apply_learned_corrections(self, text: str) -> str:
-        """Apply all learned corrections to text. Run FIRST in pipeline."""
+        """Apply all learned corrections to text. Run last in the pipeline.
+
+        Quick-scan gate: the learned set can hold thousands of patterns, but a
+        given transcript chunk contains only a handful of words. Lower-casing the
+        text once and skipping any pattern whose trigger word isn't a substring
+        turns "run every regex every chunk" into "run only the few that could
+        match" — the same optimisation accent corrections already use.
+        """
         if not text:
             return text
 
+        # _rebuild_patterns rebinds the list wholesale, so grabbing the reference
+        # under the lock and iterating outside it is safe (and non-blocking).
         with self._data_lock:
-            patterns = self._correction_patterns.copy()
+            patterns = self._correction_patterns
 
-        for pattern, replacement in patterns:
-            text = pattern.sub(replacement, text)
+        text_lower = text.lower()
+        for trigger, pattern, replacement in patterns:
+            if trigger in text_lower:
+                text = pattern.sub(replacement, text)
 
         return text
 
@@ -311,14 +326,14 @@ class AdaptiveLearning:
             try:
                 # Word boundary match, case insensitive
                 pat = re.compile(rf"\b{re.escape(wrong)}\b", re.IGNORECASE)
-                patterns.append((pat, correct))
+                patterns.append((wrong.lower(), pat, correct))
             except re.error:
                 continue
 
         for wrong, correct in self._accent_hints.items():
             try:
                 pat = re.compile(rf"\b{re.escape(wrong)}\b", re.IGNORECASE)
-                patterns.append((pat, correct))
+                patterns.append((wrong.lower(), pat, correct))
             except re.error:
                 continue
 
@@ -331,9 +346,7 @@ class AdaptiveLearning:
             self._save()
 
     def _save(self) -> None:
-        """Persist learning data to disk."""
-        path = self._data_dir / _LEARNING_FILE
-
+        """Persist learning data to disk (atomically, via the shared store)."""
         with self._data_lock:
             data = {
                 "word_corrections": dict(self._word_corrections),
@@ -342,43 +355,30 @@ class AdaptiveLearning:
                 "accent_hints": dict(self._accent_hints),
             }
 
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-            logger.info("Saved adaptive learning data to %s", path)
-            with self._data_lock:
-                self._dirty = False
-                self._last_save = time.time()
-        except Exception as exc:
-            logger.warning("Failed to save learning data: %s", exc)
+        write_json(self._data_dir / _LEARNING_FILE, data)
+        with self._data_lock:
+            self._dirty = False
+            self._last_save = time.time()
 
     def _load(self) -> None:
         """Load learning data from disk."""
-        path = self._data_dir / _LEARNING_FILE
-
-        if not path.exists():
-            logger.info("No existing learning data at %s", path)
+        data = read_json(self._data_dir / _LEARNING_FILE, None)
+        if not data:
             return
 
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+        with self._data_lock:
+            self._word_corrections = data.get("word_corrections", {})
+            self._custom_terms = set(data.get("custom_terms", []))
+            self._term_frequency = defaultdict(int, data.get("term_frequency", {}))
+            self._accent_hints = data.get("accent_hints", {})
+            self._rebuild_patterns()
 
-            with self._data_lock:
-                self._word_corrections = data.get("word_corrections", {})
-                self._custom_terms = set(data.get("custom_terms", []))
-                self._term_frequency = defaultdict(int, data.get("term_frequency", {}))
-                self._accent_hints = data.get("accent_hints", {})
-                self._rebuild_patterns()
-
-            logger.info(
-                "Loaded learning data: %d corrections, %d terms, %d frequencies",
-                len(self._word_corrections),
-                len(self._custom_terms),
-                len(self._term_frequency),
-            )
-        except Exception as exc:
-            logger.warning("Failed to load learning data: %s", exc)
+        logger.info(
+            "Loaded learning data: %d corrections, %d terms, %d frequencies",
+            len(self._word_corrections),
+            len(self._custom_terms),
+            len(self._term_frequency),
+        )
 
     # ------------------------------------------------------------------
     # Management API

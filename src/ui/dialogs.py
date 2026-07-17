@@ -347,12 +347,93 @@ def _show_scan_result(window: MainWindow, image_path: str, result) -> None:
         scroll.setMinimumHeight(360)
         layout.addWidget(scroll)
 
+    _append_reference_cases(layout, result)
+
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
     buttons.rejected.connect(dlg.reject)
     buttons.accepted.connect(dlg.accept)
     buttons.clicked.connect(lambda _b: dlg.accept())
     layout.addWidget(buttons)
     dlg.exec()
+
+
+def _retrieve_reference_matches(result) -> list:
+    """Best-effort similar-reference-case retrieval for a scan result.
+
+    Returns an empty list (never raises) when imaging/retrieval deps are missing,
+    no reference datasets are registered, or no query embedding is available — so
+    the panel simply doesn't render and the rest of the dialog is unaffected.
+    """
+    embedding = getattr(result, "embedding", None)
+    if embedding is None:
+        return []
+    try:
+        from src.imaging.retrieval import get_reference_index, retrieve_reference_cases
+
+        index = get_reference_index()
+        if index is None:
+            return []
+        # Filter the reference pool to cases sharing any of this scan's findings.
+        labels = [f.label for f in result.findings]
+        filters = {"required_labels": labels} if labels else None
+        return retrieve_reference_cases(embedding, index, filters=filters, top_k=5)
+    except Exception as exc:   # optional deps / no data — degrade silently
+        logger.debug("Reference retrieval unavailable: %s", exc)
+        return []
+
+
+def _append_reference_cases(layout, result) -> None:
+    """Add a 'Similar reference cases' thumbnail strip to the scan dialog.
+
+    Renders nothing when retrieval yields no matches (see
+    :func:`_retrieve_reference_matches`).
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+    from PySide6.QtWidgets import (
+        QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
+    )
+
+    matches = _retrieve_reference_matches(result)
+    if not matches:
+        return
+
+    header = QLabel("Similar reference cases (for visual comparison — not a diagnosis):")
+    header.setWordWrap(True)
+    header.setStyleSheet("font-weight: bold;")
+    layout.addWidget(header)
+
+    strip = QWidget()
+    row = QHBoxLayout(strip)
+    for match in matches:
+        case = match.case
+        cell = QWidget()
+        cell_layout = QVBoxLayout(cell)
+        thumb = QLabel()
+        pix = QPixmap(case.path)
+        if not pix.isNull():
+            thumb.setPixmap(pix.scaledToWidth(150, Qt.TransformationMode.SmoothTransformation))
+        else:
+            thumb.setText("(image unavailable)")
+        cell_layout.addWidget(thumb)
+
+        positives = [name for name, val in case.labels.items() if val == 1]
+        attrs = case.attributes
+        attr_bits = [f"{k}: {attrs[k]}" for k in ("age", "sex", "view") if attrs.get(k) is not None]
+        caption = QLabel(
+            f"{match.similarity:.0%} match\n"
+            + (", ".join(positives) or "—")
+            + ("\n" + " · ".join(attr_bits) if attr_bits else ""))
+        caption.setWordWrap(True)
+        caption.setStyleSheet("font-size: 11px;")
+        cell_layout.addWidget(caption)
+        row.addWidget(cell)
+
+    scroll = QScrollArea()
+    scroll.setWidget(strip)
+    scroll.setWidgetResizable(True)
+    scroll.setMinimumHeight(220)
+    layout.addWidget(scroll)
 
 
 def show_disclaimer_if_needed(window: MainWindow) -> None:

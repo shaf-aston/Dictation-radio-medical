@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QAction, QKeySequence
 
 from src.dictation.transcriber import SUPPORTED_MODELS
+from src.dictation.postprocess import CLEANUP_LEVEL_LABELS
 from src.features.accent_corrections import ACCENT_LABELS
 from src.medical import macros
 from src.features.file_manager import templates_dir
@@ -257,6 +258,21 @@ def build_recording_bar(window: MainWindow) -> QFrame:
     window.accent_combo.setToolTip("Accent correction profile for Whisper error patterns")
     window.accent_combo.setFixedWidth(110)
 
+    # Post-dictation cleanup level
+    window.cleanup_combo = QComboBox()
+    for key, label in CLEANUP_LEVEL_LABELS.items():
+        window.cleanup_combo.addItem(label, key)
+    saved_cleanup = window.settings.get("cleanup_level", "medium")
+    idx = window.cleanup_combo.findData(saved_cleanup)
+    if idx >= 0:
+        window.cleanup_combo.setCurrentIndex(idx)
+    window.cleanup_combo.setToolTip(
+        "Soft = minimal rewriting (your words, almost verbatim)\n"
+        "Medium = standard correction pipeline (default)\n"
+        "Hard = standard pipeline + AI polish (if enabled)"
+    )
+    window.cleanup_combo.setFixedWidth(170)
+
     # Separator
     separator = QFrame()
     separator.setFrameShape(QFrame.Shape.VLine)
@@ -303,6 +319,8 @@ def build_recording_bar(window: MainWindow) -> QFrame:
     layout.addWidget(window.language_input)
     layout.addWidget(QLabel("Accent:"))
     layout.addWidget(window.accent_combo)
+    layout.addWidget(QLabel("Cleanup:"))
+    layout.addWidget(window.cleanup_combo)
     layout.addWidget(window.vad_checkbox)
     layout.addStretch()
     layout.addWidget(btn_copy)
@@ -409,7 +427,8 @@ def rebuild_macro_buttons(window: MainWindow, region: str = "") -> None:
         btn.clicked.connect(lambda checked=False, t=text: window._insert_macro(t))
         window._macro_layout.insertWidget(window._macro_layout.count() - 1, btn)
 
-    window.settings.set("last_macro_region", region)
+    if window.settings.get("last_macro_region") != region:
+        window.settings.set("last_macro_region", region)
 
 
 def rebuild_recent_menu(window: MainWindow) -> None:

@@ -1,9 +1,16 @@
-"""PHI de-identification for training data before it leaves the device.
+"""PHI de-identification — the shared safety gate before data leaves the device.
 
-This is the safety-critical gate of the cloud subsystem. Nothing is uploaded
-until it has passed through :class:`DeIdentifier` and ``validate_clean`` has
-confirmed no known patient identifier survives. The design is deliberately
-conservative: when in doubt, a record is dropped rather than risk a breach.
+This lives in the medical (core-domain) layer, not under ``src.cloud``, because
+three callers need it and must NOT all depend on the optional cloud subsystem:
+the training collector (the cloud bridge), the optional Groq cleanup add-on in
+dictation, and the cloud uploader itself. Keeping it here lets each import it
+*downward* and preserves the invariant that the dictation pipeline never imports
+``src.cloud.*``.
+
+Nothing is uploaded until it has passed through :class:`DeIdentifier` and
+``validate_clean`` has confirmed no known patient identifier survives. The design
+is deliberately conservative: when in doubt, a record is dropped rather than risk
+a breach.
 
 Two surfaces are scrubbed:
   * **Text** — the correction strings and any context (names, IDs, dates).
@@ -19,9 +26,18 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from src.cloud.exceptions import PrivacyError
+from src.core.patient_schema import PATIENT_KEYS
 
 logger = logging.getLogger(__name__)
+
+
+class PrivacyError(Exception):
+    """De-identification failed validation — data must NOT leave the device.
+
+    Re-exported from :mod:`src.cloud.exceptions` for back-compat with existing
+    cloud-side callers.
+    """
+
 
 # Generic PHI patterns applied regardless of the known patient_info fields.
 _DATE_PATTERNS = [
@@ -36,8 +52,10 @@ _DATE_PATTERNS = [
 # Accession / MRN / NHS-style identifiers: optional letter prefix + 6–10 digits.
 _ID_PATTERN = re.compile(r"\b[A-Z]{0,3}\d{6,10}\b")
 
-# Fields of patient_info that are treated as direct identifiers.
-_PHI_FIELDS = ("name", "id", "dob", "study_date", "referring", "accession")
+# Fields of patient_info that are treated as direct identifiers. Derived from
+# the shared schema so a new patient field is scrubbed by default, rather than
+# silently sailing through to an upload because this list wasn't updated.
+_PHI_FIELDS = PATIENT_KEYS
 
 
 class DeIdentifier:

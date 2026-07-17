@@ -10,6 +10,8 @@ own module so the regex tables are easy to grep and extend.
 from src.dictation.postprocess.pipeline import (
     postprocess_transcript,
     postprocess_transcript_with_changes,
+    CLEANUP_LEVELS,
+    CLEANUP_LEVEL_LABELS,
 )
 from src.dictation.postprocess.hallucinations import filter_hallucinations
 from src.dictation.postprocess.voice_commands import (
@@ -27,6 +29,8 @@ from src.dictation.postprocess.medical_dict_match import (
 __all__ = [
     "postprocess_transcript",
     "postprocess_transcript_with_changes",
+    "CLEANUP_LEVELS",
+    "CLEANUP_LEVEL_LABELS",
     "filter_hallucinations",
     "apply_correction_commands",
     "apply_spoken_commands",

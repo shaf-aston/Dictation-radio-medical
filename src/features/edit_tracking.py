@@ -29,10 +29,11 @@ Privacy & scope:
 from __future__ import annotations
 
 import difflib
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
+
+from src.core.json_store import append_jsonl, read_jsonl
 
 logger = logging.getLogger(__name__)
 
@@ -103,37 +104,26 @@ def record_session_edits(dictated: str, final: str) -> int:
         return 0
     try:
         records = diff_edits(dictated, final)
-        if not records:
-            return 0
-        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        from src.features.file_manager import dictation_edits_path
-        path = dictation_edits_path()
-        with open(path, "a", encoding="utf-8") as fh:
-            for rec in records:
-                rec["ts"] = ts
-                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        logger.info("Logged %d post-dictation edit(s) to %s", len(records), path.name)
-        return len(records)
     except Exception as exc:  # never let tracking break a save or close
-        logger.warning("Could not record dictation edits: %s", exc)
+        logger.warning("Could not diff dictation edits: %s", exc)
         return 0
+    if not records:
+        return 0
+
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    for rec in records:
+        rec["ts"] = ts
+    from src.features.file_manager import dictation_edits_path
+    written = append_jsonl(dictation_edits_path(), records)
+    if written:
+        logger.info("Logged %d post-dictation edit(s)", written)
+    return written
 
 
 def load_edits(limit: Optional[int] = None) -> List[Dict[str, str]]:
     """Return logged edit records, newest last; missing log -> ``[]``."""
-    try:
-        from src.features.file_manager import dictation_edits_path
-        path = dictation_edits_path()
-        if not path.exists():
-            return []
-        records = [
-            json.loads(line)
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-    except Exception as exc:
-        logger.warning("Could not read dictation edits: %s", exc)
-        return []
+    from src.features.file_manager import dictation_edits_path
+    records = read_jsonl(dictation_edits_path())
     return records[-limit:] if limit else records
 
 

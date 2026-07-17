@@ -17,16 +17,47 @@ Thread-safe: uses file locking (or a lock object) to serialize writes.
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from src.core.json_store import read_json, write_json
 from src.features.file_manager import imaging_dir
 
 logger = logging.getLogger(__name__)
+
+# Reserved key in a sidecar JSON holding clinical attributes (age/view/etc.),
+# kept out of the per-pathology label map. See :func:`parse_label_file`.
+ATTRIBUTES_KEY = "_attributes"
+
+
+def parse_label_file(label_path: Path) -> tuple[Dict[str, int], Dict[str, object]]:
+    """Parse a sidecar JSON into ``(labels, attributes)``.
+
+    The sidecar is the flat legacy form — per-pathology binary flags such as
+    ``{"Fracture": 1, "Effusion": 0}`` — optionally carrying a reserved
+    ``"_attributes"`` block (``{"age": 54, "sex": "F", "bmi": 27.1,
+    "view": "PA", "history": "fall"}``). Legacy files with no ``_attributes`` key
+    yield an empty attributes dict, so existing datasets and the scan-fine-tune
+    task (which reads the same files) keep working unchanged.
+
+    Args:
+        label_path: Path to the ``<image>.json`` sidecar.
+
+    Returns:
+        A ``(labels, attributes)`` tuple of plain dicts.
+
+    Raises:
+        ValueError: If the file cannot be read or does not hold a JSON object.
+    """
+    raw = read_json(label_path, default=None)
+    if not isinstance(raw, dict):
+        raise ValueError(f"Sidecar is not a JSON object: {label_path}")
+    attributes = dict(raw.get(ATTRIBUTES_KEY, {}) or {})
+    labels = {k: v for k, v in raw.items() if k != ATTRIBUTES_KEY}
+    return labels, attributes
 
 
 class DatasetRegistry:
@@ -62,26 +93,14 @@ class DatasetRegistry:
     def _load(self) -> None:
         """Load the registry from disk, creating if missing."""
         with self._lock:
-            if self._path.exists():
-                try:
-                    content = json.loads(self._path.read_text(encoding="utf-8"))
-                    self._data = content.get("datasets", {})
-                    logger.info("Loaded dataset registry with %d datasets", len(self._data))
-                except (OSError, json.JSONDecodeError) as exc:
-                    logger.warning("Failed to load dataset registry: %s, starting fresh", exc)
-                    self._data = {}
-            else:
-                self._data = {}
+            content = read_json(self._path, {"datasets": {}})
+            self._data = content.get("datasets", {})
+            logger.debug("Loaded dataset registry with %d datasets", len(self._data))
 
     def _save(self) -> None:
         """Save the registry to disk."""
         with self._lock:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            content = {"datasets": self._data}
-            self._path.write_text(
-                json.dumps(content, indent=2),
-                encoding="utf-8"
-            )
+            write_json(self._path, {"datasets": self._data})
             logger.debug("Saved dataset registry to %s", self._path)
 
     def register_dataset(

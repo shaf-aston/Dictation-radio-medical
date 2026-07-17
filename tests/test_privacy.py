@@ -7,8 +7,7 @@ import sys
 
 import pytest
 
-from src.cloud.exceptions import PrivacyError
-from src.cloud.privacy import DeIdentifier
+from src.medical.deid import DeIdentifier, PrivacyError
 
 
 @pytest.fixture

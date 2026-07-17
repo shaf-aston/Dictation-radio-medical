@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from datetime import datetime
 from typing import Any, Dict, List
 
+from src.core.json_store import write_json
 from src.features.file_manager import analysis_dir
 
 logger = logging.getLogger(__name__)
@@ -56,10 +56,5 @@ class PipelineAnalyzer:
         }
 
         file_path = analysis_dir() / f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json"
-        try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(analysis, f, indent=2, ensure_ascii=False)
-            logger.debug("Analysis saved to %s", file_path)
-            _prune_analysis_dir()
-        except Exception as e:
-            logger.error("Failed to save analysis: %s", e)
+        write_json(file_path, analysis)
+        _prune_analysis_dir()
