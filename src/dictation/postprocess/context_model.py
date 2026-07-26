@@ -98,18 +98,6 @@ class ContextModel:
             s += self.log_prob(word, right)
         return s
 
-    def knows(self, word: str) -> bool:
-        return word in self._uni
-
-    def cooccurs(self, prev: Optional[str], word: Optional[str]) -> bool:
-        """True if the ordered pair (*prev*, *word*) was actually seen in the
-        corpus — i.e. there is real adjacency evidence, not just a smoothed
-        prior. The corrector uses this to refuse switching a real word unless
-        the context genuinely supports the alternative."""
-        if prev is None or word is None:
-            return False
-        return (prev, word) in self._bi
-
 
 # ---------------------------------------------------------------------------
 # Build / cache / singleton

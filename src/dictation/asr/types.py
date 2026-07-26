@@ -62,13 +62,10 @@ class EngineCaps:
 
     ``word_confidence``: real per-word probabilities (not a constant stand-in).
     ``hotwords``: decoder-level vocabulary biasing (M5).
-    ``streaming``: can decode an open-ended growing buffer efficiently, rather
-    than only fixed clips (relevant once M3 adds a CTC-style engine).
     """
 
     word_confidence: bool
     hotwords: bool
-    streaming: bool = True
 
 
 @dataclass(frozen=True)

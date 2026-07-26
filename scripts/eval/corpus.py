@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional
+from typing import Dict, List
 
 from src.core.json_store import append_jsonl, read_jsonl
 from src.features.file_manager import eval_manifest_path, eval_set_dir
@@ -171,24 +171,6 @@ def _resolve_reference(audio: Path, manifest_reference: str) -> str:
     return manifest_reference
 
 
-def available_sets() -> List[str]:
-    """Known set names that currently have a readable, non-empty manifest."""
-    found = []
-    for name in KNOWN_SETS:
-        try:
-            if eval_manifest_path(name).exists() and read_jsonl(eval_manifest_path(name)):
-                found.append(name)
-        except (OSError, ValueError):
-            continue
-    return found
-
-
-def iter_clips(set_names: List[str]) -> Iterator[Clip]:
-    """Yield every clip across *set_names* in order."""
-    for name in set_names:
-        yield from load_set(name)
-
-
 def audio_duration(path: Path) -> float:
     """Clip length in seconds, or 0.0 if it cannot be read.
 
@@ -210,7 +192,3 @@ def _relative_to(path: Path, base: Path) -> str:
         return path.resolve().relative_to(base.resolve()).as_posix()
     except ValueError:
         return path.resolve().as_posix()
-
-
-def describe(set_name: str) -> Optional[str]:
-    return KNOWN_SETS.get(set_name)

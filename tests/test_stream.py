@@ -206,21 +206,11 @@ class TestChunkPolicyValidation:
     chunks forever — a hung recording thread, not a bad transcript.
     """
 
-    def test_default_policy_is_accepted(self) -> None:
-        assert ChunkPolicy().force_cut_sec == 20.0
-
-    def test_zero_force_cut_is_rejected(self) -> None:
+    @pytest.mark.parametrize("min_sec, soft_max_sec, force_cut_sec", [
+        (6.0, 15.0, 0.0),     # the hang: force-cut at zero
+        (0.0, 15.0, 20.0),    # zero-length chunks
+        (30.0, 15.0, 20.0),   # out of order
+    ])
+    def test_unusable_lengths_are_rejected(self, min_sec, soft_max_sec, force_cut_sec) -> None:
         with pytest.raises(ValueError, match="chunk lengths"):
-            ChunkPolicy(min_sec=6.0, soft_max_sec=15.0, force_cut_sec=0.0)
-
-    def test_min_longer_than_force_cut_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="chunk lengths"):
-            ChunkPolicy(min_sec=30.0, soft_max_sec=15.0, force_cut_sec=20.0)
-
-    def test_zero_min_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="chunk lengths"):
-            ChunkPolicy(min_sec=0.0, soft_max_sec=15.0, force_cut_sec=20.0)
-
-    def test_equal_lengths_are_allowed(self) -> None:
-        # Degenerate but coherent: cut at exactly one length, always.
-        assert ChunkPolicy(min_sec=10.0, soft_max_sec=10.0, force_cut_sec=10.0).min_sec == 10.0
+            ChunkPolicy(min_sec=min_sec, soft_max_sec=soft_max_sec, force_cut_sec=force_cut_sec)

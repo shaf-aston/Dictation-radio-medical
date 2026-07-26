@@ -45,7 +45,7 @@ class FasterWhisperEngine:
         return self._transcriber.compute_type
 
     def capabilities(self) -> EngineCaps:
-        return EngineCaps(word_confidence=True, hotwords=True, streaming=True)
+        return EngineCaps(word_confidence=True, hotwords=True)
 
     def transcribe(self, audio: Any, ctx: TranscribeContext) -> AsrResult:
         text, seg_list = self._transcriber.transcribe(
