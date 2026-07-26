@@ -39,7 +39,8 @@ import soundfile as sf
 from PySide6.QtCore import QObject, Signal
 
 from src.core import perf
-from src.dictation.transcriber import Transcriber, _RADIOLOGY_INITIAL_PROMPT
+from src.dictation.asr import AsrEngine, TranscribeContext, create_engine
+from src.dictation.transcriber import _RADIOLOGY_INITIAL_PROMPT
 from src.dictation.window_state import WindowState
 from src.features.adaptive_learning import get_custom_prompt_suffix
 
@@ -136,7 +137,7 @@ class LiveTranscribeWorker(QObject):
         cycle_count = 0
         try:
             self.progress.emit("Loading model...")
-            transcriber = Transcriber(
+            engine = create_engine(
                 model_size=self.model_size, device="auto", model_path=self.model_path
             )
             logger.info("Model loaded in %.2fs", time.time() - wall_start)
@@ -177,7 +178,7 @@ class LiveTranscribeWorker(QObject):
                     # speech committed from the fast live pass gets a second look.
                     audio, sr = self._read_audio()
                     if audio is not None:
-                        self._run_final_pass(transcriber, audio, sr)
+                        self._run_final_pass(engine, audio, sr)
                     self._keep_running = False
                     self._final_requested = False
                     break
@@ -204,20 +205,23 @@ class LiveTranscribeWorker(QObject):
                 prompt = self._build_context_prompt()
                 try:
                     with perf.stage("worker.transcribe_live"):
-                        chunk_text, segments = transcriber.transcribe(
+                        result = engine.transcribe(
                             chunk,
-                            language=self.language,
-                            vad_filter=self.vad_enabled,
-                            beam_size=beam,
-                            pause_threshold=self.pause_threshold,
-                            condition_on_previous_text=False,
-                            initial_prompt=prompt,
-                            # One greedy decode per live cycle — the temperature-
-                            # fallback ladder can re-decode the window up to 5x
-                            # and higher temperatures hallucinate; the final full
-                            # pass keeps the ladder.
-                            temperature=0.0,
+                            TranscribeContext(
+                                language=self.language,
+                                vad_filter=self.vad_enabled,
+                                beam_size=beam,
+                                pause_threshold=self.pause_threshold,
+                                condition_on_previous_text=False,
+                                initial_prompt=prompt,
+                                # One greedy decode per live cycle — the
+                                # temperature-fallback ladder can re-decode the
+                                # window up to 5x and higher temperatures
+                                # hallucinate; the final full pass keeps it.
+                                temperature=0.0,
+                            ),
                         )
+                        chunk_text, segments = result.text, result.segments_as_dicts()
                 except Exception as exc:
                     logger.warning("Transcription cycle failed: %s", exc)
                     time.sleep(0.5)
@@ -293,7 +297,7 @@ class LiveTranscribeWorker(QObject):
         return float(np.sqrt(np.mean(np.square(chunk, dtype=np.float64))))
 
     def _run_final_pass(
-        self, transcriber: Transcriber, audio: np.ndarray, sr: int
+        self, engine: AsrEngine, audio: np.ndarray, sr: int
     ) -> None:
         """Re-transcribe the whole recording at high beam and emit as authoritative.
 
@@ -302,15 +306,18 @@ class LiveTranscribeWorker(QObject):
         """
         t0 = time.time()
         try:
-            full_text, segments = transcriber.transcribe(
+            result = engine.transcribe(
                 audio,
-                language=self.language,
-                vad_filter=self.vad_enabled,
-                beam_size=_FINAL_BEAM_SIZE,
-                pause_threshold=self.pause_threshold,
-                condition_on_previous_text=True,
-                initial_prompt=self._build_context_prompt(),
+                TranscribeContext(
+                    language=self.language,
+                    vad_filter=self.vad_enabled,
+                    beam_size=_FINAL_BEAM_SIZE,
+                    pause_threshold=self.pause_threshold,
+                    condition_on_previous_text=True,
+                    initial_prompt=self._build_context_prompt(),
+                ),
             )
+            full_text, segments = result.text, result.segments_as_dicts()
         except Exception as exc:
             logger.warning("Final transcription pass failed: %s", exc)
             return

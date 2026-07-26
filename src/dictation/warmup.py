@@ -95,9 +95,9 @@ def transcriber_warmer(model_size: str, model_path: Optional[str] = None) -> War
     """
 
     def _warm() -> None:
-        from src.dictation.transcriber import Transcriber
+        from src.dictation.asr import create_engine
 
-        Transcriber(model_size=model_size, model_path=model_path).preload()
+        create_engine(model_size=model_size, model_path=model_path).preload()
 
     label = f"whisper_model[{model_path or model_size}]"
     return (label, _warm)

@@ -7,15 +7,20 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from src.core.settings import Settings
+from src.dictation.asr import AsrResult
 import src.ui.web_app as web_app
 
 
-class DummyTranscriber:
-    def __init__(self, *args, **kwargs) -> None:
+class DummyEngine:
+    def transcribe(self, *args, **kwargs) -> AsrResult:
+        return AsrResult(text="", segments=())
+
+    def preload(self) -> None:
         pass
 
-    def transcribe(self, *args, **kwargs):
-        return "", None
+    def capabilities(self):
+        from src.dictation.asr import EngineCaps
+        return EngineCaps(word_confidence=False, hotwords=False)
 
 
 class DummySettings:
@@ -33,7 +38,7 @@ class DummySettings:
 
 
 def _client(monkeypatch):
-    monkeypatch.setattr(web_app, "Transcriber", DummyTranscriber)
+    monkeypatch.setattr(web_app, "create_engine", lambda **kwargs: DummyEngine())
     return TestClient(web_app.app)
 
 
@@ -304,8 +309,6 @@ def test_report_export_word_downloads_docx(monkeypatch) -> None:
 
 def test_transcribe_returns_text(monkeypatch) -> None:
     """The /transcribe endpoint runs the pipeline and returns JSON with a text key."""
-    monkeypatch.setattr(web_app, "Transcriber", DummyTranscriber)
-
     with _client(monkeypatch) as client:
         audio_bytes = b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88X\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
         response = client.post(
@@ -319,8 +322,6 @@ def test_transcribe_returns_text(monkeypatch) -> None:
 
 def test_transcribe_rejects_oversized_file(monkeypatch) -> None:
     """Files over 50 MB must be rejected with 413."""
-    monkeypatch.setattr(web_app, "Transcriber", DummyTranscriber)
-
     with _client(monkeypatch) as client:
         big = b"\x00" * (50 * 1024 * 1024 + 2)
         response = client.post(

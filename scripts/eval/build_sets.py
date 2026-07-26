@@ -191,10 +191,10 @@ def build_bench() -> int:
 
     out_dir = eval_set_dir("bench")
     from src.core.settings import Settings
-    from src.dictation.transcriber import Transcriber
+    from src.dictation.asr import TranscribeContext, create_engine
 
     settings = Settings()
-    transcriber = Transcriber(model_size=settings.get("model_size", "base"))
+    engine = create_engine(model_size=settings.get("model_size", "base"))
 
     clips: List[Clip] = []
     for wav in wavs:
@@ -208,8 +208,8 @@ def build_bench() -> int:
             logger.info("Keeping existing reference for %s", wav.name)
         else:
             logger.info("Transcribing %s to draft a reference...", wav.name)
-            text, _ = transcriber.transcribe(str(dest))
-            reference = f"[UNREVIEWED] {text}"
+            result = engine.transcribe(str(dest), TranscribeContext())
+            reference = f"[UNREVIEWED] {result.text}"
             draft_path.write_text(reference + "\n", encoding="utf-8")
 
         clips.append(Clip(

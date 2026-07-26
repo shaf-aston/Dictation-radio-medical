@@ -187,6 +187,8 @@ class Transcriber:
         pause_threshold: float = 2.5,
         condition_on_previous_text: bool = True,
         temperature: Optional[Union[float, List[float]]] = None,
+        word_timestamps: bool = False,
+        hotwords: Optional[List[str]] = None,
     ) -> Tuple[str, List[Dict]]:
         """
         Transcribe *audio* and return (full_text, segment_list).
@@ -195,7 +197,12 @@ class Transcriber:
         ndarray of float32 samples.  Passing an ndarray avoids the ffmpeg
         decode step, which is faster for WAV data already in memory.
 
-        segment_list items: {"start": float, "end": float, "text": str}
+        segment_list items: {"start": float, "end": float, "text": str}, plus
+        a "words" key (list of {"text","start","end","probability"}) when
+        word_timestamps=True — the confidence signal the AsrEngine port
+        (src/dictation/asr/) surfaces to callers. Off by default: it costs a
+        little extra decode time and nothing needs it until the confidence-
+        gated post-processing pipeline (M4) consumes it.
 
         initial_prompt overrides the built-in radiology prompt when supplied.
         Pass initial_prompt="" to disable prompting entirely.
@@ -232,7 +239,10 @@ class Transcriber:
             # Callers may override (e.g. the live cycle passes 0.0 for a
             # single greedy decode).
             temperature=temperature if temperature is not None else [0.0, 0.2, 0.4, 0.6, 0.8],
+            word_timestamps=word_timestamps,
         )
+        if hotwords:
+            kwargs["hotwords"] = " ".join(hotwords)
 
         t_transcribe = time.time()
         try:
@@ -257,7 +267,14 @@ class Transcriber:
                 prev_end = seg.end
                 continue
 
-            seg_list.append({"start": seg.start, "end": seg.end, "text": seg.text})
+            seg_entry: Dict[str, Any] = {"start": seg.start, "end": seg.end, "text": seg.text}
+            seg_words = getattr(seg, "words", None)
+            if seg_words:
+                seg_entry["words"] = [
+                    {"text": w.word, "start": w.start, "end": w.end, "probability": w.probability}
+                    for w in seg_words
+                ]
+            seg_list.append(seg_entry)
 
             if not seg_text:
                 prev_end = seg.end

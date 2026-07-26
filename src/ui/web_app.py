@@ -22,7 +22,8 @@ from src.dictation.postprocess.pipeline import (
     CLEANUP_LEVELS,
     postprocess_transcript,
 )
-from src.dictation.transcriber import SUPPORTED_MODELS, Transcriber
+from src.dictation.asr import AsrEngine, TranscribeContext, create_engine
+from src.dictation.transcriber import SUPPORTED_MODELS
 from src.features.accent_corrections import ACCENT_LABELS
 from src.features.file_manager import (
     report_filename,
@@ -38,8 +39,8 @@ from src.medical.macros import reload_macros
 
 logger = logging.getLogger(__name__)
 
-transcriber: Optional[Transcriber] = None
-transcriber_model_size: Optional[str] = None
+asr_engine: Optional[AsrEngine] = None
+asr_engine_model_size: Optional[str] = None
 transcriber_lock = Lock()
 
 THEME_STORAGE_KEY = "radio-dictate-theme"
@@ -250,18 +251,18 @@ def _render_html(theme: str) -> str:
     )
 
 
-def _get_transcriber() -> Transcriber:
-    """Return a transcriber configured for the current saved model setting."""
-    global transcriber, transcriber_model_size
+def _get_engine() -> AsrEngine:
+    """Return an ASR engine configured for the current saved model setting."""
+    global asr_engine, asr_engine_model_size
     model_size = _settings().get("model_size", "base")
     if model_size not in SUPPORTED_MODELS:
         model_size = "base"
 
     with transcriber_lock:
-        if transcriber is None or transcriber_model_size != model_size:
-            transcriber = Transcriber(model_size=model_size)
-            transcriber_model_size = model_size
-        return transcriber
+        if asr_engine is None or asr_engine_model_size != model_size:
+            asr_engine = create_engine(model_size=model_size)
+            asr_engine_model_size = model_size
+        return asr_engine
 
 
 def _download_filename(patient: dict, ext: str) -> str:
@@ -274,10 +275,10 @@ def _download_filename(patient: dict, ext: str) -> str:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Prepare the app state on startup."""
-    global transcriber, transcriber_model_size
+    global asr_engine, asr_engine_model_size
     logger.info("Preparing web app state...")
-    transcriber = None
-    transcriber_model_size = None
+    asr_engine = None
+    asr_engine_model_size = None
     # Same startup housekeeping as the desktop GUI (temp files, old
     # autosaves, legacy cache locations) — a web-only user must not miss it.
     startup_cleanup(_settings().get("autosave_retention_days", 30))
@@ -2114,12 +2115,12 @@ async def set_preferences(payload: PreferencesUpdate):
         "last_macro_region": macro_region,
     })
 
-    # Drop any cached transcriber so the next request picks up the new model.
-    global transcriber, transcriber_model_size
+    # Drop any cached engine so the next request picks up the new model.
+    global asr_engine, asr_engine_model_size
     with transcriber_lock:
-        if transcriber_model_size != model_size:
-            transcriber = None
-            transcriber_model_size = None
+        if asr_engine_model_size != model_size:
+            asr_engine = None
+            asr_engine_model_size = None
 
     return {
         "preferences": _current_preferences(),
@@ -2240,7 +2241,7 @@ async def perf_endpoint():
     — per post-process stage, per transcription — so a slowdown can be pointed
     at rather than guessed at.
     """
-    return {"stages": perf.snapshot()}
+    return {"stages": perf.snapshot(), "gauges": perf.gauges()}
 
 
 @app.post("/transcribe")
@@ -2273,14 +2274,17 @@ async def transcribe_audio(file: UploadFile = File(...)):
         # not block the event loop and stall every other concurrent request.
         def _transcribe() -> str:
             with perf.stage("web.transcribe"):
-                text, _ = _get_transcriber().transcribe(
+                result = _get_engine().transcribe(
                     file_like,
-                    language=prefs["language"],
-                    vad_filter=bool(prefs["vad_filter"]),
-                    beam_size=beam_size,
-                    condition_on_previous_text=False,
-                    pause_threshold=pause_threshold,
+                    TranscribeContext(
+                        language=prefs["language"],
+                        vad_filter=bool(prefs["vad_filter"]),
+                        beam_size=beam_size,
+                        condition_on_previous_text=False,
+                        pause_threshold=pause_threshold,
+                    ),
                 )
+                text = result.text
             with perf.stage("web.postprocess"):
                 return postprocess_transcript(
                     text, accent=prefs["accent"], cleanup_level=prefs["cleanup_level"]

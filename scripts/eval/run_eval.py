@@ -95,26 +95,29 @@ class SetResult:
 # ---------------------------------------------------------------------------
 
 class WhisperRunner:
-    """Transcribes a clip with the current faster-whisper engine.
+    """Transcribes a clip through the ``AsrEngine`` port (M1).
 
-    Deliberately narrow: ``transcribe(path) -> (text, seconds)``. M1 replaces
-    the body with the ``AsrEngine`` port without the evaluator changing, which
-    is what lets M1 prove itself by producing numbers identical to M0.
+    Deliberately narrow: ``transcribe(path) -> (text, seconds)``. Routing
+    through :func:`create_engine` rather than ``Transcriber`` directly is what
+    lets this same class evaluate a second engine at M3 by changing only the
+    ``engine_name`` argument.
     """
 
-    def __init__(self, model_size: str, beam_size: int) -> None:
-        from src.dictation.transcriber import Transcriber
+    def __init__(self, model_size: str, beam_size: int, engine_name: str = "faster-whisper") -> None:
+        from src.dictation.asr import TranscribeContext, create_engine
 
         self.model_size = model_size
         self.beam_size = beam_size
-        self._transcriber = Transcriber(model_size=model_size)
+        self.engine_name = engine_name
+        self._engine = create_engine(engine_name, model_size=model_size)
+        self._ctx_cls = TranscribeContext
 
     def describe(self) -> Dict[str, Any]:
         return {
-            "engine": "faster-whisper",
+            "engine": self.engine_name,
             "model_size": self.model_size,
             "beam_size": self.beam_size,
-            "compute_type": getattr(self._transcriber, "compute_type", None),
+            "compute_type": getattr(self._engine, "compute_type", None),
         }
 
     def warmup(self) -> None:
@@ -123,12 +126,12 @@ class WhisperRunner:
         Model load is seconds; folding it into the first clip would make that
         clip's real-time factor a fiction.
         """
-        self._transcriber.preload()
+        self._engine.preload()
 
     def transcribe(self, path: Path) -> tuple[str, float]:
         start = time.perf_counter()
-        text, _ = self._transcriber.transcribe(str(path), beam_size=self.beam_size)
-        return text, time.perf_counter() - start
+        result = self._engine.transcribe(str(path), self._ctx_cls(beam_size=self.beam_size))
+        return result.text, time.perf_counter() - start
 
 
 # ---------------------------------------------------------------------------
