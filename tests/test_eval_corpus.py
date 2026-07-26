@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.eval.build_sets import load_report_corpus
+from scripts.eval.build_sets import _take_warnings, load_report_corpus
 from scripts.eval.corpus import (
     UNREVIEWED_MARKER,
     Clip,
@@ -160,3 +160,27 @@ def test_report_corpus_exercises_the_radiology_lexicon():
     }
     words = {w.strip(".,") for r in load_report_corpus() for w in r.lower().split()}
     assert len(words & lexicon) >= 50
+
+
+# ---------------------------------------------------------------------------
+# own-set take validation
+# ---------------------------------------------------------------------------
+
+def test_a_good_take_raises_no_warnings():
+    assert _take_warnings(duration=42.0, peak=0.61, rms=0.09) == []
+
+
+def test_a_truncated_take_is_flagged():
+    # A mis-click that stops recording a second in would otherwise enter the
+    # gold set as a legitimately-scored clip and depress every later number.
+    assert len(_take_warnings(duration=1.2, peak=0.61, rms=0.09)) == 1
+
+
+def test_a_clipped_take_is_flagged():
+    assert len(_take_warnings(duration=42.0, peak=1.0, rms=0.09)) == 1
+
+
+def test_a_silent_take_is_flagged():
+    # Recording the wrong input device yields a near-silent file that still has
+    # the right duration — the level check is the only thing that catches it.
+    assert len(_take_warnings(duration=42.0, peak=0.004, rms=0.001)) == 1

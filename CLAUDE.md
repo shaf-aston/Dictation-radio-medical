@@ -304,6 +304,7 @@ npx pyright src              # type check (optional-dep import warnings expected
 
 # Dictation accuracy + speed measurement (scripts/eval/) — see below
 python -m scripts.eval.build_sets --set tts       # synthesise the gold set
+python -m scripts.eval.build_sets --set own --record   # record the own set (mic)
 python -m scripts.eval.run_eval --set tts --label my-change \
        --baseline data/eval/reports/<earlier>.json
 

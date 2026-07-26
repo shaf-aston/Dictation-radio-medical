@@ -1,7 +1,8 @@
 """Build the dictation evaluation gold sets.
 
     python -m scripts.eval.build_sets --set tts
-    python -m scripts.eval.build_sets --set own
+    python -m scripts.eval.build_sets --set own            # write the reading scripts
+    python -m scripts.eval.build_sets --set own --record   # then record them
     python -m scripts.eval.build_sets --set bench
     python -m scripts.eval.build_sets --set libri     # ~350 MB one-time download
 
@@ -161,17 +162,136 @@ def build_own() -> int:
     print(f"""
 Reading scripts written to: {out_dir}
 
-  1. Open each own_NN.script.txt and read it aloud, recording as own_NN.wav
-     in the same folder. Use the same microphone, room, and speaking pace you
-     actually dictate with - that realism is the entire point of this set.
-  2. Read it verbatim. If you misspeak, re-record; do not edit the script,
-     because the script IS the ground truth.
-  3. Any format soundfile can read is fine (16 kHz mono WAV is ideal).
+Record them with:  python -m scripts.eval.build_sets --set own --record
 
-Missing recordings are reported and skipped, so you can record them one at a
-time and re-run the evaluation as you go.
+That captures through the same microphone path the app dictates with, which is
+what makes this set worth having. To record outside the helper instead, save
+each script as own_NN.wav in the same folder (16 kHz mono WAV is ideal).
+
+Read each script verbatim. If you misspeak, re-record; do not edit the script,
+because the script IS the ground truth. Missing recordings are reported and
+skipped, so you can record them one at a time and re-run the evaluation as you
+go.
 """)
     return 0
+
+
+#: Guards against a take that would quietly poison every future number. A clip
+#: this short is a mis-click, a peak this high is clipped beyond recovery, and
+#: this little energy means the wrong input device was selected.
+_MIN_TAKE_SEC = 3.0
+_CLIPPING_PEAK = 0.99
+_SILENT_RMS = 0.005
+
+
+def record_own(force: bool = False) -> int:
+    """Record the ``own`` clips through the app's own microphone capture path.
+
+    Deliberately reuses :class:`src.dictation.audio.Recorder` rather than a
+    separate capture routine: the value of this set is that it measures the
+    real signal chain, so recording it through a *different* one would
+    undermine the only set that measures real acoustics.
+    """
+    from src.core.json_store import read_jsonl
+    from src.dictation.audio import Recorder
+    from src.features.file_manager import eval_manifest_path
+
+    manifest_path = eval_manifest_path("own")
+    if not manifest_path.exists():
+        logger.error(
+            "No manifest for 'own' at %s - write the scripts first: "
+            "python -m scripts.eval.build_sets --set own", manifest_path,
+        )
+        return 1
+
+    out_dir = eval_set_dir("own")
+    records = read_jsonl(manifest_path)
+    recorder = Recorder()
+
+    print(f"\n{len(records)} clip(s) to record. Read each script aloud, verbatim.\n")
+
+    clips: List[Clip] = []
+    for i, rec in enumerate(records, start=1):
+        path = out_dir / rec["audio"]
+        reference = rec.get("reference", "")
+
+        if path.exists() and not force:
+            print(f"[{i}/{len(records)}] {path.name} already recorded - skipping "
+                  f"(re-record everything with --force)")
+        else:
+            _record_take(recorder, path, reference, f"{i}/{len(records)}")
+
+        clips.append(Clip(
+            set_name="own",
+            audio_path=path,
+            reference=reference,
+            source=rec.get("source", "read aloud by the user"),
+            licence=rec.get("licence", "local-only, never uploaded"),
+            synthetic=False,
+            duration_sec=audio_duration(path) if path.exists() else 0.0,
+        ))
+
+    # Rewritten so real durations replace the zeros the scripts-only manifest
+    # carried - the real-time factor divides by this, and a zero silently drops
+    # the clip out of the RTF average instead of reporting it.
+    write_manifest("own", clips)
+    recorded = sum(1 for c in clips if c.duration_sec > 0)
+    print(f"\n{recorded}/{len(clips)} clip(s) recorded, "
+          f"{sum(c.duration_sec for c in clips) / 60:.1f} minutes of audio.")
+    if recorded:
+        print("Score them with: python -m scripts.eval.run_eval --set own --label own-baseline")
+    return 0
+
+
+def _record_take(recorder, path: Path, reference: str, position: str) -> None:
+    """Record *path* until the take is accepted, re-recording on request."""
+    while True:
+        print(f"\n{'=' * 70}\n[{position}] {path.name}\n{'=' * 70}")
+        print(reference)
+        print("=" * 70)
+        input("Press Enter to START recording (Enter again to stop)...")
+
+        recorder.start(str(path))
+        try:
+            input(">>> RECORDING - press Enter to STOP.")
+        finally:
+            recorder.stop()
+
+        duration = audio_duration(path)
+        peak, rms = _levels(path)
+        print(f"    {duration:.1f}s   peak {peak:.2f}   rms {rms:.3f}")
+        for warning in _take_warnings(duration, peak, rms):
+            print(f"    WARNING: {warning}")
+
+        if input("    Keep this take? [Y/n] ").strip().lower() not in {"n", "no"}:
+            return
+
+
+def _levels(path: Path) -> tuple:
+    """Peak and RMS amplitude of a recorded take, normalised to 0.0-1.0."""
+    try:
+        import numpy as np
+        import soundfile as sf
+
+        data, _ = sf.read(str(path), dtype="float32")
+        if data.size == 0:
+            return 0.0, 0.0
+        return float(np.max(np.abs(data))), float(np.sqrt(np.mean(data ** 2)))
+    except Exception as exc:  # noqa: BLE001 - a level read must never lose a take
+        logger.warning("Could not measure levels of %s: %s", path, exc)
+        return 0.0, 0.0
+
+
+def _take_warnings(duration: float, peak: float, rms: float) -> List[str]:
+    """Reasons this take would weaken the gold set. Pure - unit-testable."""
+    warnings: List[str] = []
+    if duration < _MIN_TAKE_SEC:
+        warnings.append(f"only {duration:.1f}s - the whole script should be read")
+    if peak >= _CLIPPING_PEAK:
+        warnings.append("clipped - move back from the mic or lower the input gain")
+    if rms < _SILENT_RMS:
+        warnings.append("almost silent - check the right input device is selected")
+    return warnings
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +433,7 @@ def build_libri(clip_count: int = _LIBRI_CLIPS) -> int:
 
 _BUILDERS = {
     "tts": lambda a: build_tts(limit=a.limit),
-    "own": lambda a: build_own(),
+    "own": lambda a: record_own(force=a.force) if a.record else build_own(),
     "bench": lambda a: build_bench(),
     "libri": lambda a: build_libri(clip_count=a.limit or _LIBRI_CLIPS),
 }
@@ -332,6 +452,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--limit", type=int, default=0,
         help="cap the number of clips (tts, libri) - useful for a quick smoke run",
+    )
+    parser.add_argument(
+        "--record", action="store_true",
+        help="own: record the clips from the microphone instead of writing scripts",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="own --record: re-record clips that already have audio",
     )
     args = parser.parse_args(argv)
 
