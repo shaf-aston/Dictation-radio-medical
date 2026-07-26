@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import (
     QWidget, QTextEdit, QPushButton, QVBoxLayout, QHBoxLayout, QComboBox,
     QLabel, QLineEdit, QCheckBox, QFrame, QScrollArea, QSplitter,
-    QSizePolicy, QMenu, QProgressBar,
+    QSizePolicy, QMenu, QProgressBar, QToolButton,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QAction, QKeySequence
@@ -40,11 +40,9 @@ def build_ui(window: MainWindow) -> None:
     root_layout.setContentsMargins(6, 6, 6, 6)
     root_layout.setSpacing(4)
 
-    # Patient info panel
-    window.patient_panel = build_patient_panel(window)
-    root_layout.addWidget(window.patient_panel)
-
-    # Horizontal splitter: macros | editor
+    # Dictate first: the editor and the record button own the top of the window,
+    # and patient details fold away underneath. Matches the web app — see
+    # docs/ui-decisions.md.
     window.splitter = QSplitter(Qt.Orientation.Horizontal)
     window.macros_panel = build_macros_panel(window)
     window.splitter.addWidget(window.macros_panel)
@@ -56,6 +54,11 @@ def build_ui(window: MainWindow) -> None:
     # Recording / action toolbar
     root_layout.addWidget(build_recording_bar(window))
 
+    # Patient info, folded below with a header you can click. The View menu
+    # keeps its Ctrl+P toggle; both drive the same saved setting.
+    window.patient_panel = build_patient_panel(window)
+    root_layout.addWidget(build_patient_section(window))
+
     # Status bar
     window._status_label = QLabel("Ready")
     window._wordcount_label = QLabel("Words: 0")
@@ -64,6 +67,35 @@ def build_ui(window: MainWindow) -> None:
     status_bar.addWidget(window._status_label, 1)
     status_bar.addPermanentWidget(window._wordcount_label)
     status_bar.addPermanentWidget(window._autosave_label)
+
+
+def build_patient_section(window: MainWindow) -> QWidget:
+    """Wrap the patient panel in a clickable fold header.
+
+    Hiding these fields used to be reachable only from the View menu, so nobody
+    who had not read the menu knew it was possible. The header does the same
+    thing in place, and ``window.patient_toggle`` lets MainWindow keep the arrow
+    in step when the menu action or the saved setting drives the change instead.
+    """
+    section = QWidget()
+    layout = QVBoxLayout(section)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(0)
+
+    toggle = QToolButton()
+    toggle.setObjectName("fold_header")
+    toggle.setText("Patient details")
+    toggle.setCheckable(True)
+    toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    toggle.setArrowType(Qt.ArrowType.DownArrow)
+    toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    toggle.setToolTip("Show or hide the patient fields (Ctrl+P)")
+    toggle.clicked.connect(window.on_toggle_patient_panel)
+
+    window.patient_toggle = toggle
+    layout.addWidget(toggle)
+    layout.addWidget(window.patient_panel)
+    return section
 
 
 def build_patient_panel(window: MainWindow) -> QFrame:

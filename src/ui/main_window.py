@@ -21,8 +21,9 @@ from PySide6.QtWidgets import (
     QMainWindow, QApplication, QFileDialog, QMessageBox,
     QTextEdit, QPushButton, QComboBox, QLabel, QLineEdit,
     QCheckBox, QFrame, QSplitter, QProgressBar, QMenu, QVBoxLayout, QWidget,
+    QToolButton,
 )
-from PySide6.QtCore import QTimer, Slot
+from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QKeySequence, QShortcut
 
 from src.dictation.audio import Recorder
@@ -96,6 +97,7 @@ class MainWindow(QMainWindow):
 
     # Attributes set by build_ui / build_menu / setup_level_timer
     patient_panel: QFrame
+    patient_toggle: QToolButton
     patient_name: QLineEdit
     patient_id: QLineEdit
     patient_dob: QLineEdit
@@ -326,6 +328,13 @@ class MainWindow(QMainWindow):
 
     def _set_patient_panel_visible(self, visible: bool) -> None:
         self.patient_panel.setVisible(visible)
+        # The fold header, the View menu and the saved setting are three ways
+        # into one piece of state, so the arrow is set here rather than by
+        # whichever of them happened to trigger the change.
+        self.patient_toggle.setChecked(visible)
+        self.patient_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if visible else Qt.ArrowType.RightArrow
+        )
         if self.settings.get("patient_info_visible") != visible:
             self.settings.set("patient_info_visible", visible)
 
@@ -334,11 +343,15 @@ class MainWindow(QMainWindow):
         if self.settings.get("macros_panel_visible") != visible:
             self.settings.set("macros_panel_visible", visible)
 
+    # Toggles read the saved setting rather than the widget. Qt reports a child
+    # as not visible whenever any ancestor is hidden, so asking the widget
+    # inverts the wrong value before the window is first shown — and the setting
+    # is the single writer for this state anyway.
     def on_toggle_patient_panel(self) -> None:
-        self._set_patient_panel_visible(not self.patient_panel.isVisible())
+        self._set_patient_panel_visible(not self.settings.get("patient_info_visible", True))
 
     def on_toggle_macros_panel(self) -> None:
-        self._set_macros_panel_visible(not self.macros_panel.isVisible())
+        self._set_macros_panel_visible(not self.settings.get("macros_panel_visible", True))
 
     # ------------------------------------------------------------------
     # Font size

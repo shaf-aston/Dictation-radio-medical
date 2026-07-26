@@ -58,6 +58,11 @@ QMenu {
 }
 QMenu::item:selected { background-color: #e5e5ea; }
 QMenu::separator { background-color: #c7c7cc; height: 1px; }
+QToolButton#fold_header {
+    background-color: transparent; border: none; color: #6b7280;
+    font-weight: bold; font-size: 11px; text-align: left; padding: 4px 6px;
+}
+QToolButton#fold_header:hover { color: #1c1c1e; }
 QFrame#patient_panel {
     background-color: #eff6ff; border: 1px solid #93c5fd; border-radius: 4px;
 }
