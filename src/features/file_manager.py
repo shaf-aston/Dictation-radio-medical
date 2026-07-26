@@ -120,6 +120,48 @@ def radiology_prompt_path() -> Path:
     """Whisper initial-prompt text fed to the model before transcription."""
     return _project_root() / "src" / "dictation" / "resources" / "radiology_prompt.txt"
 
+def confusion_sets_path() -> Path:
+    """Curated confusable-word sets (YAML) for context-aware correction.
+
+    Bundled, version-controlled resource. Each entry groups real words a
+    radiologist never means to swap ("cord"/"chord", "coarse"/"course") plus
+    optional context cues; see
+    :mod:`src.dictation.postprocess.context_correct`.
+    """
+    return (
+        _project_root() / "src" / "dictation" / "postprocess"
+        / "resources" / "confusion_sets.yaml"
+    )
+
+def context_seed_corpus_path() -> Path:
+    """Bundled radiology sentences that seed the context n-gram model.
+
+    Cold-start training text so the context corrector works on a fresh install
+    before the user's own reports have accumulated. Version-controlled.
+    """
+    return (
+        _project_root() / "src" / "dictation" / "postprocess"
+        / "resources" / "context_seed_corpus.txt"
+    )
+
+def context_model_cache_path() -> Path:
+    """Cached n-gram counts for the context corrector (rebuildable).
+
+    Derived from the seed corpus + any learned report text; keyed by a source
+    signature so it rebuilds when either changes. Safe to delete.
+    """
+    return cache_dir() / "context_ngram.pkl"
+
+def learned_context_corpus_path() -> Path:
+    """Append-only radiology text learned from the user's finalized reports.
+
+    Feeds the context n-gram model so disambiguation improves with use. Stays
+    on-device (never uploaded) — the reports are PHI. Written finalize-time by
+    the context corrector's learning hook; separate from the shipped seed
+    corpus so an app update never clobbers it.
+    """
+    return _data_dir() / "learned_context_corpus.txt"
+
 def macros_file() -> Path:
     """Macros JSON file"""
     return _data_dir() / "macros.json"

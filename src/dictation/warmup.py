@@ -56,6 +56,15 @@ def _warm_terminology() -> None:
     apply_terminology("warmup")
 
 
+def _warm_context_model() -> None:
+    # Builds (or unpickles) the n-gram context model used by the real-word
+    # confusion corrector. Tiny (~4 ms), but warming it keeps the first spoken
+    # chunk off the build path along with the other singletons.
+    from src.dictation.postprocess import context_model
+
+    context_model.get_context_model()
+
+
 def _warm_english_guard() -> None:
     # Loads pyspellchecker's offline English dictionary (~200 ms on first use),
     # which the fuzzy stage consults to tell a real word from a typo. Left lazy
@@ -74,6 +83,7 @@ def postprocess_warmers() -> List[Warmer]:
         ("medical_symspell", _warm_symspell),
         ("english_guard", _warm_english_guard),
         ("terminology", _warm_terminology),
+        ("context_model", _warm_context_model),
     ]
 
 

@@ -1,0 +1,121 @@
+# Confusion sets — real-word substitution correction (context-aware).
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# The fuzzy medical-dictionary stage only ever touches *non-words* (a genuine
+# misspelling). But Whisper's most common dictation errors are *real words in
+# the wrong place*: it hears "spinal chord" for "spinal cord", "course" for
+# "coarse", "ileum" for "ilium". Nothing is misspelled, so a spell-checker
+# cannot help — only the surrounding words reveal which one was meant.
+#
+# Each set below groups words that are easily confused for one another. The
+# context corrector (src/dictation/postprocess/context_correct.py) will ONLY
+# ever swap one member of a set for ANOTHER member of the SAME set — never for
+# an outside word — and only when the surrounding context clearly favours it.
+# This bounded design is what keeps it safe: the worst it can do is pick the
+# wrong member of a hand-curated pair, and every change is shown in the
+# corrections banner for the radiologist to reject.
+#
+# FIELDS (all optional except `members`)
+#   members  : the confusable words. Correction only moves between these.
+#   cues      : { member: [words] } — if any cue word appears within a few
+#               tokens, that strongly indicates this member is the intended one.
+#               Cues are the deterministic, high-precision signal.
+#   prior     : { member: weight } — base preference used to break ties or when
+#               there is no local context evidence. Positive favours a member,
+#               negative disfavours it. Use a large negative for a member that
+#               is almost never correct in radiology prose ("chord", "discreet").
+#               A member with no prior defaults to 0 (neutral).
+#
+# Tuning of the switch threshold / cue window lives in context_correct.py, not
+# here — this file is pure vocabulary data.
+
+# Medical combining forms (prefixes) that Whisper often splits off as their own
+# token: "retro peritoneal", "hydro nephrosis". When the FIRST of two adjacent
+# tokens is one of these AND the two joined together spell a real medical term,
+# the split-compound rejoiner welds them back. This only *unlocks* a join that
+# is still hard-gated on the concatenation being a known medical term, so an
+# over-broad entry here can never invent a non-word — worst case it does nothing.
+compound_prefixes:
+  - retro
+  - hydro
+  - hepato
+  - spleno
+  - nephro
+  - cardio
+  - gastro
+  - entero
+  - broncho
+  - osteo
+  - chondro
+  - arthro
+  - myelo
+  - neuro
+  - angio
+  - adeno
+  - pyelo
+  - uretero
+  - costo
+  - cervico
+  - thoraco
+  - lumbo
+  - sacro
+
+# CUE DISCIPLINE (read before adding a cue): a cue must be EXCLUSIVE — a word
+# that sits next to ONE member and essentially never the other. Generic words
+# ("small", "normal", "region", "muscle", "nerve", "area") are NOT cues: they
+# co-occur with both members and would flip a correct word (e.g. "small" near
+# the bone "ilium" must not drag it to the bowel "ileum"; "peroneal nerve" and
+# "perineal nerve" are both real). Under-cue on purpose — a missing cue only
+# means a correction is skipped (safe); a wrong cue changes a report's meaning.
+sets:
+  # ── One member is almost never correct in a radiology report ──────────────
+  - members: [cord, chord]
+    cues:
+      cord: [spinal, cervical, thoracic, lumbar, sacral, conus, tethered,
+             vocal, umbilical, medullaris, cauda]
+    prior:
+      chord: -8        # "chord" essentially never appears in radiology prose
+                       # (<= never-correct tier: prior alone may switch it)
+
+  - members: [discrete, discreet]
+    cues:
+      discrete: [nodule, nodules, lesion, lesions, focus, foci, mass, masses,
+                 opacity, calcification]
+    prior:
+      discreet: -6
+
+  - members: [lesion, legion]
+    prior:
+      legion: -8       # never a radiology word
+
+  # "no acute ...", "no evidence ..." — hearing "know" for "no" is very common.
+  # NB: "no" MUST stay quoted — unquoted, YAML parses it as the boolean false.
+  # Cues are only the strong fixed negations ("no acute", "no evidence") so a
+  # correctly-used "know" ("the clinician should know") is never flipped.
+  - members: ["no", know]
+    cues:
+      "no": [acute, evidence, significant, definite, gross, fracture, fractures,
+             suspicious]
+    prior:
+      know: -5
+
+  # ── Genuinely-both-valid: an exclusive cue must decide, else leave alone ───
+  - members: [coarse, course]
+    cues:
+      coarse: [trabecular, trabeculation, trabeculae, echotexture,
+               calcification, calcifications, reticulation]
+      course: [vessel, vessels, artery, arteries, vein, veins, ureter, duct,
+               tortuous, aberrant, anomalous]
+
+  - members: [ileum, ilium]
+    cues:
+      ileum: [terminal, bowel, loops, jejunum, anastomosis, ileocecal,
+              ileocaecal]
+      ilium: [iliac, crest, wing, wings, blade, sacroiliac, acetabulum]
+
+  - members: [peroneal, perineal]
+    cues:
+      peroneal: [tendon, tendons, fibula, fibular, retinaculum, brevis, longus,
+                 tenosynovitis, peroneus]
+      perineal: [perineum, urethra, rectum, anal]

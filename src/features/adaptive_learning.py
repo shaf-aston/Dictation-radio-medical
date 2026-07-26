@@ -442,8 +442,19 @@ def apply_learned_corrections(text: str) -> str:
 
 
 def learn_from_edit(old_text: str, new_text: str) -> None:
-    """Track an edit for passive learning."""
+    """Track an edit for passive learning.
+
+    Also feeds the corrected text to the context model's on-device learned
+    corpus (de-duplicated, so the debounced repeat calls are harmless) so
+    real-word disambiguation improves for this radiologist's own reports over
+    time. Best-effort — a failure here never blocks the primary edit tracking.
+    """
     get_adaptive_learning().track_edit(old_text, new_text)
+    try:
+        from src.dictation.postprocess.context_model import append_learned_text
+        append_learned_text(new_text)
+    except Exception as exc:  # learning is an enhancement, never load-bearing
+        logger.debug("Context-corpus learning skipped: %s", exc)
 
 
 def get_custom_prompt_suffix() -> str:

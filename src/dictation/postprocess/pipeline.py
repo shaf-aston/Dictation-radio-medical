@@ -13,7 +13,12 @@ Stage order
 4. Measurements                — :func:`apply_measurement_standardisation`
 5. Radiology terminology       — :func:`apply_terminology`
 6. Accent-specific Whisper fix — :func:`apply_accent_corrections`
+6.5 Split-compound rejoin      — :func:`rejoin_split_compounds` (before fuzzy so
+                                  "hydro nephrosis" becomes a real term instead
+                                  of being mangled per-fragment)
 7. Medical dictionary fuzzy    — :func:`apply_medical_dictionary_suggestions`
+7.5 Context real-word fix      — :func:`apply_context_correction` (confusable
+                                  real words: "spinal chord"->"cord")
 8. Learned user corrections    — :func:`apply_learned_corrections` (runs last
                                   so user overrides win)
 9. Smart capitalisation        — :func:`smart_capitalize`
@@ -52,6 +57,10 @@ from src.dictation.postprocess.text_utils import normalize_spaces, smart_capital
 from src.dictation.postprocess.measurements import apply_measurement_standardisation
 from src.dictation.postprocess.terminology import apply_terminology
 from src.dictation.postprocess.medical_dict_match import apply_medical_dictionary_suggestions
+from src.dictation.postprocess.context_correct import (
+    apply_context_correction,
+    rejoin_split_compounds,
+)
 from src.features.accent_corrections import apply_accent_corrections
 from src.features.adaptive_learning import apply_learned_corrections
 from src.dictation.postprocess.analysis import PipelineAnalyzer
@@ -74,7 +83,9 @@ CLEANUP_LEVEL_LABELS: dict = {
 _SOFT_SKIP_STAGES = {
     "apply_terminology",
     "apply_accent_corrections",
+    "rejoin_split_compounds",
     "apply_medical_dictionary_suggestions",
+    "apply_context_correction",
     "apply_learned_corrections",
 }
 
@@ -122,7 +133,9 @@ def postprocess_transcript(
         ("apply_measurement_standardisation", apply_measurement_standardisation, None),
         ("apply_terminology", apply_terminology, None),
         ("apply_accent_corrections", apply_accent_corrections, accent),
+        ("rejoin_split_compounds", rejoin_split_compounds, None),
         ("apply_medical_dictionary_suggestions", apply_medical_dictionary_suggestions, None),
+        ("apply_context_correction", apply_context_correction, None),
         ("apply_learned_corrections", apply_learned_corrections, None),
         ("smart_capitalize", smart_capitalize, None),
     ]

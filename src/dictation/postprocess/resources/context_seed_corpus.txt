@@ -1,0 +1,110 @@
+# Context seed corpus — cold-start training text for the context n-gram model.
+#
+# Plain radiology sentences, one per line. Lines starting with '#' and blank
+# lines are ignored. These provide the initial word-adjacency statistics the
+# context corrector uses to disambiguate confusable words (e.g. that "spinal
+# cord" is far more likely than "spinal chord", that "coarse trabeculation" and
+# "the course of the artery" are both normal). The model also grows from the
+# radiologist's own finalized reports over time (learned_context_corpus.txt),
+# so this only has to be good enough to start; it does not have to be complete.
+#
+# Keep sentences natural and correctly spelled — this is the "ground truth" the
+# model learns likely word sequences from.
+
+# ── spinal cord ──
+The spinal cord is normal in signal and calibre.
+There is no cord compression or intrinsic cord signal abnormality.
+The conus medullaris terminates at a normal level and the cord is unremarkable.
+No cord oedema or myelomalacia is seen.
+The cervical cord demonstrates normal signal throughout.
+The thoracic spinal cord is of normal calibre.
+Nerve roots and spinal cord appear normal.
+The vocal cords are symmetric.
+
+# ── discrete lesion / nodule ──
+There is a discrete nodule in the right upper lobe.
+No discrete mass lesion is identified.
+Several discrete foci of high signal are noted.
+A discrete area of enhancement is seen.
+The lesions are discrete and well circumscribed.
+No discrete lesion is demonstrated within the liver.
+
+# ── lesion ──
+There is no focal lesion within the liver.
+A well-defined lesion is seen in the left kidney.
+The lesion demonstrates peripheral enhancement.
+
+# ── no acute / no evidence ──
+There is no acute fracture or dislocation.
+No acute intracranial abnormality is identified.
+There is no evidence of acute infarction.
+No significant abnormality is seen.
+There is no acute bony injury.
+No definite fracture is demonstrated.
+There is no acute haemorrhage.
+No suspicious focal lesion is seen.
+
+# ── coarse (texture) ──
+There is coarse trabeculation of the visualized bone.
+The hepatic echotexture is coarse and heterogeneous.
+Coarse calcification is present within the mass.
+The bone shows a coarse trabecular pattern.
+Coarse reticulation is seen at the lung bases.
+
+# ── course (path) ──
+The artery follows its normal course.
+There is a tortuous course of the vessel.
+The nerve maintains a normal course.
+The ureter follows an anomalous course.
+The vessels course normally through the region.
+The tendon takes an aberrant course.
+
+# ── ileum (bowel) ──
+The terminal ileum is normal in calibre.
+There is wall thickening of the distal ileum.
+Small bowel loops including the ileum are normal.
+No abnormality of the terminal ileum is seen.
+The ileum and jejunum are unremarkable.
+
+# ── ilium (bone) ──
+There is a lucent lesion within the right ilium.
+The iliac crest and ilium are intact.
+No fracture of the ilium is identified.
+The ilium forms part of the iliac wing.
+Bone marrow signal within the ilium is normal.
+
+# ── peroneal (leg) ──
+The peroneal tendons are intact within the retinaculum.
+There is tenosynovitis of the peroneal tendon.
+The peroneus brevis and peroneus longus are normal.
+No tear of the peroneal tendon is seen.
+The peroneal nerve courses normally.
+
+# ── perineal ──
+There is no perineal collection.
+The perineal body is intact.
+Subcutaneous oedema is seen in the perineal region.
+
+# ── mucosa / mucosal / mucous ──
+There is mucosal thickening of the maxillary sinus.
+The bowel mucosa enhances normally.
+Mucous retention cysts are noted.
+Mucosal enhancement is seen along the colon.
+The nasal mucosa is unremarkable.
+
+# ── general radiology collocations (context glue) ──
+The visualized lung fields are clear.
+There is mild degenerative change of the lumbar spine.
+No pleural effusion or pneumothorax is seen.
+The kidneys are normal in size and configuration.
+There is a small joint effusion.
+Bone marrow oedema is present within the subchondral bone.
+The rotator cuff tendons are intact.
+There is a full-thickness tear of the supraspinatus tendon.
+The anterior cruciate ligament is intact.
+No significant neuroforaminal narrowing is identified.
+The intervertebral disc spaces are preserved.
+There is mild hepatomegaly without focal lesion.
+The gallbladder is normal without wall thickening or calculi.
+No free fluid or free air is seen within the abdomen.
+The visualized bowel is normal in calibre without obstruction.
