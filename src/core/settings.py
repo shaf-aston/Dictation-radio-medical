@@ -20,14 +20,15 @@ _DEFAULTS: dict = {
     "font_size": 13,
     "auto_save_interval": 60,   # seconds
     "pause_threshold": 2.5,     # seconds silence → new paragraph
-    # --- Live transcription speed/quality knobs (see src/dictation/worker.py) ---
-    # live_window_sec = hard ceiling on audio sent to Whisper per cycle (safety).
-    # commit_lag_sec  = trailing audio kept un-committed (revisable). The steady-
-    # state window ≈ commit_lag_sec + 3s overlap, so LOWER commit_lag_sec = faster
-    # live transcription (less re-decoding) at a small accuracy cost; raise it for
-    # steadier text. Must stay above the 3s overlap. 25/8 restores pre-tuning size.
-    "live_window_sec": 25.0,
-    "commit_lag_sec": 8.0,
+    # --- Live transcription chunk policy (see src/dictation/stream/segmenter.py) ---
+    # Each chunk is decoded exactly once, cut at a VAD silence boundary: never
+    # shorter than chunk_min_sec, cut at the latest pause found by
+    # chunk_soft_max_sec if one exists, otherwise force-cut at
+    # chunk_force_cut_sec regardless of whether a pause was found (the only
+    # case that can land mid-word — see ChunkPolicy's docstring).
+    "chunk_min_sec": 6.0,
+    "chunk_soft_max_sec": 15.0,
+    "chunk_force_cut_sec": 20.0,
     "beam_size": 5,             # beam width for one-shot (web) batch transcription
     "silence_rms_floor": 0.002,  # skip live cycles quieter than this (anti-hallucination)
     "autosave_retention_days": 30,  # days to keep autosave files

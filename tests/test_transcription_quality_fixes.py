@@ -7,7 +7,6 @@ from src.dictation.transcriber import _is_hallucination
 from src.dictation.postprocess.text_utils import normalize_spaces
 from src.dictation.postprocess import postprocess_transcript
 from src.dictation.worker import LiveTranscribeWorker
-from src.dictation.window_state import WindowState
 
 
 class _Seg:
@@ -52,22 +51,6 @@ class TestPunctuationRunArtifacts:
     def test_legit_sentence_and_numeric_punctuation_preserved(self):
         assert normalize_spaces("The heart is normal. No effusion.") == "The heart is normal. No effusion."
         assert normalize_spaces("measures 3.5 cm, ratio 2:1") == "measures 3.5 cm, ratio 2:1"
-
-
-class TestBoundaryCommitDedup:
-    def test_boundary_spanning_segment_does_not_duplicate_committed_tail(self):
-        sr = 16000
-        state = WindowState(window_sec=25.0, commit_lag_sec=8.0)
-        state.committed_text = "the lungs are clear"
-        state.committed_samples = int(4.0 * sr)
-        # A segment whose start precedes the frontier but whose text repeats the
-        # committed tail must not re-append "are clear".
-        # abs_end = chunk_start(3) + seg.end(5) = 8s, behind the commit frontier
-        # (total 20 - commit_lag 8 = 12s), so it commits.
-        segments = [{"start": 0.5, "end": 5.0, "text": "are clear and well expanded"}]
-        state.advance_commit(segments, chunk_start_sec=3.0, total_sec=20.0, sr=sr)
-        assert state.committed_text.count("are clear") == 1
-        assert state.committed_text == "the lungs are clear and well expanded"
 
 
 class TestSilenceRms:

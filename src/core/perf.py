@@ -45,6 +45,10 @@ _MAX_SAMPLES = 512
 
 _lock = threading.Lock()
 _samples: Dict[str, deque] = {}
+# Point-in-time ratios/counts (e.g. stream.decode_ratio) — distinct from the
+# rolling *_ms timing samples above, which would misrepresent a unitless
+# ratio by scaling it x1000 as if it were seconds.
+_gauges: Dict[str, float] = {}
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -70,6 +74,20 @@ def stage(name: str) -> Iterator[None]:
         yield
     finally:
         record(name, time.perf_counter() - start)
+
+
+def set_gauge(name: str, value: float) -> None:
+    """Record the latest value of a point-in-time metric, e.g. one recording's
+    ``stream.decode_ratio`` (decoded seconds / audio seconds). Overwrites any
+    previous value for *name* — a gauge is "what is it now", not a history."""
+    with _lock:
+        _gauges[name] = value
+
+
+def gauges() -> Dict[str, float]:
+    """Current value of every gauge set via :func:`set_gauge`."""
+    with _lock:
+        return dict(_gauges)
 
 
 def timed(name: str) -> Callable[[F], F]:
@@ -137,6 +155,7 @@ def log_summary(title: str = "perf") -> None:
 
 
 def reset() -> None:
-    """Drop all samples (used between recordings and by tests)."""
+    """Drop all samples and gauges (used between recordings and by tests)."""
     with _lock:
         _samples.clear()
+        _gauges.clear()

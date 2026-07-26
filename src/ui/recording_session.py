@@ -10,6 +10,7 @@ from PySide6.QtCore import QThread, QTimer
 from PySide6.QtWidgets import QMessageBox
 
 from src.core import perf
+from src.dictation.stream.segmenter import ChunkPolicy
 from src.dictation.worker import LiveTranscribeWorker
 from src.features.file_manager import create_temp_wav
 from src.ui.postprocess_worker import PostprocessWorker, build_changes
@@ -172,8 +173,11 @@ def on_start_recording(window: MainWindow) -> None:
     window.live_worker = LiveTranscribeWorker(
         path, model_size, language, vad_enabled, pause_threshold,
         model_path=active_model_path,
-        window_sec=float(window.settings.get("live_window_sec")),
-        commit_lag_sec=float(window.settings.get("commit_lag_sec")),
+        chunk_policy=ChunkPolicy(
+            min_sec=float(window.settings.get("chunk_min_sec")),
+            soft_max_sec=float(window.settings.get("chunk_soft_max_sec")),
+            force_cut_sec=float(window.settings.get("chunk_force_cut_sec")),
+        ),
         silence_rms_floor=float(window.settings.get("silence_rms_floor", 0.002)),
     )
     window.live_worker.moveToThread(window.live_thread)

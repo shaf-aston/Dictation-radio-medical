@@ -38,10 +38,23 @@ src/
 │                  perf.py (stage timings — rolling count/mean/p95/max, local only)
 ├── dictation/   the offline pipeline — has NO cloud dependency
 │   ├── audio.py          microphone capture
-│   ├── worker.py         live transcription QThread (sliding window; reads only
-│   │                       the window off the growing WAV, never the whole file)
-│   ├── transcriber.py    faster-whisper / CTranslate2 wrapper
-│   ├── text_diff.py      incremental diff for streaming UI updates
+│   ├── worker.py         live transcription QThread (chunk-once; reads only
+│   │                       the still-open tail off the growing WAV, never the
+│   │                       whole file — see Live-speed design)
+│   ├── asr/               AsrEngine swap-seam over transcriber.py — port.py
+│   │                       (Protocol) · types.py (Word/AsrSegment/AsrResult/
+│   │                       TranscribeContext — confidence is part of the
+│   │                       contract) · factory.py (create_engine, the only
+│   │                       name→engine mapping) · engines/faster_whisper_engine.py
+│   ├── stream/             chunk-once streaming — vad.py (Silero VAD, bundled
+│   │                       with faster-whisper, no new dep) · segmenter.py
+│   │                       (pure VAD-marks→chunk-cuts policy) · ledger.py
+│   │                       (freezes each closed chunk's decode permanently,
+│   │                       the "decode once" guarantee) · tail.py
+│   │                       (LocalAgreement-2 stable preview of the open tail)
+│   ├── transcriber.py    faster-whisper / CTranslate2 wrapper — the AsrEngine
+│   │                       port's implementation detail, not used directly
+│   │                       outside src/dictation/asr/
 │   ├── postprocess/      10-stage correction pipeline (pipeline.py orchestrates)
 │   │   └── incremental.py  live path: processes only the un-committed tail,
 │   │                        caching the frozen prefix (see Live-speed design)
@@ -98,14 +111,14 @@ Other optional, off-by-default add-ons:
 ## Dictation data-flow (always local)
 
 ```
-microphone → audio.py → worker.py (QThread, sliding window)
-           → transcriber.py (Whisper) → postprocess/ (10 stages)
+microphone → audio.py → worker.py (QThread, chunk-once)
+           → asr/ (AsrEngine port → transcriber.py/Whisper) → postprocess/ (10 stages)
            → UI (views.py / web_app.py) → report_manager.py (.docx / .txt export)
 ```
 
 ## Live-speed design (why dictation keeps up)
 
-The live worker re-emits the *whole* transcript every cycle. Three rules keep the
+The live worker re-emits the *whole* transcript every cycle. Four rules keep the
 per-cycle cost flat instead of growing with the length of the report — a long
 dictation used to get slower the longer it ran:
 
@@ -123,13 +136,27 @@ dictation used to get slower the longer it ran:
    No safe boundary yet → it falls back to whole-document processing. The final
    pass after recording stops always reprocesses the whole document, so the
    report the radiologist reviews is never a partially-processed artefact.
-3. **Only the window is read off disk.** `worker._read_audio(from_sample)` seeks;
-   it no longer re-decodes the entire growing WAV every cycle.
+3. **Each chunk is decoded exactly once.** `dictation/stream/` finds VAD silence
+   boundaries in the still-open tail (`vad.py`), turns them into chunk cuts
+   (`segmenter.py`), and permanently freezes each closed chunk's decode
+   (`ledger.py`) — nothing ever re-decodes committed audio. Only the still-open
+   tail (bounded by `ChunkPolicy.force_cut_sec`, default 20s) is re-decoded
+   cycle to cycle, purely for a stable live preview via LocalAgreement-2
+   (`tail.py`, `stream.decode_ratio` in `core/perf.py` is the measured proof —
+   target ≤1.4x versus the old sliding window's ~8x). After recording stops
+   there is no full re-transcribe: a confidence-targeted polish
+   (`worker._run_confidence_targeted_polish`) re-decodes only the committed
+   chunks whose mean word confidence (from the `AsrEngine` port's
+   `want_word_confidence`) fell below the ceiling, plus whatever was still open.
+4. **Only the un-decoded tail is ever read off disk.** `worker._read_audio(from_sample)`
+   seeks from the ledger's open-tail frontier; it never re-decodes the entire
+   growing WAV.
 
 `core/perf.py` is the evidence for all of the above: stage timings (count / mean
-/ p95 / max) are logged when a recording ends and served at `GET
-/api/debug/perf`. It is in-process only — nothing is persisted or sent anywhere,
-so it does not weaken the offline invariant.
+/ p95 / max) plus point-in-time gauges like `stream.decode_ratio` are logged
+when a recording ends and served at `GET /api/debug/perf`. It is in-process
+only — nothing is persisted or sent anywhere, so it does not weaken the
+offline invariant.
 
 The pipeline (`dictation/postprocess/pipeline.py`) runs, in order: hallucination
 removal → voice commands → punctuation → measurements → terminology →

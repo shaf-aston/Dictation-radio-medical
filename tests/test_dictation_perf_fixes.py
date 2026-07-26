@@ -1,11 +1,14 @@
 """Regression tests for the dictation performance/quality fixes.
 
-Covers three contracts:
+Covers two contracts:
 * process-wide Whisper model cache (``transcriber._MODEL_CACHE``),
 * ``Transcriber.transcribe(temperature=...)`` forwarding (explicit value vs
-  the default 5-step fallback ladder),
-* ``WindowState`` paragraph preservation — frozen segments separated by a
-  pause >= ``pause_threshold`` join with a newline, not a space.
+  the default 5-step fallback ladder).
+
+(Paragraph-join / boundary-dedup coverage moved to tests/test_stream.py's
+ChunkLedger tests — window_state.py and text_diff.py, the sliding-window
+re-decode machinery this used to exercise, were superseded by the
+chunk-once ledger and deleted.)
 """
 
 from __future__ import annotations
@@ -21,16 +24,9 @@ from runtime_stubs import install_test_runtime_stubs
 install_test_runtime_stubs()
 
 import src.dictation.transcriber as transcriber_mod  # noqa: E402
-from src.dictation.text_diff import trim_committed_tail  # noqa: E402
 from src.dictation.transcriber import Transcriber  # noqa: E402
-from src.dictation.window_state import WindowState  # noqa: E402
 
 SR = 16000
-
-
-def segment(start: float, end: float, text: str) -> dict:
-    """Build a transcription segment payload."""
-    return {"start": start, "end": end, "text": text}
 
 
 # ---------------------------------------------------------------------------
@@ -119,97 +115,3 @@ class TestTemperatureForwarding:
         assert fake_whisper.last_transcribe_kwargs["temperature"] == [
             0.0, 0.2, 0.4, 0.6, 0.8,
         ]
-
-
-class TestWindowStateParagraphs:
-    """Frozen segments keep the paragraph break a dictation pause implies."""
-
-    @staticmethod
-    def make_state() -> WindowState:
-        return WindowState(window_sec=25, commit_lag_sec=8, pause_threshold=2.5)
-
-    def test_advance_commit_newline_on_long_pause(self) -> None:
-        state = self.make_state()
-        segments = [
-            segment(0.0, 3.0, "Findings are normal."),
-            segment(6.0, 9.0, "Impression follows."),  # 3.0s gap >= 2.5
-        ]
-        state.advance_commit(segments, chunk_start_sec=0.0, total_sec=20.0, sr=SR)
-        assert state.committed_text == "Findings are normal.\nImpression follows."
-
-    def test_advance_commit_space_on_short_gap(self) -> None:
-        state = self.make_state()
-        segments = [
-            segment(0.0, 3.0, "Findings are normal."),
-            segment(3.5, 9.0, "Impression follows."),  # 0.5s gap < 2.5
-        ]
-        state.advance_commit(segments, chunk_start_sec=0.0, total_sec=20.0, sr=SR)
-        assert state.committed_text == "Findings are normal. Impression follows."
-
-    def test_trim_committed_tail_keeps_newline_at_dedup_boundary(self) -> None:
-        """Overlap dedup must not collapse a paragraph newline to a space."""
-        committed = "Lungs clear. No effusion."
-        addition = "No effusion.\nIMPRESSION: Normal chest."
-        assert (
-            trim_committed_tail(committed, addition)
-            == "Lungs clear. No effusion.\nIMPRESSION: Normal chest."
-        )
-
-    def test_trim_committed_tail_keeps_leading_newline_without_overlap(self) -> None:
-        committed = "Lungs clear."
-        assert (
-            trim_committed_tail(committed, "\nIMPRESSION: Normal chest.")
-            == "Lungs clear.\nIMPRESSION: Normal chest."
-        )
-
-    def test_maybe_bootstrap_newline_on_long_pause(self) -> None:
-        state = self.make_state()
-        state.record_segments(
-            [
-                segment(0.0, 3.0, "Findings are normal."),
-                segment(6.0, 9.0, "Impression follows."),  # 3.0s gap >= 2.5
-            ],
-            chunk_start_sec=0.0,
-        )
-        state.maybe_bootstrap(new_chunk_start_sec=10.0, sr=SR)
-        assert state.committed_text == "Findings are normal.\nImpression follows."
-
-    def test_newline_survives_across_commit_batches(self) -> None:
-        """A pause spanning two advance_commit calls still gets its newline."""
-        state = self.make_state()
-        # Cycle N: only segment A is behind the frontier (safe_abs = 12-8 = 4).
-        state.advance_commit(
-            [segment(7.0, 10.0, "Findings are normal.")],
-            chunk_start_sec=0.0, total_sec=18.0, sr=SR,
-        )
-        assert state.committed_text == "Findings are normal."
-        # Cycle N+1: segment B (3s pause after A) commits in its own batch.
-        state.advance_commit(
-            [segment(13.0, 16.0, "Impression follows.")],
-            chunk_start_sec=0.0, total_sec=25.0, sr=SR,
-        )
-        assert state.committed_text == "Findings are normal.\nImpression follows."
-
-    def test_space_across_commit_batches_on_short_gap(self) -> None:
-        state = self.make_state()
-        state.advance_commit(
-            [segment(7.0, 10.0, "Findings are normal.")],
-            chunk_start_sec=0.0, total_sec=18.0, sr=SR,
-        )
-        state.advance_commit(
-            [segment(10.5, 13.0, "No effusion.")],
-            chunk_start_sec=0.0, total_sec=22.0, sr=SR,
-        )
-        assert state.committed_text == "Findings are normal. No effusion."
-
-    def test_maybe_bootstrap_space_on_short_gap(self) -> None:
-        state = self.make_state()
-        state.record_segments(
-            [
-                segment(0.0, 3.0, "Findings are normal."),
-                segment(3.5, 9.0, "Impression follows."),  # 0.5s gap < 2.5
-            ],
-            chunk_start_sec=0.0,
-        )
-        state.maybe_bootstrap(new_chunk_start_sec=10.0, sr=SR)
-        assert state.committed_text == "Findings are normal. Impression follows."

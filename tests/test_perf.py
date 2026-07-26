@@ -45,6 +45,26 @@ class TestRecording:
         perf.log_summary()  # must not raise
 
 
+class TestGauges:
+    def test_set_gauge_is_readable(self) -> None:
+        perf.set_gauge("stream.decode_ratio", 1.35)
+        assert perf.gauges()["stream.decode_ratio"] == pytest.approx(1.35)
+
+    def test_set_gauge_overwrites_not_accumulates(self) -> None:
+        perf.set_gauge("g", 1.0)
+        perf.set_gauge("g", 2.0)
+        assert perf.gauges()["g"] == pytest.approx(2.0)
+
+    def test_gauges_do_not_leak_into_stage_snapshot(self) -> None:
+        perf.set_gauge("g", 1.0)
+        assert perf.snapshot() == {}
+
+    def test_reset_clears_gauges(self) -> None:
+        perf.set_gauge("g", 1.0)
+        perf.reset()
+        assert perf.gauges() == {}
+
+
 class TestStats:
     def test_stats_are_computed_over_recorded_samples(self) -> None:
         for value in (0.01, 0.02, 0.03, 0.04):

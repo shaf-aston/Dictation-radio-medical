@@ -1,8 +1,12 @@
-"""Purposeful regression tests for the worker and post-processing pipeline."""
+"""Purposeful regression tests for the worker and post-processing pipeline.
+
+Sliding-window / boundary-dedup coverage (window_start, advance_commit,
+maybe_bootstrap, build_output) moved to tests/test_stream.py's segmenter and
+ChunkLedger tests — window_state.py and text_diff.py, the modules that owned
+that logic, were superseded by the chunk-once ledger (M2) and deleted.
+"""
 
 from __future__ import annotations
-
-import numpy as np
 
 from runtime_stubs import install_test_runtime_stubs
 
@@ -16,20 +20,7 @@ from src.dictation.postprocess import (  # noqa: E402
     postprocess_transcript,
     postprocess_transcript_with_changes,
 )
-from src.dictation.worker import (  # noqa: E402
-    LiveTranscribeWorker,
-    _COMMIT_LAG_SEC,  # type: ignore
-    _RADIOLOGY_INITIAL_PROMPT,
-    _WINDOW_SEC,  # type: ignore
-)
-from src.dictation.window_state import WindowState, _OVERLAP_SEC  # noqa: E402
-
-SR = 16000
-
-
-def make_state() -> WindowState:
-    """The pure sliding-window / commit machine — no Qt, no I/O."""
-    return WindowState(_WINDOW_SEC, _COMMIT_LAG_SEC)
+from src.dictation.worker import LiveTranscribeWorker, _RADIOLOGY_INITIAL_PROMPT  # noqa: E402
 
 
 def make_worker() -> LiveTranscribeWorker:
@@ -37,210 +28,6 @@ def make_worker() -> LiveTranscribeWorker:
     worker = object.__new__(LiveTranscribeWorker)
     worker.pause_threshold = 2.5
     return worker
-
-
-def silence(seconds: float) -> np.ndarray:
-    """Generate silent audio at the sample rate Whisper expects."""
-    return np.zeros(int(seconds * SR), dtype=np.float32)
-
-
-def segment(start: float, end: float, text: str) -> dict:
-    """Build a transcription segment payload."""
-    return {"start": start, "end": end, "text": text}
-
-
-def window(state: WindowState, total_sec: float) -> tuple[float, float]:
-    """Return ``(chunk_seconds, start_seconds)`` for a recording of *total_sec*.
-
-    Only this slice is read off disk rather than decoding the whole growing
-    WAV, so the window is expressed as sample offsets.
-    """
-    total_samples = int(total_sec * SR)
-    start = state.window_start(total_samples, SR)
-    return (total_samples - start) / SR, start / SR
-
-
-class TestWindowGeometry:
-    """WindowState clamps its knobs to safe, lossless bounds."""
-
-    def test_clamps_commit_lag_below_window_minus_overlap(self) -> None:
-        # A commit lag larger than the window is nonsensical; it must be pulled
-        # back so the window can always re-cover the committed tail.
-        state = WindowState(window_sec=10.0, commit_lag_sec=100.0)
-        assert state.commit_lag_sec == 10.0 - _OVERLAP_SEC
-
-    def test_clamps_commit_lag_above_overlap(self) -> None:
-        # A commit lag below the overlap would let text commit that the window
-        # no longer re-covers — word loss. Floor it at the overlap.
-        state = WindowState(window_sec=25.0, commit_lag_sec=0.0)
-        assert state.commit_lag_sec == _OVERLAP_SEC
-
-
-class TestWindowing:
-    """The sliding window should stay bounded and predictable."""
-
-    def test_short_audio_is_returned_whole(self) -> None:
-        state = make_state()
-
-        chunk_sec, start_sec = window(state, _WINDOW_SEC - 1)
-
-        assert chunk_sec == _WINDOW_SEC - 1
-        assert start_sec == 0.0
-
-    def test_first_long_window_is_capped_to_recent_audio(self) -> None:
-        state = make_state()
-
-        chunk_sec, start_sec = window(state, _WINDOW_SEC + 10)
-
-        assert chunk_sec == _WINDOW_SEC
-        assert start_sec == 10.0
-
-    def test_commit_anchor_still_respects_hard_cap(self) -> None:
-        state = make_state()
-        state.committed_samples = int(10.0 * SR)
-
-        chunk_sec, start_sec = window(state, 40.0)
-
-        assert chunk_sec == _WINDOW_SEC
-        assert start_sec == 15.0
-
-    def test_commit_near_tail_uses_overlap_context(self) -> None:
-        state = make_state()
-        state.committed_samples = int(29.0 * SR)
-
-        _, start_sec = window(state, 40.0)
-
-        assert start_sec == 29.0 - _OVERLAP_SEC
-
-    def test_steady_state_window_is_small_not_full(self) -> None:
-        # Once text commits, the window is just the un-committed tail plus
-        # overlap (commit_lag + overlap), NOT a full _WINDOW_SEC — this is the
-        # core live-speed fix. Frontier sits commit_lag behind "now".
-        state = make_state()
-        total = 60.0
-        state.committed_samples = int((total - _COMMIT_LAG_SEC) * SR)
-
-        chunk_sec, _ = window(state, total)
-
-        assert chunk_sec == _COMMIT_LAG_SEC + _OVERLAP_SEC
-        assert chunk_sec < _WINDOW_SEC
-
-    def test_window_re_covers_committed_tail_so_no_gap(self) -> None:
-        # The window must start at or before the commit frontier, so the
-        # just-committed tail is re-transcribed and de-duplicated rather than
-        # dropped. This is the losslessness invariant behind aggressive commit.
-        state = make_state()
-        total = 60.0
-        frontier_sec = total - _COMMIT_LAG_SEC
-        state.committed_samples = int(frontier_sec * SR)
-
-        _, start_sec = window(state, total)
-
-        assert start_sec <= frontier_sec
-        assert frontier_sec - start_sec == _OVERLAP_SEC
-
-
-class TestBootstrapCommit:
-    """Window slides should commit only text that has safely expired."""
-
-    def test_commits_only_segments_before_new_window(self) -> None:
-        state = make_state()
-        segments = [
-            segment(1.0, 4.0, "The ACL appears intact"),
-            segment(4.5, 6.5, "This should stay live"),
-        ]
-
-        state.record_segments(segments, 0.0)
-        state.maybe_bootstrap(5.8, SR)
-
-        assert state.committed_text == "The ACL appears intact"
-        assert state.committed_samples == int(4.0 * SR)
-
-    def test_respects_previous_window_offset(self) -> None:
-        state = make_state()
-
-        state.record_segments([segment(0.5, 1.5, "word")], 2.0)
-        state.maybe_bootstrap(3.8, SR)
-
-        assert state.committed_text == "word"
-        assert state.committed_samples == int(3.5 * SR)
-
-    def test_noop_when_window_has_not_moved(self) -> None:
-        state = make_state()
-        state.record_segments([segment(0.5, 1.5, "word")], 2.0)
-
-        state.maybe_bootstrap(2.2, SR)  # < prev_start + 0.5 → no commit
-
-        assert state.committed_text == ""
-        assert state.committed_samples == 0
-
-
-class TestBuildOutput:
-    """Final output should avoid duplicated boundary text."""
-
-    def test_returns_chunk_text_before_any_commit(self) -> None:
-        state = make_state()
-
-        assert state.build_output("chunk result", 0.0) == "chunk result"
-
-    def test_deduplicates_boundary_overlap_using_text_match(self) -> None:
-        state = make_state()
-        state.committed_text = "Committed part overlap text"
-        state.committed_samples = int(5.8 * SR)
-
-        output = state.build_output(
-            "overlap text new findings",
-            5.8 - _OVERLAP_SEC,
-        )
-
-        assert output == "Committed part overlap text new findings"
-
-    def test_falls_back_to_simple_append_when_no_overlap_is_found(self) -> None:
-        state = make_state()
-        state.committed_text = "Committed part."
-        state.committed_samples = int(4.0 * SR)
-
-        output = state.build_output("completely different text", 5.8)
-
-        assert output == "Committed part. completely different text"
-
-    def test_committed_prefix_len_locates_frozen_prefix(self) -> None:
-        state = make_state()
-        state.committed_text = "Frozen prefix"
-
-        assert state.committed_prefix_len("Frozen prefix and more") == len(
-            "Frozen prefix"
-        )
-        assert state.committed_prefix_len("different text") == 0
-
-
-class TestAdvanceCommit:
-    """Stable text should be committed once it falls behind the safe frontier."""
-
-    def test_commits_only_segments_behind_safe_frontier(self) -> None:
-        state = make_state()
-        segments = [
-            segment(0.2, 1.0, "alpha"),
-            segment(1.2, 2.0, "beta"),
-            segment(2.3, 4.5, "gamma"),
-        ]
-
-        # total=16 → safe frontier = 16 - commit_lag(8) = 8s; gamma ends at
-        # abs 9.5s so it stays live, alpha+beta (end 7s) commit.
-        state.advance_commit(segments, 5.0, 16.0, SR)
-
-        assert state.committed_text == "alpha beta"
-        assert state.committed_samples == int(7.0 * SR)
-
-    def test_does_nothing_when_frontier_has_not_advanced(self) -> None:
-        state = make_state()
-        state.committed_text = "already committed"
-        state.committed_samples = int(8.0 * SR)
-
-        state.advance_commit([segment(0.0, 1.0, "new text")], 5.0, 32.0, SR)
-
-        assert state.committed_text == "already committed"
-        assert state.committed_samples == int(8.0 * SR)
 
 
 class TestContextPrompt:

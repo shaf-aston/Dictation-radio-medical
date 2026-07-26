@@ -15,10 +15,10 @@ python -m src.ui.web_app             # web app on http://127.0.0.1:8005 — veri
 **A. Desktop dictation (live)**
 
 1. **Record (F5) captures the microphone** to a growing WAV file — `src/dictation/audio.py`. Exists so audio capture never blocks transcription.
-2. **A sliding window is re-transcribed every ~0.5s** by Whisper via `src/dictation/worker.py` (window logic in `src/dictation/window_state.py`, model in `src/dictation/transcriber.py`). Exists so text appears while you're still talking, without re-decoding the whole recording each cycle.
+2. **The still-open tail is VAD-cut into chunks and each is decoded exactly once** by Whisper via `src/dictation/worker.py` (VAD/segmenter/ledger in `src/dictation/stream/`, engine behind `src/dictation/asr/`). Exists so a long dictation doesn't cost multiples of its own length in redundant re-decoding — only the still-open tail is ever re-decoded, for a stable live preview.
 3. **The new (uncommitted) text runs through a 10-stage cleanup chain** — `src/dictation/postprocess/pipeline.py`. Exists because raw Whisper output contains hallucinations, spoken punctuation/commands, and medical mis-hearings that must become a clean report.
 4. **The editor updates live** — `src/ui/recording_session.py` / `src/ui/views.py`. Exists so the radiologist sees (and can correct) text as they speak.
-5. **Stop (F6) triggers one full high-quality re-transcription** of the whole recording — `src/dictation/worker.py::_run_final_pass`. Exists because the live pass trades accuracy for speed; this pass produces the authoritative text.
+5. **Stop (F6) triggers a confidence-targeted polish**, not a full re-transcription — `src/dictation/worker.py::_run_confidence_targeted_polish`. Only committed chunks whose mean word confidence fell below the ceiling (plus whatever was still open) get one higher-beam re-decode; already-confident chunks are never touched again.
 6. **The finished text is scanned for urgent findings and logged** — `src/medical/critical_findings.py`, `src/features/audit_log.py`. Exists so nothing urgent is missed and every report leaves an audit trail.
 7. **The report is saved or exported** to `.txt`/`.docx` — `src/features/report_manager.py`. Exists to hand the finished report into the radiologist's normal workflow.
 
@@ -29,9 +29,9 @@ python -m src.ui.web_app             # web app on http://127.0.0.1:8005 — veri
 
 ## Glossary
 
-- **Commit frontier** — the point behind which live text is "settled" and won't change; controlled by `commit_lag_sec`.
+- **Chunk-once ledger** — the point behind which live text is frozen and never re-decoded; each chunk closes at a VAD silence boundary (`src/dictation/stream/ledger.py`, `ChunkPolicy.min_sec`/`soft_max_sec`/`force_cut_sec`).
 - **Postprocess pipeline** — the ordered 10-stage cleanup chain (`src/dictation/postprocess/pipeline.py`) that turns raw Whisper text into a formatted report.
-- **Live window** — the trailing slice of audio re-decoded each cycle, instead of the whole growing recording.
+- **Open tail** — the still-growing slice of audio re-decoded each cycle for a stable live preview only (never committed), instead of the whole growing recording.
 - **Medical dictionary (fuzzy match)** — corrects mis-heard medical terms by snapping close matches to a curated term list (`src/medical/medical_dict.py`).
 - **Radiology lexicon vs. medical terms list** — two wordlists: one just recognizes real words (leave alone), the other is what a typo gets corrected *to* (`src/resources/`).
 - **Macros** — short phrases that expand into boilerplate report text, hot-reloaded from `data/macros.json`.

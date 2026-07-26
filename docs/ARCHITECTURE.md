@@ -9,6 +9,14 @@ in [CLAUDE.md](CLAUDE.md) — not duplicated here. Read that for "what each file
 is"; read this for "how a dictation moves through the system and where the time
 goes."
 
+> **Superseded by the M1/M2 rebuild.** Sections 2 and 3 below describe the
+> sliding-window + `commit_lag_sec` tuning pass — since replaced by the
+> chunk-once streaming architecture (`src/dictation/asr/` + `stream/`;
+> `window_state.py`/`text_diff.py` deleted). They are kept as the historical
+> record of that pass's reasoning. **CLAUDE.md's "Live-speed design" section
+> is the current, authoritative description**; §2's hot-path table and §3's
+> tunable-knobs table below are current only where noted inline.
+
 ---
 
 ## 1. The dictation user flow (desktop)
@@ -42,7 +50,7 @@ was never affected by the live-loop costs below.
 
 ---
 
-## 2. The transcription hot path (the loop)
+## 2. The transcription hot path (the loop) — historical, see note above
 
 `src/dictation/worker.py :: LiveTranscribeWorker.run()` — once per cycle:
 
@@ -111,12 +119,12 @@ New knobs: `beam_size` (5) and `silence_rms_floor` (0.002) in settings.
 (§3 #1) is already fixed, and splitting correction state across the commit
 boundary remains medium-high risk.
 
-### Tunable knobs (no code edits — `dictation_settings.json`)
+### Tunable knobs — SUPERSEDED, kept for history only
 
-| Key | Default | Effect |
-|-----|---------|--------|
-| `commit_lag_sec` | `8.0` | **The live-speed lever.** Lower → faster live transcription (smaller window), slight accuracy cost; raise → steadier text. Must stay above the 3 s overlap. |
-| `live_window_sec` | `25.0` | Hard ceiling on audio per cycle. Set both back to `25 / 25`-equivalent by raising `commit_lag_sec` to revert to pre-tuning behaviour. |
+`commit_lag_sec`/`live_window_sec` no longer exist. The chunk-once rebuild
+replaced them with `chunk_min_sec`/`chunk_soft_max_sec`/`chunk_force_cut_sec`
+(defaults `6.0`/`15.0`/`20.0`) in `dictation_settings.json` — see
+`ChunkPolicy` in `src/dictation/stream/segmenter.py`.
 
 > **Needs a real-audio check.** The streaming change is unit-test-proven lossless
 > on synthetic segments, but live dictation quality (word boundaries on fast/run-on
