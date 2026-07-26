@@ -30,8 +30,10 @@ from src.features.file_manager import (
     startup_cleanup,
     templates_dir,
 )
+from src.features import audit_log
 from src.features.report_manager import DOCX_AVAILABLE, export_to_word_bytes, format_plain_text_report
 from src.medical import macros
+from src.medical.critical_findings import format_findings_for_dialog, scan_for_critical_findings
 from src.medical.macros import reload_macros
 
 logger = logging.getLogger(__name__)
@@ -81,6 +83,10 @@ if tuple(PatientInfo.model_fields) != PATIENT_KEYS:
 class ReportRequest(BaseModel):
     text: str = ""
     patient: PatientInfo = Field(default_factory=PatientInfo)
+    #: None = the client has not yet been shown the critical-findings warning.
+    #: True = radiologist confirmed verbal communication; False = proceeded anyway.
+    #: Both outcomes are audited; only None is refused (see _gate_critical_findings).
+    acknowledged: Optional[bool] = None
 
 
 def _model_to_dict(model: BaseModel) -> dict:
@@ -1740,15 +1746,51 @@ HTML_TEMPLATE = r"""
             const endpoint = kind === 'word' ? '/api/report/export-word' : '/api/report/save-txt';
             const fallbackName = kind === 'word' ? 'radiology_report.docx' : 'radiology_report.txt';
 
+            const postReport = (url, acknowledged) => fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    text: editor.value,
+                    patient: collectPatientInfo(),
+                    acknowledged: acknowledged,
+                }),
+            });
+
+            // Returns the findings payload, or null if this 409 was something else.
+            const readCriticalFindings = async (response) => {
+                try {
+                    const body = await response.clone().json();
+                    const detail = body && body.detail;
+                    return (detail && detail.reason === 'critical_findings') ? detail : null;
+                } catch (err) {
+                    return null;
+                }
+            };
+
             try {
-                const response = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        text: editor.value,
-                        patient: collectPatientInfo(),
-                    }),
-                });
+                // acknowledged starts unset. The server refuses with 409 when the report
+                // carries a critical finding, we show it, and only then re-send with the
+                // radiologist's answer. Same warning the desktop app gives.
+                let acknowledged = null;
+                let response = await postReport(endpoint, acknowledged);
+
+                if (response.status === 409) {
+                    const info = await readCriticalFindings(response);
+                    if (info) {
+                        acknowledged = window.confirm(
+                            (info.worst_level === 1
+                                ? 'LIFE-THREATENING FINDING DETECTED\n\n'
+                                : 'URGENT FINDING DETECTED\n\n')
+                            + info.summary
+                            + '\nConfirm verbal communication with the referring clinician '
+                            + 'before releasing this report.\n\n'
+                            + 'OK = I have communicated this finding\n'
+                            + 'Cancel = proceed without acknowledging (recorded in the audit log)'
+                        );
+                        response = await postReport(endpoint, acknowledged);
+                    }
+                }
+
                 if (!response.ok) {
                     const errorText = await response.text();
                     let detail = 'Report download failed';
@@ -2123,8 +2165,47 @@ async def load_template(template_name: str):
     return {"name": path.name, "content": content}
 
 
+def _gate_critical_findings(payload: ReportRequest) -> None:
+    """Refuse to emit a report carrying a critical finding the radiologist hasn't seen.
+
+    Parity with the desktop front-end (ui/recording_session.py::check_critical_findings):
+    the report is never withheld, but the radiologist is always shown the finding and the
+    outcome is always audited. Enforced here rather than in the browser so a client that
+    forgets to ask cannot silently skip the warning.
+
+    Raises:
+        HTTPException: 409 with the findings when acknowledged is still None.
+    """
+    if not payload.text.strip():
+        return
+    try:
+        findings = scan_for_critical_findings(payload.text)
+    except Exception as exc:  # a scanner fault must not block a report
+        logger.warning("Critical findings scan failed: %s", exc)
+        return
+    if not findings:
+        return
+
+    patient_id = _model_to_dict(payload.patient).get("id", "")
+    if payload.acknowledged is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason": "critical_findings",
+                "summary": format_findings_for_dialog(findings),
+                "worst_level": min(f.level for f in findings),
+            },
+        )
+    if payload.acknowledged:
+        for f in findings:
+            audit_log.log_critical_finding_acknowledged(f.term, patient_id, f.level)
+    else:
+        audit_log.log_critical_finding_overridden("; ".join(f.term for f in findings), patient_id)
+
+
 @app.post("/api/report/save-txt")
 async def save_report_txt_endpoint(payload: ReportRequest):
+    _gate_critical_findings(payload)
     patient = _model_to_dict(payload.patient)
     content = format_plain_text_report(payload.text, patient)
     filename = _download_filename(patient, "txt")
@@ -2136,6 +2217,8 @@ async def save_report_txt_endpoint(payload: ReportRequest):
 async def export_word_endpoint(payload: ReportRequest):
     if not DOCX_AVAILABLE:
         raise HTTPException(status_code=503, detail="Word export is unavailable")
+
+    _gate_critical_findings(payload)
 
     patient = _model_to_dict(payload.patient)
     try:
