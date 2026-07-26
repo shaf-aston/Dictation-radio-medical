@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="__THEME__">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark light">
+    <title>Radio Dictate</title>
+    <link rel="icon" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="app">
+
+    <header class="bar">
+        <span class="mark" aria-hidden="true"><i class="fas fa-stethoscope"></i></span>
+        <span class="wordmark">Radio Dictate</span>
+
+        <div id="statusIndicator" class="status" aria-live="polite" aria-label="Status">
+            <span id="statusDot" class="dot" aria-hidden="true"></span>
+            <span id="statusText">Ready</span>
+        </div>
+
+        <div class="bar-actions">
+            <button id="copyBtn" class="btn btn-primary" type="button" title="Copy the report to the clipboard">
+                <i id="copyIcon" class="fas fa-copy" aria-hidden="true"></i>
+                <span id="copyText">Copy</span>
+            </button>
+
+            <div class="menu-wrap">
+                <button id="moreBtn" class="btn btn-icon" type="button"
+                        aria-haspopup="true" aria-expanded="false" aria-label="More actions">
+                    <span class="dots" aria-hidden="true"></span>
+                </button>
+                <div id="moreMenu" class="menu" role="menu" hidden>
+                    <button id="newReportBtn" type="button" role="menuitem">
+                        <i class="fas fa-file-circle-plus" aria-hidden="true"></i>
+                        <span>New report</span>
+                    </button>
+                    <button id="saveTxtBtn" type="button" role="menuitem">
+                        <i class="fas fa-file-arrow-down" aria-hidden="true"></i>
+                        <span>Save as text</span>
+                    </button>
+                    <button id="exportWordBtn" type="button" role="menuitem">
+                        <i class="fas fa-file-word" aria-hidden="true"></i>
+                        <span>Export to Word</span>
+                    </button>
+                    <hr>
+                    <button id="themeBtn" type="button" role="menuitem" aria-pressed="false">
+                        <i id="themeIcon" class="fas fa-moon" aria-hidden="true"></i>
+                        <span id="themeText">Dark</span>
+                    </button>
+                    <button id="clearBtn" type="button" role="menuitem" class="menu-danger">
+                        <i class="fas fa-trash" aria-hidden="true"></i>
+                        <span>Clear all text</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main">
+
+        <!-- The lit surface: the report is the film on the lightbox, and every
+             other control is the dim room around it. -->
+        <section class="stage" aria-label="Dictation">
+            <label for="editor" class="sr-only">Dictation content</label>
+            <textarea id="editor" class="editor" spellcheck="true"
+                      placeholder="Press the microphone and start speaking."></textarea>
+
+            <div class="stage-foot">
+                <button id="dictateBtn" class="rec" type="button"
+                        aria-label="Start or stop recording" aria-pressed="false">
+                    <i id="micIcon" class="fas fa-microphone" aria-hidden="true"></i>
+                </button>
+                <p class="hint"><kbd>Space</kbd> to record · <kbd>Ctrl</kbd>+<kbd>Z</kbd> to undo</p>
+            </div>
+        </section>
+
+        <!-- Everything below folds. What you leave open is what you get next time. -->
+        <div class="panels">
+
+            <details data-panel="patient" class="panel">
+                <summary>
+                    <span class="p-title">Patient details</span>
+                    <span class="p-note">included in exports</span>
+                </summary>
+                <div class="p-body">
+                    <div class="grid">
+                        <p class="field">
+                            <label for="patientName">Name</label>
+                            <input id="patientName" type="text" autocomplete="off">
+                        </p>
+                        <p class="field">
+                            <label for="patientId">Patient ID</label>
+                            <input id="patientId" type="text" autocomplete="off">
+                        </p>
+                        <p class="field">
+                            <label for="patientDob">Date of birth</label>
+                            <input id="patientDob" type="text" placeholder="dd/mm/yyyy" autocomplete="off">
+                        </p>
+                        <p class="field">
+                            <label for="patientStudyDate">Study date</label>
+                            <input id="patientStudyDate" type="text" autocomplete="off">
+                        </p>
+                        <p class="field">
+                            <label for="patientReferrer">Referring clinician</label>
+                            <input id="patientReferrer" type="text" autocomplete="off">
+                        </p>
+                        <p class="field">
+                            <label for="patientAccession">Accession number</label>
+                            <input id="patientAccession" type="text" autocomplete="off">
+                        </p>
+                    </div>
+                </div>
+            </details>
+
+            <details data-panel="phrases" class="panel">
+                <summary>
+                    <span class="p-title">Quick phrases</span>
+                    <span class="p-note">tap to insert at the cursor</span>
+                </summary>
+                <div class="p-body">
+                    <div class="p-toolbar">
+                        <p class="field field-inline">
+                            <label for="macroRegionSelect">Region</label>
+                            <select id="macroRegionSelect"></select>
+                        </p>
+                        <button id="reloadMacrosBtn" class="btn btn-quiet" type="button"
+                                title="Reload phrases from macros.json">
+                            <i class="fas fa-rotate-right" aria-hidden="true"></i>
+                            <span>Reload</span>
+                        </button>
+                    </div>
+                    <div id="macroButtons" class="chips" aria-live="polite"></div>
+                </div>
+            </details>
+
+            <details data-panel="template" class="panel">
+                <summary>
+                    <span class="p-title">Template</span>
+                    <span class="p-note">starter text for an exam type</span>
+                </summary>
+                <div class="p-body">
+                    <div class="p-toolbar">
+                        <p class="field field-inline field-grow">
+                            <label for="templateSelect">Report template</label>
+                            <select id="templateSelect"></select>
+                        </p>
+                        <button id="loadTemplateBtn" class="btn btn-quiet" type="button">
+                            <i class="fas fa-file-import" aria-hidden="true"></i>
+                            <span id="loadTemplateText">Load template</span>
+                        </button>
+                    </div>
+                </div>
+            </details>
+
+            <details data-panel="settings" class="panel">
+                <summary>
+                    <span class="p-title">Settings</span>
+                    <span id="settingsBadge" class="p-badge"></span>
+                </summary>
+                <div class="p-body">
+                    <div class="grid grid-tight">
+                        <p class="field">
+                            <label for="modelSelect">Model</label>
+                            <select id="modelSelect"></select>
+                        </p>
+                        <p class="field">
+                            <label for="languageInput">Language</label>
+                            <input id="languageInput" type="text" maxlength="8" placeholder="en">
+                        </p>
+                        <p class="field">
+                            <label for="accentSelect">Accent</label>
+                            <select id="accentSelect"></select>
+                        </p>
+                        <p class="field">
+                            <label for="cleanupSelect" title="How much the pipeline rewrites your dictated words">Cleanup</label>
+                            <select id="cleanupSelect"></select>
+                        </p>
+                    </div>
+                    <label class="check" for="vadCheckbox">
+                        <input id="vadCheckbox" type="checkbox">
+                        <span>Skip silence while recording</span>
+                    </label>
+                </div>
+            </details>
+
+        </div>
+    </main>
+</div>
+
+<script>__BOOTSTRAP_SCRIPT__</script>
+<script src="/static/app.js"></script>
+</body>
+</html>

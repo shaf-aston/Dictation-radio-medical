@@ -124,14 +124,16 @@ def test_root_renders_template_dropdown(monkeypatch) -> None:
             response = client.get("/")
 
         assert response.status_code == 200
+        # The select is populated by the page from the bootstrap payload, so
+        # what the server must get right is the data, not the markup.
         assert '<select id="templateSelect"' in response.text
-        assert 'value="beta.txt" selected' in response.text
-        assert "Load template" in response.text
+        assert '"templates":["alpha.txt","beta.txt"]' in response.text
+        assert '"selected_template":"beta.txt"' in response.text
     finally:
         _cleanup_template_dir(template_dir)
 
 
-def test_root_renders_workstation_controls_and_valid_js_patterns(monkeypatch) -> None:
+def test_root_renders_workstation_controls(monkeypatch) -> None:
     settings = DummySettings({"theme": "dark"})
     monkeypatch.setattr(web_app, "_settings", lambda: settings)
 
@@ -144,11 +146,39 @@ def test_root_renders_workstation_controls_and_valid_js_patterns(monkeypatch) ->
     assert 'id="macroRegionSelect"' in response.text
     assert 'id="saveTxtBtn"' in response.text
     assert 'id="exportWordBtn"' in response.text
-    assert r"/[\s\n]$/" in response.text
-    assert r"/\[([A-Z][A-Z0-9 _/-]{1,40})\]|\{\{([^}]{1,40})\}\}/g" in response.text
-    assert r"/filename\*=UTF-8''([^;]+)|filename=" in response.text
-    assert r"/[\\s\\n]$/" not in response.text
-    assert r"/\\[([A-Z]" not in response.text
+    assert 'id="editor"' in response.text
+    assert 'id="dictateBtn"' in response.text
+    # The shell links the front-end rather than carrying it inline.
+    assert '/static/app.css' in response.text
+    assert '/static/app.js' in response.text
+
+
+def test_script_regex_literals_are_not_double_escaped(monkeypatch) -> None:
+    # These were mangled once by living inside a Python r-string. The script is
+    # a real file now so the hazard is gone by construction, but the assertion
+    # is what proves it stayed gone.
+    with _client(monkeypatch) as client:
+        script = client.get("/static/app.js")
+
+    assert script.status_code == 200
+    assert script.headers["content-type"].startswith("text/javascript")
+    assert r"/[\s\n]$/" in script.text
+    assert r"/\[([A-Z][A-Z0-9 _/-]{1,40})\]|\{\{([^}]{1,40})\}\}/g" in script.text
+    assert r"/filename\*=UTF-8''([^;]+)|filename=" in script.text
+    assert r"/[\\s\\n]$/" not in script.text
+    assert r"/\\[([A-Z]" not in script.text
+
+
+def test_static_route_serves_only_the_bundled_front_end(monkeypatch) -> None:
+    # The name comes straight off the URL, so it is an allow-list, not a path.
+    with _client(monkeypatch) as client:
+        assert client.get("/static/app.css").status_code == 200
+        assert client.get("/static/favicon.svg").status_code == 200
+        # app.html is rendered at "/" with state injected; serving the raw
+        # shell with its placeholders unfilled would be a broken page.
+        assert client.get("/static/app.html").status_code == 404
+        assert client.get("/static/settings.json").status_code == 404
+        assert client.get("/static/..%2Fweb_app.py").status_code == 404
 
 
 def test_post_template_loads_content_and_persists_selection(monkeypatch) -> None:
