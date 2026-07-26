@@ -50,3 +50,10 @@ httpx>=0.24.0
 # REST transport. Model fine-tuning itself runs on Lightning AI using the
 # heavier deps listed in scripts/lightning/requirements_cloud.txt.
 keyring>=24.0
+
+# Evaluation harness (scripts/eval) — development-time only, not needed to run
+# the app. Only used to synthesise the `tts` gold set via the offline Windows
+# speech engine; the builder fails with an install hint if it is absent.
+# Accuracy metrics reuse rapidfuzz (above) rather than adding jiwer, since the
+# term-restricted and false-correction metrics need the raw alignment anyway.
+pyttsx3>=2.90

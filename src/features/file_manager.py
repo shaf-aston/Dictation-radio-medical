@@ -232,6 +232,53 @@ def analysis_dir() -> Path:
     path.mkdir(exist_ok=True)
     return path
 
+# ---------------------------------------------------------------------------
+# Dictation evaluation corpus (accuracy/speed measurement — local only)
+# ---------------------------------------------------------------------------
+
+def eval_dir() -> Path:
+    """Root for the dictation evaluation gold sets and their reports.
+
+    Not under :func:`cache_dir` on purpose: the ``own`` set is the user's own
+    voice recordings and the ``bench`` set is hand-corrected — neither is
+    rebuildable, so a ``clear_cache()`` must never take them. The ``libri`` and
+    ``tts`` subdirectories *are* regenerable via ``scripts/eval/build_sets.py``
+    and are safe to delete individually.
+
+    Lives under ``data/`` (gitignored), which is also what keeps the user's own
+    dictated audio out of version control.
+    """
+    path = _data_dir() / "eval"
+    path.mkdir(exist_ok=True)
+    return path
+
+def eval_set_dir(name: str) -> Path:
+    """Directory for one evaluation gold set (audio + ``manifest.jsonl``).
+
+    The name is sanitised because it reaches this function straight from a CLI
+    argument, and a set name must never be able to escape the eval directory.
+    """
+    safe = "".join(ch for ch in name if ch.isalnum() or ch in "-_")
+    if not safe:
+        raise ValueError(f"Invalid evaluation set name: {name!r}")
+    path = eval_dir() / safe
+    path.mkdir(exist_ok=True)
+    return path
+
+def eval_manifest_path(name: str) -> Path:
+    """JSONL manifest listing one gold set's clips and reference transcripts."""
+    return eval_set_dir(name) / "manifest.jsonl"
+
+def eval_reports_dir() -> Path:
+    """Evaluation report JSONs, one per run — the milestone-to-milestone record."""
+    path = eval_dir() / "reports"
+    path.mkdir(exist_ok=True)
+    return path
+
+def bench_audio_dir() -> Path:
+    """Pre-existing benchmark clips shipped in the working tree."""
+    return _data_dir() / "bench_audio"
+
 def dictation_edits_path() -> Path:
     """JSONL log of post-dictation edits (the 'was dictation wrong?' signal).
 

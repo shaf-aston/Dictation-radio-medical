@@ -1,0 +1,80 @@
+# Radiology report corpus for dictation evaluation.
+#
+# Purpose-written for this harness. Each block below is one report, separated
+# by a blank line; lines starting with '#' are ignored. The text is spoken by
+# an offline synthesiser (scripts/eval/build_sets.py) to produce the `tts` gold
+# set, and doubles as the reading script for the `own` set.
+#
+# Why written rather than sourced: public radiology corpora (Open-i, MIMIC-CXR)
+# carry non-commercial / no-derivatives terms or credentialed access, and none
+# of them guarantee coverage of THIS project's curated radiology_lexicon.txt.
+# These reports are written to hit that lexicon densely and on purpose, so the
+# medical-term error rate is measured against the exact vocabulary the
+# correction pipeline claims to protect.
+#
+# These are synthetic. They describe no real patient and must never be quoted
+# as clinical material.
+#
+# When adding a report: keep it 40-90 words (roughly 20-40 seconds spoken),
+# write it the way it would actually be dictated, and prefer terms that appear
+# in src/resources/radiology_lexicon.txt.
+
+Chest radiograph. The lungs are clear. There is no focal consolidation, pleural effusion, or pneumothorax. The cardiomediastinal silhouette is within normal limits. The hila are unremarkable in contour. No acute osseous abnormality is identified. Impression: no acute cardiopulmonary process.
+
+Chest radiograph, portable, semi-erect. There is a moderate left pleural effusion with associated basal atelectasis. The right lung is clear. No pneumothorax. The cardiac silhouette is enlarged. A right internal jugular central venous catheter terminates at the cavoatrial junction. Impression: moderate left pleural effusion with adjacent compressive atelectasis.
+
+Chest radiograph. Patchy airspace opacity is present in the right lower lobe, consistent with bronchopneumonia. No pleural effusion or pneumothorax. The cardiomediastinal contours are normal. The bony thorax is intact with no displaced rib fracture. Impression: right lower lobe pneumonia. Recommend clinical correlation and follow-up radiograph after treatment.
+
+Chest radiograph following trauma. There are minimally displaced fractures of the left fourth, fifth, and sixth ribs laterally. A small left apical pneumothorax is present. No large hemothorax. The clavicles and scapulae are intact. Impression: left rib fractures with small apical pneumothorax. Close observation advised given the risk of enlargement.
+
+Computed tomography of the chest with intravenous contrast. There is a spiculated nodule in the right upper lobe measuring fourteen millimetres. Mediastinal and hilar lymph nodes are not pathologically enlarged. No pleural effusion. Aortopulmonary window is clear. Mild centrilobular emphysema is noted in the upper zones. Impression: indeterminate right upper lobe pulmonary nodule. Tissue sampling is recommended.
+
+Computed tomography pulmonary angiogram. There is a filling defect within the right lower lobe segmental pulmonary artery, consistent with acute pulmonary embolism. No evidence of right heart strain. Small bilateral pleural effusions are present with dependent atelectasis. Impression: acute segmental pulmonary embolism on the right. Anticoagulation is recommended.
+
+High resolution computed tomography of the chest. There is subpleural reticulation with traction bronchiectasis and honeycombing in a basal and peripheral distribution. Findings are consistent with a usual interstitial pneumonia pattern of pulmonary fibrosis. No consolidation or effusion. Impression: usual interstitial pneumonia pattern. Multidisciplinary correlation is advised.
+
+Computed tomography of the chest. There is bilateral hilar lymphadenopathy with perilymphatic nodularity along the bronchovascular bundles. Appearances are suggestive of sarcoidosis. No cavitary lesion. No pleural effusion. Impression: bilateral hilar lymphadenopathy in a pattern favouring sarcoidosis. Correlation with serum angiotensin converting enzyme is suggested.
+
+Computed tomography of the abdomen and pelvis with contrast. The liver demonstrates a nodular contour consistent with cirrhosis. Splenomegaly is present. There is no ascites. A hypodense lesion in the right hepatic lobe measures nine millimetres and is too small to characterise. The pancreas is unremarkable with no peripancreatic fat stranding. Impression: cirrhotic morphology with portal hypertension.
+
+Computed tomography of the abdomen and pelvis. There is a dilated appendix measuring eleven millimetres with adjacent fat stranding and a small volume of free fluid. No extraluminal gas. The terminal ileum is normal. Impression: acute appendicitis. Surgical referral is recommended.
+
+Computed tomography of the abdomen. There is an obstructing calculus at the left vesicoureteric junction measuring five millimetres, with associated moderate left hydronephrosis and perinephric stranding. The right kidney is unremarkable. The bladder is decompressed. Impression: obstructing left distal ureteric calculus with moderate hydronephrosis.
+
+Computed tomography of the abdomen with contrast. There is circumferential wall thickening of the sigmoid colon with pericolonic fat stranding and multiple diverticula. No abscess or free perforation. Impression: acute sigmoid diverticulitis without complication. Recommend clinical management and interval follow-up.
+
+Computed tomography of the head without contrast. There is no acute intracranial haemorrhage, mass effect, or midline shift. The ventricles and sulci are normal in size for age. Grey white matter differentiation is preserved. No acute territorial infarct. The paranasal sinuses are clear. Impression: no acute intracranial abnormality.
+
+Computed tomography of the head following a fall. There is a small right frontal extra-axial collection with a lentiform configuration consistent with an acute epidural haematoma. There is associated mass effect with effacement of the adjacent sulci. A non-displaced right temporal bone fracture is present. Impression: acute epidural haematoma. Urgent neurosurgical referral.
+
+Magnetic resonance imaging of the brain. There are multiple ovoid T2 hyperintense lesions in a periventricular and juxtacortical distribution, several oriented perpendicular to the lateral ventricles. One lesion demonstrates enhancement following gadolinium. The pons and cerebellum are unremarkable. Impression: findings are consistent with demyelination, with one enhancing active lesion.
+
+Magnetic resonance imaging of the lumbar spine. There is a right paracentral disc herniation at L five S one causing compression of the traversing right S one nerve root. Facet arthropathy is present at the lower two levels. The conus medullaris terminates at L one and is normal in signal. There is no spinal canal stenosis at other levels. Impression: right L five S one disc herniation with S one nerve root compression.
+
+Magnetic resonance imaging of the cervical spine. There is a broad based disc osteophyte complex at C five C six causing moderate central canal stenosis with flattening of the ventral spinal cord. No intramedullary signal change to suggest myelomalacia. Bilateral foraminal narrowing is present at this level. Impression: moderate C five C six canal stenosis without cord signal abnormality.
+
+Magnetic resonance imaging of the right knee. There is a horizontal tear of the posterior horn of the medial meniscus extending to the inferior articular surface. The anterior cruciate ligament is intact. There is a moderate joint effusion. Grade two chondral thinning is present in the medial compartment. Bone marrow oedema is seen in the medial tibial plateau. Impression: medial meniscal tear with reactive marrow oedema.
+
+Magnetic resonance imaging of the left shoulder. There is a full thickness tear of the supraspinatus tendon with two centimetres of retraction. Mild fatty atrophy of the supraspinatus muscle belly is present. The subacromial subdeltoid bursa is distended. The long head of biceps tendon remains located. The glenoid labrum is intact. Impression: full thickness supraspinatus tear with early atrophy.
+
+Magnetic resonance imaging of the ankle. There is thickening and increased signal within the peroneal tendons at the level of the lateral malleolus, in keeping with tenosynovitis. The Achilles tendon is normal in calibre and signal. There is plantar fasciitis with thickening of the plantar fascia at its calcaneal insertion. No fracture. Impression: peroneal tenosynovitis and plantar fasciitis.
+
+Radiograph of the right wrist following injury. There is a transverse fracture through the distal radial metaphysis with dorsal angulation of the distal fragment. The distal radioulnar joint is congruent. The scaphoid and remaining carpal bones are intact. Impression: dorsally angulated distal radius fracture. Orthopaedic reduction is recommended.
+
+Radiograph of the left hip. There is an impacted subcapital femoral neck fracture with valgus angulation. The acetabulum is intact. There is superimposed osteoarthritis with joint space narrowing and marginal osteophytes. The pubic rami are intact. Impression: impacted left subcapital femoral neck fracture.
+
+Radiograph of the lumbar spine. There is a levoscoliosis of the lumbar spine with an apex at L three. Multilevel disc space narrowing and endplate sclerosis are present. Anterolisthesis of L four on L five is noted, measuring four millimetres. The spinous processes are intact. Impression: degenerative lumbar scoliosis with grade one anterolisthesis at L four L five.
+
+Ultrasound of the abdomen. The liver is diffusely hyperechoic with reduced through transmission, consistent with hepatic steatosis. The gallbladder contains multiple mobile echogenic foci with posterior acoustic shadowing, in keeping with cholelithiasis. There is no gallbladder wall thickening or pericholecystic fluid. The common bile duct measures four millimetres. Impression: hepatic steatosis and uncomplicated cholelithiasis.
+
+Ultrasound of the renal tract. Both kidneys are normal in size and cortical echogenicity. There is no hydronephrosis. A simple anechoic cortical cyst in the left kidney measures eighteen millimetres. The bladder is well distended with a normal wall thickness. Impression: simple left renal cyst. No obstructive uropathy.
+
+Doppler ultrasound of the lower limb veins. The common femoral, superficial femoral, and popliteal veins are fully compressible with normal phasic flow and augmentation. There is no intraluminal thrombus. The calf veins are patent. Impression: no evidence of deep venous thrombosis in the right lower limb.
+
+Mammogram, bilateral, with tomosynthesis. The breasts are heterogeneously dense, which may obscure small masses. There is a spiculated mass in the upper outer quadrant of the left breast measuring twelve millimetres, with associated pleomorphic microcalcifications. No axillary lymphadenopathy. The right breast is unremarkable. Impression: suspicious left breast mass. Ultrasound guided biopsy is recommended.
+
+Computed tomography angiogram of the neck. There is a short segment stenosis at the origin of the right internal carotid artery estimated at seventy percent by NASCET criteria, with calcified and soft plaque. The left internal carotid artery shows mild atheroma without significant stenosis. The vertebral arteries are patent. Impression: severe right internal carotid stenosis. Vascular surgical referral is advised.
+
+Computed tomography of the cervical spine following trauma. There is no acute fracture or malalignment. The prevertebral soft tissues are of normal thickness. The odontoid peg is intact and the atlantoaxial articulation is preserved. Degenerative change is noted at C five C six with anterior osteophytosis. Impression: no acute cervical spine injury.
+
+Fluoroscopic contrast swallow. There is a smooth tapered narrowing of the distal oesophagus with proximal dilatation and delayed emptying of barium into the stomach. No mucosal irregularity to suggest a stricture from malignancy. Impression: appearances are suggestive of achalasia. Manometry is recommended for confirmation.
