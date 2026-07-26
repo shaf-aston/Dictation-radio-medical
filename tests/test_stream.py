@@ -8,6 +8,8 @@ ever reaches real audio.
 
 from __future__ import annotations
 
+import pytest
+
 from src.dictation.stream.ledger import ChunkLedger
 from src.dictation.stream.segmenter import Chunk, ChunkPolicy, cut_chunks
 from src.dictation.stream.tail import LocalAgreement2, agreeing_prefix
@@ -195,3 +197,30 @@ class TestLocalAgreement2:
         la.update("some words here")
         la.reset()
         assert la.update("completely different") == ""
+
+
+class TestChunkPolicyValidation:
+    """The three lengths come from user-editable settings, so they are checked.
+
+    Before this guard, force_cut_sec=0 made cut_chunks() append zero-length
+    chunks forever — a hung recording thread, not a bad transcript.
+    """
+
+    def test_default_policy_is_accepted(self) -> None:
+        assert ChunkPolicy().force_cut_sec == 20.0
+
+    def test_zero_force_cut_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="chunk lengths"):
+            ChunkPolicy(min_sec=6.0, soft_max_sec=15.0, force_cut_sec=0.0)
+
+    def test_min_longer_than_force_cut_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="chunk lengths"):
+            ChunkPolicy(min_sec=30.0, soft_max_sec=15.0, force_cut_sec=20.0)
+
+    def test_zero_min_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="chunk lengths"):
+            ChunkPolicy(min_sec=0.0, soft_max_sec=15.0, force_cut_sec=20.0)
+
+    def test_equal_lengths_are_allowed(self) -> None:
+        # Degenerate but coherent: cut at exactly one length, always.
+        assert ChunkPolicy(min_sec=10.0, soft_max_sec=10.0, force_cut_sec=10.0).min_sec == 10.0

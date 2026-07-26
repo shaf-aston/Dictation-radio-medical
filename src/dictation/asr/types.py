@@ -24,10 +24,6 @@ class Word:
     end: float
     confidence: float  # 0..1, e.g. faster-whisper's exp(Word.probability)
 
-    def as_dict(self) -> dict:
-        return {"text": self.text, "start": self.start, "end": self.end,
-                "confidence": self.confidence}
-
 
 @dataclass(frozen=True)
 class AsrSegment:
@@ -51,11 +47,6 @@ class AsrSegment:
             return None
         return sum(w.confidence for w in self.words) / len(self.words)
 
-    def as_dict(self) -> dict:
-        """Legacy shape (``start``/``end``/``text``) used by the pre-port
-        window/commit code — a bridge, not the long-term contract."""
-        return {"start": self.start, "end": self.end, "text": self.text}
-
 
 @dataclass(frozen=True)
 class AsrResult:
@@ -63,9 +54,6 @@ class AsrResult:
 
     text: str
     segments: Tuple[AsrSegment, ...] = ()
-
-    def segments_as_dicts(self) -> List[dict]:
-        return [s.as_dict() for s in self.segments]
 
 
 @dataclass(frozen=True)

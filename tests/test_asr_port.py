@@ -22,7 +22,6 @@ install_test_runtime_stubs()
 
 import src.dictation.transcriber as transcriber_mod  # noqa: E402
 from src.dictation.asr import (  # noqa: E402
-    AsrResult,
     AsrSegment,
     TranscribeContext,
     Word,
@@ -49,22 +48,6 @@ class TestAsrSegmentConfidence:
         # Distinct from 0.0/1.0 — "unknown", not "certain" or "worthless".
         seg = AsrSegment(text="ok", start=0.0, end=1.0)
         assert seg.confidence is None
-
-    def test_as_dict_matches_legacy_shape(self):
-        seg = AsrSegment(text="hi", start=1.0, end=2.0)
-        assert seg.as_dict() == {"start": 1.0, "end": 2.0, "text": "hi"}
-
-
-class TestAsrResult:
-    def test_segments_as_dicts(self):
-        result = AsrResult(text="hi there", segments=(
-            AsrSegment(text="hi", start=0.0, end=0.5),
-            AsrSegment(text="there", start=0.5, end=1.0),
-        ))
-        assert result.segments_as_dicts() == [
-            {"start": 0.0, "end": 0.5, "text": "hi"},
-            {"start": 0.5, "end": 1.0, "text": "there"},
-        ]
 
 
 # ---------------------------------------------------------------------------

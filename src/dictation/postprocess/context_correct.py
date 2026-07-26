@@ -185,6 +185,7 @@ def _apply_context_correction(text: str) -> str:
         entry = sets.set_for(spoken)
         if entry is None:
             continue
+        priors = entry["prior"]
         left = lowers[i - 1] if i > 0 else None
         right = lowers[i + 1] if i + 1 < len(lowers) else None
 
@@ -215,7 +216,7 @@ def _apply_context_correction(text: str) -> str:
         if spoken in cued:
             continue  # the spoken word is itself supported — never touch it
 
-        spoken_prior = entry["prior"].get(spoken, 0.0)
+        spoken_prior = priors.get(spoken, 0.0)
         candidates = cued - {spoken}
         if not candidates:
             if spoken_prior > _NEVER_CORRECT_PRIOR:
@@ -227,7 +228,7 @@ def _apply_context_correction(text: str) -> str:
         # if it was cued), so it can only push a switch that the guards already
         # deemed trustworthy — it never flips a self-supported word.
         def _score(m: str) -> float:
-            s = ctx.score(left, m, right) + entry["prior"].get(m, 0.0)
+            s = ctx.score(left, m, right) + priors.get(m, 0.0)
             return s + _CUE_BONUS if m in cued else s
 
         best_word = max(candidates, key=_score)

@@ -58,7 +58,9 @@ ruff check src tests               # lint
 ```
 src/
 ├── core/                settings.py · logging_setup.py
-├── dictation/           audio.py · transcriber.py · text_diff.py · worker.py
+├── dictation/           audio.py · transcriber.py · worker.py
+│   ├── asr/             swappable speech engines behind one AsrEngine port
+│   ├── stream/          vad.py · segmenter.py · ledger.py · tail.py (decode each chunk once)
 │   ├── postprocess/     pipeline.py · hallucinations.py · voice_commands.py · text_utils.py
 │   │                    measurements.py · terminology.py · medical_dict_match.py · analysis.py
 │   └── resources/       radiology_prompt.txt

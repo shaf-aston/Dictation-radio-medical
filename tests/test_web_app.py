@@ -330,3 +330,88 @@ def test_transcribe_rejects_oversized_file(monkeypatch) -> None:
         )
 
     assert response.status_code == 413
+
+
+# ---------------------------------------------------------------------------
+# Critical-findings gate
+#
+# The clinical safety rule: a report naming an urgent finding is never withheld,
+# but the radiologist must have been shown it, and the outcome is always audited.
+# Enforced server-side so a browser that forgets to ask cannot skip the warning.
+# ---------------------------------------------------------------------------
+
+_URGENT_TEXT = "Findings: Large right pneumothorax with mediastinal shift."
+
+
+def _save_txt(client, text: str, acknowledged=None):
+    body: dict = {"text": text, "patient": {"id": "P1"}}
+    if acknowledged is not None:
+        body["acknowledged"] = acknowledged
+    return client.post("/api/report/save-txt", json=body)
+
+
+def test_urgent_finding_is_refused_until_the_radiologist_has_seen_it(monkeypatch) -> None:
+    with _client(monkeypatch) as client:
+        response = _save_txt(client, _URGENT_TEXT)
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["reason"] == "critical_findings"
+    assert "pneumothorax" in detail["summary"].lower()
+
+
+def test_acknowledged_urgent_finding_saves_and_is_audited(monkeypatch) -> None:
+    logged: list[tuple] = []
+    monkeypatch.setattr(
+        web_app.audit_log, "log_critical_finding_acknowledged",
+        lambda term, patient_id, level: logged.append((term, patient_id, level)),
+    )
+    with _client(monkeypatch) as client:
+        response = _save_txt(client, _URGENT_TEXT, acknowledged=True)
+
+    assert response.status_code == 200
+    assert "pneumothorax" in response.text.lower()
+    assert [t[0] for t in logged] == ["pneumothorax"]
+    assert logged[0][1] == "P1"
+
+
+def test_overridden_urgent_finding_saves_and_is_audited_separately(monkeypatch) -> None:
+    # Proceeding anyway is allowed — the report is never withheld — but it is
+    # recorded as an override, not as an acknowledgement.
+    overrides: list[tuple] = []
+    acknowledged: list[tuple] = []
+    monkeypatch.setattr(
+        web_app.audit_log, "log_critical_finding_overridden",
+        lambda terms, patient_id: overrides.append((terms, patient_id)),
+    )
+    monkeypatch.setattr(
+        web_app.audit_log, "log_critical_finding_acknowledged",
+        lambda term, patient_id, level: acknowledged.append((term, patient_id, level)),
+    )
+    with _client(monkeypatch) as client:
+        response = _save_txt(client, _URGENT_TEXT, acknowledged=False)
+
+    assert response.status_code == 200
+    assert len(overrides) == 1 and "pneumothorax" in overrides[0][0]
+    assert acknowledged == []
+
+
+def test_report_without_an_urgent_finding_is_not_gated(monkeypatch) -> None:
+    # The gate must not block ordinary reports, or every export would stall.
+    with _client(monkeypatch) as client:
+        response = _save_txt(client, "Findings: No acute cardiopulmonary process.")
+
+    assert response.status_code == 200
+
+
+def test_a_scanner_fault_never_blocks_a_report(monkeypatch) -> None:
+    # Fail open here on purpose: a crashing scanner must not stop a radiologist
+    # sending a report. The failure is logged, not swallowed silently.
+    def _boom(_text):
+        raise RuntimeError("scanner exploded")
+
+    monkeypatch.setattr(web_app, "scan_for_critical_findings", _boom)
+    with _client(monkeypatch) as client:
+        response = _save_txt(client, _URGENT_TEXT)
+
+    assert response.status_code == 200

@@ -20,7 +20,7 @@ from src.dictation.postprocess import (  # noqa: E402
     postprocess_transcript,
     postprocess_transcript_with_changes,
 )
-from src.dictation.worker import LiveTranscribeWorker, _RADIOLOGY_INITIAL_PROMPT  # noqa: E402
+from src.dictation.worker import RADIOLOGY_PROMPT, LiveTranscribeWorker  # noqa: E402
 
 
 def make_worker() -> LiveTranscribeWorker:
@@ -37,7 +37,7 @@ class TestContextPrompt:
         worker = make_worker()
         monkeypatch.setattr(transcribe_worker, "get_custom_prompt_suffix", lambda: "")
 
-        assert worker._build_context_prompt() == _RADIOLOGY_INITIAL_PROMPT
+        assert worker._build_context_prompt() == RADIOLOGY_PROMPT
 
     def test_appends_custom_terms_but_not_committed_text(self, monkeypatch) -> None:
         # Committed text intentionally must NOT appear in the prompt — when it
@@ -53,7 +53,7 @@ class TestContextPrompt:
 
         prompt = worker._build_context_prompt()
 
-        assert prompt.startswith(_RADIOLOGY_INITIAL_PROMPT)
+        assert prompt.startswith(RADIOLOGY_PROMPT)
         assert prompt.endswith("custom terms")
         assert "word0" not in prompt
         assert "word199" not in prompt
@@ -137,3 +137,139 @@ class TestPostProcessingPipeline:
         assert changes == []
         assert "tear" in processed
         assert "tier" not in processed
+
+
+# ---------------------------------------------------------------------------
+# Confidence-targeted polish
+#
+# This runs once, after recording stops. It replaced the old full re-transcribe,
+# so it is the only thing standing between a shaky live guess and the report the
+# radiologist signs. Two rules matter: spend the re-decode only where confidence
+# was low, and never leave the last words of a dictation undecoded.
+# ---------------------------------------------------------------------------
+
+import numpy as np  # noqa: E402
+
+from src.dictation.asr import AsrResult, AsrSegment, Word  # noqa: E402
+from src.dictation.stream.ledger import ChunkLedger  # noqa: E402
+from src.dictation.stream.segmenter import Chunk  # noqa: E402
+
+SR = 16000
+
+
+def _result(text: str, confidence: float) -> AsrResult:
+    """One-segment result whose mean word confidence is exactly *confidence*."""
+    word = Word(text=text, start=0.0, end=1.0, confidence=confidence)
+    return AsrResult(text=text, segments=(AsrSegment(text, 0.0, 1.0, (word,)),))
+
+
+class _RecordingEngine:
+    """Returns queued results and remembers every clip length it was given."""
+
+    def __init__(self, results):
+        self._results = list(results)
+        self.clip_lengths = []
+
+    def transcribe(self, audio, ctx):
+        self.clip_lengths.append(len(audio))
+        return self._results.pop(0)
+
+
+class _Recorder:
+    def __init__(self):
+        self.calls = []
+
+    def emit(self, *args):
+        self.calls.append(args)
+
+
+def _polish_worker(monkeypatch, ledger, engine):
+    monkeypatch.setattr(transcribe_worker, "get_custom_prompt_suffix", lambda: "")
+    worker = object.__new__(LiveTranscribeWorker)
+    worker.language = "en"
+    worker.vad_enabled = True
+    worker.pause_threshold = 2.5
+    worker.silence_rms_floor = 0.002
+    worker._ledger = ledger
+    worker._decode_sec_total = 0.0
+    worker._last_emitted = ""
+    worker.partial = _Recorder()
+    worker.segments = _Recorder()
+    return worker
+
+
+class TestConfidenceTargetedPolish:
+    def test_only_the_unsure_chunk_is_redecoded(self, monkeypatch) -> None:
+        # The whole point of the gate: a chunk the model was sure about must
+        # not be spent on again, and its text must survive untouched.
+        ledger = ChunkLedger()
+        ledger.commit(Chunk(0, SR, closed=True), "sure text", 0.95)
+        ledger.commit(Chunk(SR, 2 * SR, closed=True), "shaky text", 0.40)
+        engine = _RecordingEngine([_result("repaired text", 0.9)])
+        worker = _polish_worker(monkeypatch, ledger, engine)
+        audio = np.zeros(2 * SR, dtype=np.float32)  # silent tail -> no tail decode
+
+        worker._run_confidence_targeted_polish(engine, audio, SR)
+
+        texts = [c.text for c in ledger.committed]
+        assert texts == ["sure text", "repaired text"]
+        assert engine.clip_lengths == [SR]  # exactly one re-decode, the shaky chunk
+
+    def test_audio_left_open_when_recording_stopped_still_gets_decoded(self, monkeypatch) -> None:
+        # Without this the final second or two of every dictation would be lost:
+        # it never closed into a chunk, so the live pass never froze it.
+        ledger = ChunkLedger()
+        ledger.commit(Chunk(0, SR, closed=True), "first part", 0.95)
+        engine = _RecordingEngine([_result("last words", 0.9)])
+        worker = _polish_worker(monkeypatch, ledger, engine)
+        audio = np.concatenate([
+            np.zeros(SR, dtype=np.float32),
+            np.full(SR, 0.2, dtype=np.float32),  # loud enough to beat the floor
+        ])
+
+        worker._run_confidence_targeted_polish(engine, audio, SR)
+
+        assert [c.text for c in ledger.committed] == ["first part", "last words"]
+        assert ledger.open_start_sample == 2 * SR
+
+    def test_a_silent_open_tail_is_not_decoded(self, monkeypatch) -> None:
+        ledger = ChunkLedger()
+        ledger.commit(Chunk(0, SR, closed=True), "first part", 0.95)
+        engine = _RecordingEngine([])
+        worker = _polish_worker(monkeypatch, ledger, engine)
+        audio = np.zeros(2 * SR, dtype=np.float32)
+
+        worker._run_confidence_targeted_polish(engine, audio, SR)
+
+        assert engine.clip_lengths == []
+        assert [c.text for c in ledger.committed] == ["first part"]
+
+    def test_a_failed_redecode_keeps_the_original_text(self, monkeypatch) -> None:
+        # A crashing engine on the polish pass must not blank a chunk the
+        # radiologist already has on screen.
+        class _BrokenEngine:
+            def transcribe(self, audio, ctx):
+                raise RuntimeError("engine died")
+
+        ledger = ChunkLedger()
+        ledger.commit(Chunk(0, SR, closed=True), "shaky text", 0.40)
+        worker = _polish_worker(monkeypatch, ledger, _BrokenEngine())
+        audio = np.zeros(SR, dtype=np.float32)
+
+        worker._run_confidence_targeted_polish(_BrokenEngine(), audio, SR)
+
+        assert [c.text for c in ledger.committed] == ["shaky text"]
+
+    def test_a_chunk_with_no_confidence_signal_is_left_alone(self, monkeypatch) -> None:
+        # mean_confidence None means "this engine gave no word timestamps", not
+        # "the model was unsure" — re-decoding on that would defeat the gate.
+        ledger = ChunkLedger()
+        ledger.commit(Chunk(0, SR, closed=True), "unknown confidence", None)
+        engine = _RecordingEngine([])
+        worker = _polish_worker(monkeypatch, ledger, engine)
+        audio = np.zeros(SR, dtype=np.float32)
+
+        worker._run_confidence_targeted_polish(engine, audio, SR)
+
+        assert engine.clip_lengths == []
+        assert [c.text for c in ledger.committed] == ["unknown confidence"]

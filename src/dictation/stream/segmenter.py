@@ -31,6 +31,22 @@ class ChunkPolicy:
     soft_max_sec: float = 15.0    # prefer cutting by here if a pause is available
     force_cut_sec: float = 20.0   # hard ceiling — cut here even mid-speech
 
+    def __post_init__(self) -> None:
+        """Reject lengths that are out of order or not positive.
+
+        These three come straight from user-editable settings, so they are
+        checked here rather than trusted. Out-of-order values break the
+        "never shorter than min_sec" promise below, and a force_cut_sec of 0
+        makes cut_chunks() loop forever on a zero-length chunk. Raising at
+        record-start with a readable message beats a hung recording.
+        """
+        if not 0 < self.min_sec <= self.soft_max_sec <= self.force_cut_sec:
+            raise ValueError(
+                "chunk lengths must be 0 < min_sec <= soft_max_sec <= force_cut_sec, "
+                f"got min={self.min_sec} soft_max={self.soft_max_sec} "
+                f"force_cut={self.force_cut_sec}"
+            )
+
 
 @dataclass(frozen=True)
 class Chunk:

@@ -4,7 +4,7 @@ Lazy-loads `faster-whisper` on first transcribe() to keep startup instant.
 Model instances are shared process-wide per (model, device, compute_type) —
 which is what makes startup warmup (src/dictation/warmup.py) effective for the
 recording worker.
-Applies a domain-specific initial prompt (`_RADIOLOGY_INITIAL_PROMPT`, loaded
+Applies a domain-specific initial prompt (`RADIOLOGY_PROMPT`, loaded
 from src/dictation/resources/radiology_prompt.txt) to prime the model's
 vocabulary and filters per-segment hallucinations before returning text.
 """
@@ -36,8 +36,10 @@ def _load_radiology_prompt() -> str:
 
 
 # Built once at import. The file is tiny (~3KB) so the I/O is negligible, and
-# downstream callers (workers/, tests/) treat this as a plain string constant.
-_RADIOLOGY_INITIAL_PROMPT = _load_radiology_prompt()
+# downstream callers treat this as a plain string constant. It is the same
+# radiology vocabulary for every engine, so it is re-exported from
+# src/dictation/asr/ — code outside asr/ imports it from there, never from here.
+RADIOLOGY_PROMPT = _load_radiology_prompt()
 
 # Supported model sizes in order of speed (fastest first).
 SUPPORTED_MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
@@ -213,7 +215,7 @@ class Transcriber:
 
         # Choose prompt
         if initial_prompt is None:
-            prompt = _RADIOLOGY_INITIAL_PROMPT if self.use_msk_prompt else None
+            prompt = RADIOLOGY_PROMPT if self.use_msk_prompt else None
         else:
             prompt = initial_prompt or None  # empty string → no prompt
 

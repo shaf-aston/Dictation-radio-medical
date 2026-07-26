@@ -42,12 +42,17 @@ import soundfile as sf
 from PySide6.QtCore import QObject, Signal
 
 from src.core import perf
-from src.dictation.asr import AsrEngine, AsrResult, TranscribeContext, create_engine
+from src.dictation.asr import (
+    RADIOLOGY_PROMPT,
+    AsrEngine,
+    AsrResult,
+    TranscribeContext,
+    create_engine,
+)
 from src.dictation.stream.ledger import ChunkLedger
 from src.dictation.stream.segmenter import Chunk, ChunkPolicy
 from src.dictation.stream.tail import LocalAgreement2
 from src.dictation.stream.vad import detect_speech
-from src.dictation.transcriber import _RADIOLOGY_INITIAL_PROMPT
 from src.features.adaptive_learning import get_custom_prompt_suffix
 
 logger = logging.getLogger(__name__)
@@ -479,9 +484,9 @@ class LiveTranscribeWorker(QObject):
         boundary-dedup step to lean on instead; the prompt just stays fixed.
         """
         if custom_terms := get_custom_prompt_suffix():
-            return f"{_RADIOLOGY_INITIAL_PROMPT} {custom_terms}"
+            return f"{RADIOLOGY_PROMPT} {custom_terms}"
         else:
-            return _RADIOLOGY_INITIAL_PROMPT
+            return RADIOLOGY_PROMPT
 
 
 def _mean_confidence(result: AsrResult) -> Optional[float]:
