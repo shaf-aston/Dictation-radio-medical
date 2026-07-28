@@ -78,7 +78,9 @@ QLineEdit {
 }
 QLineEdit:focus { border-color: {{glow}}; }
 
-QLabel { color: {{textDim}}; }
+/* Transparent: a label sitting on the top bar or a panel took the window's
+   own background and showed as a darker box behind its own words. */
+QLabel { color: {{textDim}}; background-color: transparent; }
 
 QStatusBar {
     background-color: {{room2}};
@@ -112,11 +114,37 @@ QToolButton#fold_header {
 }
 QToolButton#fold_header:hover { color: {{text}}; }
 
-QFrame#patient_panel, QFrame#macros_panel {
+QFrame#patient_panel, QFrame#macros_panel, QFrame#panel_body {
     background-color: {{room2}};
     border: 1px solid {{edge}};
     border-radius: 4px;
 }
+
+QFrame#top_bar {
+    background-color: {{room2}};
+    border: 1px solid {{edge}};
+    border-radius: 4px;
+}
+
+/* What the dictation is doing right now, sat beside the record buttons — the
+   one place the radiologist is already looking. The `state` property carries
+   the value, exactly like the mic meter below, so the colours stay in here. */
+QLabel#state_pill {
+    background-color: {{room}};
+    color: {{textDim}};
+    border: 1px solid {{edge}};
+    border-radius: 10px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    min-height: 16px;
+}
+QLabel#state_pill[state="busy"] { color: {{glow}}; border-color: {{glow}}; }
+QLabel#state_pill[state="rec"]  { color: {{film}}; background-color: {{rec}}; border-color: {{rec}}; }
+QLabel#state_pill[state="warn"] { color: {{warn}}; border-color: {{warn}}; }
+QLabel#state_pill[state="ok"]   { color: {{ok}}; border-color: {{ok}}; }
+
+QLabel#elapsed { font-size: 11px; }
 
 QScrollArea { background-color: transparent; border: none; }
 QScrollBar:vertical { background-color: {{room}}; width: 8px; }

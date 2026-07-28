@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThread, QTimer
@@ -123,7 +124,9 @@ def on_start_recording(window: MainWindow) -> None:
     window._corrections_pending = []
     window._corrections_seen = set()
     window._level_timer.start()
-    window._show_status("Recording...")
+    window._record_started = time.monotonic()
+    window._status.last_progress = ("Recording...", "rec")
+    window._show_status("Recording...", state="rec")
 
     # Remember where dictation text starts so we can replace it each cycle.
     # A cursor, not an integer: Qt shifts it when text is inserted before it,
@@ -215,7 +218,8 @@ def on_stop_recording(window: MainWindow) -> None:
         # Record stays disabled through the final pass — see
         # on_transcription_finished — and is re-enabled by _complete_finish.
         window.btn_stop.setEnabled(False)
-        window._show_status("Processing final pass...")
+        window._status.last_progress = ("Processing final pass...", "busy")
+        window._show_status("Processing final pass...", state="busy")
     if window.live_worker is not None:
         window.live_worker.finalize()
 
@@ -269,7 +273,7 @@ def on_processed_text(
         with perf.stage("ui.apply_partial"):
             _replace_dictation_region(window, processed)
         if seq != window._final_seq:
-            window._show_status("Receiving...", 800)
+            window._show_status("Receiving...", 800, state="rec")
 
     # The authoritative full-document pass has landed — the text on screen is
     # now the finished report, so the rest of the shutdown can run.
@@ -339,7 +343,7 @@ def _apply_finished_ai_cleanup(window: MainWindow) -> None:
         return
     try:
         from src.dictation.postprocess.llm_cleanup import clean_with_llm
-        window._show_status("AI cleanup...")
+        window._show_status("AI cleanup...", state="busy")
         cleaned, _ = clean_with_llm(text)
     except Exception as exc:
         logger.debug("Finished AI cleanup skipped: %s", exc)
@@ -380,7 +384,8 @@ def on_transcription_finished(window: MainWindow) -> None:
         _complete_finish(window)
         return
 
-    window._show_status("Finalising report...")
+    window._status.last_progress = ("Finalising report...", "busy")
+    window._show_status("Finalising report...", state="busy")
     window._partial_seq += 1
     window._final_seq = window._partial_seq
     window.pp_worker.submit(
@@ -410,7 +415,7 @@ def _complete_finish(window: MainWindow) -> None:
     # seconds, and a recording started underneath it would be overwritten.
     _apply_finished_ai_cleanup(window)
     window.btn_record.setEnabled(True)
-    window._show_status("Ready")
+    window._show_status("Ready", state="idle")
     # Snapshot the dictation output so any later manual edit can be diffed
     # against it (the "was dictation itself wrong?" signal). Flushed to the
     # edit log when the report is committed (export / clear / close).
@@ -449,7 +454,7 @@ def check_accent_suggestion(window: MainWindow) -> None:
     suggested = suggest_accent(text)
     if suggested and suggested != current_accent:
         label = ACCENT_LABELS.get(suggested, suggested)
-        window._show_status(f"Tip: Consider '{label}' accent profile", 5000)
+        window._show_status(f"Tip: Consider '{label}' accent profile", 5000, state="idle")
         logger.info("Accent suggestion: %s based on text patterns", suggested)
 
 
@@ -462,7 +467,7 @@ def show_corrections_banner(window: MainWindow) -> None:
     examples = ", ".join(window._corrections_pending[:3])
     suffix = f" (and {n - 3} more)" if n > 3 else ""
 
-    window._show_status(f"Applied {n} correction(s): {examples}{suffix}", 8000)
+    window._show_status(f"Applied {n} correction(s): {examples}{suffix}", 8000, state="ok")
     window._corrections_pending = []
     window._corrections_seen = set()
 
@@ -523,9 +528,13 @@ def update_level_display(window: MainWindow) -> None:
     level = window.recorder.current_level
     clipping = window.recorder.is_clipping
     window._level_bar.setValue(int(level * 100))
+    # How long this dictation has run. Free: this timer already ticks at 10 Hz
+    # while recording, and stops with it.
+    seconds = int(time.monotonic() - getattr(window, "_record_started", time.monotonic()))
+    window._elapsed_label.setText(f"{seconds // 60}:{seconds % 60:02d}")
     if clipping:
         set_level_state(window._level_bar, "clipping")
-        window._show_status("Microphone clipping — reduce input gain", 1500)
+        window._show_status("Microphone clipping — reduce input gain", 1500, state="warn")
     elif level < 0.03:
         set_level_state(window._level_bar, "low")
     else:

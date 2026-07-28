@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import (
     QWidget, QTextEdit, QPushButton, QVBoxLayout, QHBoxLayout, QComboBox,
     QLabel, QLineEdit, QCheckBox, QFrame, QScrollArea, QSplitter,
-    QSizePolicy, QMenu, QProgressBar, QToolButton,
+    QSizePolicy, QMenu, QProgressBar,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QAction, QKeySequence
@@ -19,7 +19,8 @@ from src.dictation.postprocess import CLEANUP_LEVEL_LABELS
 from src.features.accent_corrections import ACCENT_LABELS
 from src.medical import macros
 from src.features.file_manager import templates_dir
-from src.ui.styles import set_level_state
+from src.ui.collapsible import Section
+from src.ui.styles import set_level_state, set_status_state
 from src.features.report_manager import DOCX_AVAILABLE
 from src.ui.recording_session import on_start_recording, on_stop_recording
 from src.ui.dialogs import (
@@ -33,16 +34,22 @@ if TYPE_CHECKING:
 
 
 def build_ui(window: MainWindow) -> None:
-    """Construct the main window layout."""
+    """Construct the main window layout.
+
+    One surface, the same shape as the web app (docs/ui-decisions.md): a single
+    thin bar of the controls used while dictating, the editor taking the rest of
+    the window, and everything else folded into three sections underneath.
+    """
     central = QWidget()
     window.setCentralWidget(central)
     root_layout = QVBoxLayout(central)
     root_layout.setContentsMargins(6, 6, 6, 6)
     root_layout.setSpacing(4)
 
-    # Dictate first: the editor and the record button own the top of the window,
-    # and patient details fold away underneath. Matches the web app — see
-    # docs/ui-decisions.md.
+    # 1. The only permanently visible controls.
+    root_layout.addWidget(build_top_bar(window))
+
+    # 2. The editor, dominant, with the quick phrases beside it.
     window.splitter = QSplitter(Qt.Orientation.Horizontal)
     window.macros_panel = build_macros_panel(window)
     window.splitter.addWidget(window.macros_panel)
@@ -51,13 +58,8 @@ def build_ui(window: MainWindow) -> None:
     window.splitter.setStretchFactor(1, 1)
     root_layout.addWidget(window.splitter, stretch=1)
 
-    # Recording / action toolbar
-    root_layout.addWidget(build_recording_bar(window))
-
-    # Patient info, folded below with a header you can click. The View menu
-    # keeps its Ctrl+P toggle; both drive the same saved setting.
-    window.patient_panel = build_patient_panel(window)
-    root_layout.addWidget(build_patient_section(window))
+    # 3. Template / Patient / Settings, folded away until wanted.
+    root_layout.addWidget(build_panels(window))
 
     # Status bar
     window._status_label = QLabel("Ready")
@@ -69,43 +71,38 @@ def build_ui(window: MainWindow) -> None:
     status_bar.addPermanentWidget(window._autosave_label)
 
 
-def build_patient_section(window: MainWindow) -> QWidget:
-    """Wrap the patient panel in a clickable fold header.
+def build_panels(window: MainWindow) -> QWidget:
+    """Stack the three secondary panels, each in the same folding section.
 
-    Hiding these fields used to be reachable only from the View menu, so nobody
-    who had not read the menu knew it was possible. The header does the same
-    thing in place, and ``window.patient_toggle`` lets MainWindow keep the arrow
-    in step when the menu action or the saved setting drives the change instead.
+    One mechanism for all three (``ui/collapsible.Section``), so they fold and
+    look identically and a fourth panel costs three lines. Template is open by
+    default because it is the one reached for at the start of every report; the
+    patient section's state is restored from the saved setting by MainWindow,
+    and the View menu's Ctrl+P still drives the same state.
     """
-    section = QWidget()
-    layout = QVBoxLayout(section)
+    holder = QWidget()
+    layout = QVBoxLayout(holder)
     layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(0)
+    layout.setSpacing(2)
 
-    toggle = QToolButton()
-    toggle.setObjectName("fold_header")
-    toggle.setText("Patient details")
-    toggle.setCheckable(True)
-    toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-    toggle.setArrowType(Qt.ArrowType.DownArrow)
-    toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-    toggle.setToolTip("Show or hide the patient fields (Ctrl+P)")
-    toggle.clicked.connect(window.on_toggle_patient_panel)
+    window.template_section = Section("Template and text size", build_template_panel(window), True)
+    window.patient_panel = build_patient_panel(window)
+    window.patient_section = Section("Patient details", window.patient_panel)
+    window.patient_section.header.setToolTip("Show or hide the patient fields (Ctrl+P)")
+    window.settings_section = Section("Dictation settings", build_settings_panel(window))
 
-    window.patient_toggle = toggle
-    layout.addWidget(toggle)
-    layout.addWidget(window.patient_panel)
-    return section
+    for section in (window.template_section, window.patient_section, window.settings_section):
+        layout.addWidget(section)
+    return holder
 
 
 def build_patient_panel(window: MainWindow) -> QFrame:
     """Build the patient information entry panel."""
     frame = QFrame()
     frame.setObjectName("patient_panel")
-    frame.setFixedHeight(68)
     layout = QVBoxLayout(frame)
-    layout.setContentsMargins(8, 4, 8, 4)
-    layout.setSpacing(3)
+    layout.setContentsMargins(8, 6, 8, 6)
+    layout.setSpacing(4)
 
     row1 = QHBoxLayout()
     row2 = QHBoxLayout()
@@ -180,43 +177,115 @@ def build_macros_panel(window: MainWindow) -> QFrame:
     return frame
 
 
-def build_editor_panel(window: MainWindow) -> QWidget:
-    """Build the text editor and template panel."""
-    panel = QWidget()
-    layout = QVBoxLayout(panel)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(4)
-
-    # Template bar
-    template_bar = QHBoxLayout()
-    template_bar.setSpacing(4)
+def build_template_panel(window: MainWindow) -> QFrame:
+    """Build the template picker and the editor's text size controls."""
+    frame = QFrame()
+    frame.setObjectName("panel_body")
+    layout = QHBoxLayout(frame)
+    layout.setContentsMargins(8, 6, 8, 6)
+    layout.setSpacing(6)
 
     window.template_combo = QComboBox()
     window.template_combo.setMinimumWidth(220)
+
     btn_load = QPushButton("Load")
     btn_load.setToolTip("Insert template into editor (Ctrl+T)")
-    btn_load.setFixedWidth(52)
+    btn_load.setFixedWidth(60)
     btn_load.clicked.connect(window.on_insert_template)
 
     btn_font_up = QPushButton("A+")
-    btn_font_up.setFixedWidth(34)
+    btn_font_up.setFixedWidth(38)
     btn_font_up.setToolTip("Increase font size (Ctrl+])")
     btn_font_up.clicked.connect(window.on_font_increase)
 
     btn_font_down = QPushButton("A-")
-    btn_font_down.setFixedWidth(34)
+    btn_font_down.setFixedWidth(38)
     btn_font_down.setToolTip("Decrease font size (Ctrl+[)")
     btn_font_down.clicked.connect(window.on_font_decrease)
 
-    template_bar.addWidget(QLabel("Template:"))
-    template_bar.addWidget(window.template_combo)
-    template_bar.addWidget(btn_load)
-    template_bar.addSpacing(8)
-    template_bar.addWidget(btn_font_up)
-    template_bar.addWidget(btn_font_down)
-    template_bar.addStretch()
+    layout.addWidget(QLabel("Template:"))
+    layout.addWidget(window.template_combo)
+    layout.addWidget(btn_load)
+    layout.addSpacing(12)
+    layout.addWidget(QLabel("Text size:"))
+    layout.addWidget(btn_font_up)
+    layout.addWidget(btn_font_down)
+    layout.addStretch()
+    return frame
 
-    layout.addLayout(template_bar)
+
+def build_settings_panel(window: MainWindow) -> QFrame:
+    """Build the dictation settings: model, language, accent, cleanup, VAD."""
+    frame = QFrame()
+    frame.setObjectName("panel_body")
+    layout = QHBoxLayout(frame)
+    layout.setContentsMargins(8, 6, 8, 6)
+    layout.setSpacing(6)
+
+    window.model_combo = QComboBox()
+    window.model_combo.addItems(SUPPORTED_MODELS)
+    # resolve_model, not the raw setting: setCurrentText is a no-op on a
+    # non-editable combo when no item matches, so an unknown name would leave the
+    # picker on its first entry and silently dictate with the wrong model.
+    window.model_combo.setCurrentText(resolve_model(window.settings.get("model_size")))
+    window.model_combo.setToolTip(
+        "'.en' models are English-only — faster and more accurate for English "
+        "dictation than the same size multilingual model.\n"
+        "tiny/base = fastest  |  small/medium = better accuracy  |  large-v2/v3 = best (needs GPU)"
+    )
+    window.model_combo.setFixedWidth(104)
+
+    window.language_input = QLineEdit(window.settings.get("language", "en"))
+    window.language_input.setFixedWidth(44)
+    window.language_input.setToolTip("ISO language code, e.g. 'en'")
+
+    window.accent_combo = QComboBox()
+    for key, label in ACCENT_LABELS.items():
+        window.accent_combo.addItem(label, key)
+    saved_accent = window.settings.get("accent", "neutral")
+    idx = window.accent_combo.findData(saved_accent)
+    if idx >= 0:
+        window.accent_combo.setCurrentIndex(idx)
+    window.accent_combo.setToolTip("Accent correction profile for Whisper error patterns")
+    window.accent_combo.setFixedWidth(110)
+
+    window.cleanup_combo = QComboBox()
+    for key, label in CLEANUP_LEVEL_LABELS.items():
+        window.cleanup_combo.addItem(label, key)
+    saved_cleanup = window.settings.get("cleanup_level", "medium")
+    idx = window.cleanup_combo.findData(saved_cleanup)
+    if idx >= 0:
+        window.cleanup_combo.setCurrentIndex(idx)
+    window.cleanup_combo.setToolTip(
+        "Soft = minimal rewriting (your words, almost verbatim)\n"
+        "Medium = standard correction pipeline (default)\n"
+        "Hard = standard pipeline + AI polish (if enabled)"
+    )
+    window.cleanup_combo.setFixedWidth(170)
+
+    window.vad_checkbox = QCheckBox("Filter silence (VAD)")
+    window.vad_checkbox.setToolTip("Voice activity detection - filters silence (recommended)")
+    window.vad_checkbox.setChecked(window.settings.get("vad_filter", True))
+
+    layout.addWidget(QLabel("Model:"))
+    layout.addWidget(window.model_combo)
+    layout.addWidget(QLabel("Language:"))
+    layout.addWidget(window.language_input)
+    layout.addWidget(QLabel("Accent:"))
+    layout.addWidget(window.accent_combo)
+    layout.addWidget(QLabel("Cleanup:"))
+    layout.addWidget(window.cleanup_combo)
+    layout.addWidget(window.vad_checkbox)
+    layout.addStretch()
+    return frame
+
+
+def build_editor_panel(window: MainWindow) -> QWidget:
+    """Build the text editor and its word count."""
+    panel = QWidget()
+    layout = QVBoxLayout(panel)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(4)
 
     # Main editor
     window.editor = QTextEdit()
@@ -242,12 +311,17 @@ def build_editor_panel(window: MainWindow) -> QWidget:
     return panel
 
 
-def build_recording_bar(window: MainWindow) -> QFrame:
-    """Build the recording controls and action bar."""
+def build_top_bar(window: MainWindow) -> QFrame:
+    """Build the one always-visible bar: record, what the app is doing, exports.
+
+    Everything here is either used while dictating or is how the report leaves.
+    Anything set once and forgotten lives in a folded panel instead
+    (:func:`build_panels`).
+    """
     bar = QFrame()
-    bar.setFrameShape(QFrame.Shape.StyledPanel)
+    bar.setObjectName("top_bar")
     layout = QHBoxLayout(bar)
-    layout.setContentsMargins(6, 4, 6, 4)
+    layout.setContentsMargins(8, 6, 8, 6)
     layout.setSpacing(8)
 
     # Record / stop buttons
@@ -262,53 +336,20 @@ def build_recording_bar(window: MainWindow) -> QFrame:
     window.btn_stop.setEnabled(False)
     window.btn_stop.clicked.connect(partial(on_stop_recording, window))
 
-    # Model / VAD controls
-    window.model_combo = QComboBox()
-    window.model_combo.addItems(SUPPORTED_MODELS)
-    # resolve_model, not the raw setting: setCurrentText is a no-op on a
-    # non-editable combo when no item matches, so an unknown name would leave the
-    # picker on its first entry and silently dictate with the wrong model.
-    window.model_combo.setCurrentText(resolve_model(window.settings.get("model_size")))
-    window.model_combo.setToolTip(
-        "'.en' models are English-only — faster and more accurate for English "
-        "dictation than the same size multilingual model.\n"
-        "tiny/base = fastest  |  small/medium = better accuracy  |  large-v2/v3 = best (needs GPU)"
-    )
-    window.model_combo.setFixedWidth(104)
+    # What the app is doing, where the eye already is. The text is the same
+    # message the status bar carries; the colour is the state.
+    window._state_pill = QLabel("Ready")
+    window._state_pill.setObjectName("state_pill")
+    window._state_pill.setMinimumWidth(150)
+    window._state_pill.setMaximumWidth(280)
+    window._state_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    set_status_state(window._state_pill, "idle")
 
-    window.vad_checkbox = QCheckBox("VAD")
-    window.vad_checkbox.setToolTip("Voice activity detection - filters silence (recommended)")
-    window.vad_checkbox.setChecked(window.settings.get("vad_filter", True))
-
-    window.language_input = QLineEdit(window.settings.get("language", "en"))
-    window.language_input.setFixedWidth(36)
-    window.language_input.setToolTip("ISO language code, e.g. 'en'")
-
-    # Accent correction profile
-    window.accent_combo = QComboBox()
-    for key, label in ACCENT_LABELS.items():
-        window.accent_combo.addItem(label, key)
-    saved_accent = window.settings.get("accent", "neutral")
-    idx = window.accent_combo.findData(saved_accent)
-    if idx >= 0:
-        window.accent_combo.setCurrentIndex(idx)
-    window.accent_combo.setToolTip("Accent correction profile for Whisper error patterns")
-    window.accent_combo.setFixedWidth(110)
-
-    # Post-dictation cleanup level
-    window.cleanup_combo = QComboBox()
-    for key, label in CLEANUP_LEVEL_LABELS.items():
-        window.cleanup_combo.addItem(label, key)
-    saved_cleanup = window.settings.get("cleanup_level", "medium")
-    idx = window.cleanup_combo.findData(saved_cleanup)
-    if idx >= 0:
-        window.cleanup_combo.setCurrentIndex(idx)
-    window.cleanup_combo.setToolTip(
-        "Soft = minimal rewriting (your words, almost verbatim)\n"
-        "Medium = standard correction pipeline (default)\n"
-        "Hard = standard pipeline + AI polish (if enabled)"
-    )
-    window.cleanup_combo.setFixedWidth(170)
+    # How long this dictation has been running (blank when not recording).
+    window._elapsed_label = QLabel("")
+    window._elapsed_label.setObjectName("elapsed")
+    window._elapsed_label.setFixedWidth(44)
+    window._elapsed_label.setToolTip("Length of the current recording")
 
     # Separator
     separator = QFrame()
@@ -348,18 +389,11 @@ def build_recording_bar(window: MainWindow) -> QFrame:
 
     layout.addWidget(window.btn_record)
     layout.addWidget(window.btn_stop)
+    layout.addWidget(window._state_pill)
     layout.addWidget(QLabel("Mic:"))
     layout.addWidget(window._level_bar)
+    layout.addWidget(window._elapsed_label)
     layout.addWidget(separator)
-    layout.addWidget(QLabel("Model:"))
-    layout.addWidget(window.model_combo)
-    layout.addWidget(QLabel("Lang:"))
-    layout.addWidget(window.language_input)
-    layout.addWidget(QLabel("Accent:"))
-    layout.addWidget(window.accent_combo)
-    layout.addWidget(QLabel("Cleanup:"))
-    layout.addWidget(window.cleanup_combo)
-    layout.addWidget(window.vad_checkbox)
     layout.addStretch()
     layout.addWidget(btn_copy)
     layout.addWidget(btn_save)

@@ -24,6 +24,8 @@ install_test_runtime_stubs()
 with qt_widgets_stub():
     import src.ui.recording_session as rs  # noqa: E402
 
+from src.ui.status import READY, StatusTrack  # noqa: E402
+
 
 class _FakeCursor:
     def __init__(self, position: int) -> None:
@@ -77,8 +79,9 @@ class _FakeWindow:
         self._dictation_start = None
         self.current_wav_path = None
         self.statuses: list = []
+        self._status = StatusTrack()
 
-    def _show_status(self, message: str, timeout: int = 0) -> None:
+    def _show_status(self, message: str, timeout: int = 0, state: str = "idle") -> None:
         self.statuses.append(message)
 
 
@@ -188,3 +191,41 @@ class TestFinishSequence:
         assert window.pp_worker is None or window.pp_worker.jobs == []
         assert order == ["ai_cleanup", "deid"]
         assert window.btn_record.enabled is True
+
+
+class TestStatusOrdering:
+    """A timed status message must never overwrite a newer one.
+
+    The corrections banner and the mic-clipping warning both schedule a revert
+    seconds later; before this, one landing mid-finalisation put "Ready" on
+    screen while the report was still being processed.
+    """
+
+    def test_a_stale_revert_is_dropped(self) -> None:
+        track = StatusTrack()
+        first = track.show()
+        track.show()  # a newer message arrived meanwhile
+
+        assert track.revert(first, dictating=False) is None
+
+    def test_the_newest_message_reverts_to_ready_when_idle(self) -> None:
+        track = StatusTrack()
+        generation = track.show()
+
+        assert track.revert(generation, dictating=False) == READY
+
+    def test_it_reverts_to_the_work_still_running(self) -> None:
+        track = StatusTrack()
+        track.last_progress = ("Polishing chunk 2/5...", "busy")
+        generation = track.show()
+
+        assert track.revert(generation, dictating=True) == ("Polishing chunk 2/5...", "busy")
+
+    def test_two_messages_in_a_row_leave_only_the_last_revertable(self) -> None:
+        """The near case the others miss: identical back-to-back messages."""
+        track = StatusTrack()
+        first = track.show()
+        second = track.show()
+
+        assert track.revert(first, dictating=False) is None
+        assert track.revert(second, dictating=False) == READY

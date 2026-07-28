@@ -75,9 +75,11 @@ logger = logging.getLogger(__name__)
 _MIN_AUDIO_SEC = 0.8     # ignore audio shorter than this
 _MIN_GROWTH_SEC = 0.5    # min new audio before re-checking for a chunk cut
 
-# Progress states the UI shows while the live loop runs.
-_STATE_LIVE = "Live transcribing..."
-_STATE_CATCHING_UP = "Catching up..."
+# Progress states the UI shows while the live loop runs. Public: the desktop
+# window maps them onto the colour of its state pill (ui/main_window.py).
+STATE_LOADING = "Loading model..."
+STATE_LIVE = "Live transcribing..."
+STATE_CATCHING_UP = "Catching up..."
 
 
 def should_skip_preview(
@@ -199,12 +201,12 @@ class LiveTranscribeWorker(QObject):
         wall_start = time.time()
         cycle_count = 0
         try:
-            self.progress.emit("Loading model...")
+            self.progress.emit(STATE_LOADING)
             engine = create_engine(
                 model_size=self.model_size, device="auto", model_path=self.model_path
             )
             logger.info("Model loaded in %.2fs", time.time() - wall_start)
-            self._emit_state(_STATE_LIVE)
+            self._emit_state(STATE_LIVE)
 
             final_grace = 0
             while self._keep_running or self._final_requested:
@@ -321,10 +323,10 @@ class LiveTranscribeWorker(QObject):
         ):
             # Cosmetic only: the last stable preview stays on screen and every
             # remaining second goes to the chunks that are actually kept.
-            self._emit_state(_STATE_CATCHING_UP)
+            self._emit_state(STATE_CATCHING_UP)
             stable_tail = self._last_stable
         else:
-            self._emit_state(_STATE_LIVE)
+            self._emit_state(STATE_LIVE)
             stable_tail = self._decode_open_tail(
                 engine, chunks, tail_audio, tail_start, sr
             )

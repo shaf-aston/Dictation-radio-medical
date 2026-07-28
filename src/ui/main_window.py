@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QMainWindow, QApplication, QFileDialog, QMessageBox,
     QTextEdit, QPushButton, QComboBox, QLabel, QLineEdit,
     QCheckBox, QFrame, QSplitter, QProgressBar, QMenu, QVBoxLayout, QWidget,
-    QToolButton,
 )
 from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor
@@ -30,7 +29,10 @@ from src.dictation.audio import Recorder
 from src.core.settings import Settings
 from src.core.patient_schema import normalize_patient_info
 from src.features.file_manager import report_filename
-from src.ui.styles import DARK, LIGHT
+from src.ui.collapsible import Section
+from src.ui.status import StatusTrack
+from src.ui.styles import DARK, LIGHT, set_status_state
+from src.dictation.worker import STATE_CATCHING_UP, STATE_LIVE, STATE_LOADING
 from src.features.report_manager import (
     autosave_report, save_report_txt, export_to_word, DOCX_AVAILABLE
 )
@@ -64,6 +66,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# The pill colour for each state the transcription worker reports. Anything
+# else it emits (the per-chunk polishing counter) is simply "busy".
+_WORKER_STATES = {
+    STATE_LOADING: "busy",
+    STATE_LIVE: "rec",
+    STATE_CATCHING_UP: "warn",
+}
+
+
 def _open_in_system(path: str) -> None:
     """Open a file or folder using the OS default handler."""
     if sys.platform == "win32":
@@ -95,7 +106,9 @@ class MainWindow(QMainWindow):
 
     # Attributes set by build_ui / build_menu / setup_level_timer
     patient_panel: QFrame
-    patient_toggle: QToolButton
+    patient_section: Section
+    template_section: Section
+    settings_section: Section
     patient_name: QLineEdit
     patient_id: QLineEdit
     patient_dob: QLineEdit
@@ -119,6 +132,8 @@ class MainWindow(QMainWindow):
     cleanup_combo: QComboBox
     btn_export_word: QPushButton
     _level_bar: QProgressBar
+    _state_pill: QLabel
+    _elapsed_label: QLabel
     _status_label: QLabel
     _wordcount_label: QLabel
     _autosave_label: QLabel
@@ -164,7 +179,12 @@ class MainWindow(QMainWindow):
         self._learn_timer.setInterval(500)
         self._learn_timer.timeout.connect(self._flush_learn)
 
+        # Orders status messages so a timed revert cannot overwrite a newer
+        # one (src/ui/status.py).
+        self._status = StatusTrack()
+
         build_ui(self)
+        self.patient_section.toggled.connect(self._on_patient_section_toggled)
         build_menu(self)
         self._setup_shortcuts()
         self._setup_autosave_timer()
@@ -334,14 +354,13 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _set_patient_panel_visible(self, visible: bool) -> None:
-        self.patient_panel.setVisible(visible)
         # The fold header, the View menu and the saved setting are three ways
-        # into one piece of state, so the arrow is set here rather than by
-        # whichever of them happened to trigger the change.
-        self.patient_toggle.setChecked(visible)
-        self.patient_toggle.setArrowType(
-            Qt.ArrowType.DownArrow if visible else Qt.ArrowType.RightArrow
-        )
+        # into one piece of state. The section owns the widgets and reports what
+        # it did through `toggled`, so whichever of the three started the change
+        # ends up saving it exactly once.
+        self.patient_section.set_expanded(visible)
+
+    def _on_patient_section_toggled(self, visible: bool) -> None:
         if self.settings.get("patient_info_visible") != visible:
             self.settings.set("patient_info_visible", visible)
 
@@ -411,10 +430,10 @@ class MainWindow(QMainWindow):
                 cursor = self.editor.textCursor()
                 cursor.setPosition(0)
                 cursor.insertText(content if content.endswith("\n") else content + "\n")
-                self._show_status(f"Template inserted above dictation: {name}", 2000)
+                self._show_status(f"Template inserted above dictation: {name}", 2000, state="ok")
             else:
                 self.editor.setPlainText(content)
-                self._show_status(f"Template loaded: {name}", 2000)
+                self._show_status(f"Template loaded: {name}", 2000, state="ok")
             self.settings.set("last_template", name)
             audit_log.log_template_loaded(name)
         except Exception as exc:
@@ -431,7 +450,7 @@ class MainWindow(QMainWindow):
             cursor = self.editor.textCursor()
             cursor.setPosition(self._dictation_start_position())
             cursor.insertText(f"{text}\n")
-            self._show_status("Macro inserted above dictation", 2000)
+            self._show_status("Macro inserted above dictation", 2000, state="ok")
         else:
             current = self.editor.toPlainText()
             if current and not current.endswith(("\n", " ")):
@@ -456,7 +475,7 @@ class MainWindow(QMainWindow):
                 self.macro_region_combo.setCurrentIndex(0)
 
             rebuild_macro_buttons(self, self.macro_region_combo.currentText())
-            self._show_status("Macros reloaded", 2000)
+            self._show_status("Macros reloaded", 2000, state="ok")
         except Exception as exc:
             QMessageBox.warning(self, "Reload Error", f"Failed to reload macros:\n{exc}")
 
@@ -500,7 +519,7 @@ class MainWindow(QMainWindow):
     def _load_report_from_path(self, path: str) -> None:
         with open(path, "r", encoding="utf-8") as fh:
             self.editor.setPlainText(fh.read())
-        self._show_status(f"Opened: {os.path.basename(path)}", 2000)
+        self._show_status(f"Opened: {os.path.basename(path)}", 2000, state="ok")
 
     def on_open_report(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -520,12 +539,12 @@ class MainWindow(QMainWindow):
         if not confirm_release(self):
             return
         QApplication.clipboard().setText(self.editor.toPlainText())
-        self._show_status("Copied to clipboard.", 1500)
+        self._show_status("Copied to clipboard.", 1500, state="ok")
 
     def _post_save(self, path: str, verb: str, log_fn) -> None:  # type: ignore[type-arg]
         self.settings.add_recent_report(path)
         rebuild_recent_menu(self)
-        self._show_status(f"{verb}: {os.path.basename(path)}", 2000)
+        self._show_status(f"{verb}: {os.path.basename(path)}", 2000, state="ok")
         log_fn(path, self._get_patient_info().get("id", ""))
 
     def on_save_txt(self) -> None:
@@ -616,7 +635,12 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _on_worker_progress(self, message: str) -> None:
-        self._show_status(message)
+        # The worker reports what it is doing as text; the pill colour is this
+        # window's reading of it. "Catching up" is a warning, not a failure: the
+        # decoder is behind the speech and the preview will lag.
+        state = _WORKER_STATES.get(message, "busy")
+        self._status.last_progress = (message, state)
+        self._show_status(message, state=state)
 
     @Slot()
     def _on_transcription_finished(self) -> None:
@@ -639,10 +663,40 @@ class MainWindow(QMainWindow):
     def _default_filename(self, ext: str) -> str:
         return report_filename(self._get_patient_info(), ext)
 
-    def _show_status(self, message: str, timeout: int = 0) -> None:
+    def _show_status(self, message: str, timeout: int = 0, state: str = "idle") -> None:
+        """Say what the app is doing, in the status bar and on the state pill.
+
+        ``timeout`` reverts to Ready — but only if nothing newer has been shown
+        since. Without the generation counter a 5-second tip posted before Stop
+        would fire in the middle of finalising and claim the app was idle while
+        it was still working.
+        """
+        generation = self._status.show()
         self._status_label.setText(message)
+        # The pill is narrow by design; a long message (the corrections banner)
+        # is cut with an ellipsis there and read in full in the status bar.
+        pill_width = self._state_pill.maximumWidth() - 24
+        self._state_pill.setText(
+            self._state_pill.fontMetrics().elidedText(
+                message, Qt.TextElideMode.ElideRight, pill_width
+            )
+        )
+        self._state_pill.setToolTip(message)
+        set_status_state(self._state_pill, state)
         if timeout:
-            QTimer.singleShot(timeout, lambda: self._status_label.setText("Ready"))
+            QTimer.singleShot(timeout, partial(self._clear_status, generation))
+
+    def _clear_status(self, generation: int) -> None:
+        """Revert a timed message — to Ready, or back to the work still running.
+
+        A short message shown mid-dictation (a clipping warning, a correction
+        count) must not leave the app claiming to be idle while the worker is
+        still transcribing, so while a session is live it reverts to whatever
+        the worker last reported instead.
+        """
+        revert = self._status.revert(generation, self.dictation_active())
+        if revert is not None:
+            self._show_status(revert[0], state=revert[1])
 
     def _on_text_changed(self) -> None:
         text = self.editor.toPlainText()
