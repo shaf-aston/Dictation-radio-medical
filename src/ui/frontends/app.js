@@ -43,7 +43,6 @@ const copyText = document.getElementById('copyText');
 const copyIcon = document.getElementById('copyIcon');
 const statusIndicator = document.getElementById('statusIndicator');
 const statusText = document.getElementById('statusText');
-const statusDot = document.getElementById('statusDot');
 const themeBtn = document.getElementById('themeBtn');
 const themeText = document.getElementById('themeText');
 const themeIcon = document.getElementById('themeIcon');
@@ -78,40 +77,39 @@ function setThemeSavingState(isSaving) {
     }
 }
 
-function showStatus(message, kind = 'info', timeout = 0) {
-    statusIndicator.classList.add('is-visible');
-    statusIndicator.classList.toggle('is-error', kind === 'error');
-    statusText.textContent = message;
-    statusDot.classList.toggle('is-processing', kind === 'processing');
-    if (kind === 'processing') {
-        statusDot.style.setProperty('--dot-color', 'var(--brand)');
-        statusDot.style.setProperty('--dot-glow', 'rgba(96, 165, 250, 0.22)');
-    } else if (kind === 'success') {
-        statusDot.style.setProperty('--dot-color', 'var(--success)');
-        statusDot.style.setProperty('--dot-glow', 'rgba(74, 222, 128, 0.22)');
-    } else if (kind === 'error') {
-        statusDot.style.setProperty('--dot-color', 'var(--danger)');
-        statusDot.style.setProperty('--dot-glow', 'rgba(248, 113, 113, 0.22)');
-    } else {
-        statusDot.style.setProperty('--dot-color', 'var(--brand)');
-        statusDot.style.setProperty('--dot-glow', 'rgba(96, 165, 250, 0.22)');
+// The status pill's states, matching the desktop window's: recording, working,
+// done, failed. The colour is a class app.css owns (.is-rec / .is-busy /
+// .is-ok / .is-error) so it comes from tokens.json like every other colour —
+// this used to set colours inline here, which both hardcoded them and named
+// classes app.css no longer has, so the dot never changed at all.
+const STATUS_STATES = ['is-rec', 'is-busy', 'is-ok', 'is-error'];
+let statusGeneration = 0;
+
+function showStatus(message, state = '', timeout = 0) {
+    statusGeneration += 1;
+    const generation = statusGeneration;
+    statusIndicator.classList.remove(...STATUS_STATES);
+    if (state) {
+        statusIndicator.classList.add(state);
     }
+    statusText.textContent = message;
     if (timeout) {
+        // Only the newest message may clear itself — otherwise a short one
+        // scheduled earlier wipes the state of whatever is running now.
         setTimeout(() => {
-            statusIndicator.classList.remove('is-visible', 'is-error');
+            if (generation === statusGeneration) hideStatus();
         }, timeout);
     }
 }
 
 function hideStatus() {
-    statusIndicator.classList.remove('is-visible', 'is-error');
-    statusDot.style.removeProperty('--dot-color');
-    statusDot.style.removeProperty('--dot-glow');
+    statusGeneration += 1;
+    statusIndicator.classList.remove(...STATUS_STATES);
+    statusText.textContent = 'Ready';
 }
 
 function showError(message) {
-    showStatus(message, 'error', 5000);
-    statusText.style.color = '';
+    showStatus(message, 'is-error', 5000);
 }
 
 async function persistTheme(theme) {
@@ -430,7 +428,7 @@ async function persistPreferences() {
         vadCheckbox.checked = Boolean(BOOTSTRAP.preferences.vad_filter);
         macroRegionSelect.value = BOOTSTRAP.preferences.macro_region || payload.macro_region;
         renderMacros(currentMacroRegion());
-        showStatus('Settings saved', 'success', 1200);
+        showStatus('Settings saved', 'is-ok', 1200);
     } catch (err) {
         showError('Settings could not be saved: ' + err.message);
     } finally {
@@ -460,7 +458,7 @@ async function reloadMacros() {
         populateMacroRegions();
         macroRegionSelect.value = result.selected_region || macroRegionSelect.value;
         renderMacros(currentMacroRegion());
-        showStatus('Macros reloaded', 'success', 1500);
+        showStatus('Macros reloaded', 'is-ok', 1500);
     } catch (err) {
         showError('Macros could not be reloaded: ' + err.message);
     } finally {
@@ -594,7 +592,7 @@ async function downloadReport(kind) {
         const response = await postGatedReport(endpoint);
         if (response === null) {
             // The radiologist chose to go back and fill the report in.
-            showStatus('Export cancelled', 'info', 1800);
+            showStatus('Export cancelled', '', 1800);
             return;
         }
 
@@ -615,7 +613,7 @@ async function downloadReport(kind) {
         const blob = await response.blob();
         const filename = parseDownloadFilename(response.headers.get('content-disposition'), fallbackName);
         triggerDownload(blob, filename);
-        showStatus(kind === 'word' ? 'Word export ready' : 'TXT download ready', 'success', 1800);
+        showStatus(kind === 'word' ? 'Word export ready' : 'TXT download ready', 'is-ok', 1800);
     } catch (err) {
         showError('Report export failed: ' + err.message);
     } finally {
@@ -645,7 +643,7 @@ async function loadSelectedTemplate() {
 
     try {
         setTemplateLoadingState(true);
-        showStatus(`Loading template: ${name}`, 'processing');
+        showStatus(`Loading template: ${name}`, 'is-busy');
 
         const response = await fetch(`/api/templates/${encodeURIComponent(name)}/load`, {
             method: 'POST',
@@ -663,7 +661,7 @@ async function loadSelectedTemplate() {
         editor.focus();
         undoStack = [editor.value];
         undoIndex = 0;
-        showStatus(`Template loaded: ${result.name}`, 'success', 2000);
+        showStatus(`Template loaded: ${result.name}`, 'is-ok', 2000);
     } catch (err) {
         showError('Template load failed: ' + err.message);
     } finally {
@@ -721,7 +719,7 @@ copyBtn.addEventListener('click', async () => {
         const response = await postGatedReport('/api/report/check');
         if (response === null) {
             // The radiologist chose to go back and fill the report in.
-            showStatus('Copy cancelled', 'info', 1800);
+            showStatus('Copy cancelled', '', 1800);
             return;
         }
         if (!response.ok) {
@@ -809,7 +807,7 @@ async function startRecording() {
         dictateBtn.classList.add('is-recording');
         micIcon.className = 'fas fa-stop';
 
-        showStatus('Recording...', 'processing');
+        showStatus('Recording...', 'is-rec');
     } catch (err) {
         console.error('Microphone access denied:', err);
         showError('Microphone access denied. Please allow microphone permissions in your browser settings and try again.');
@@ -825,7 +823,7 @@ function stopRecording() {
         dictateBtn.classList.remove('is-recording');
         micIcon.className = 'fas fa-microphone';
 
-        showStatus('Transcribing...', 'processing');
+        showStatus('Transcribing...', 'is-busy');
     }
 }
 
@@ -859,15 +857,13 @@ async function sendAudio() {
             const nextValue = editor.value.trim() !== '' ? `${editor.value} ${result.text}` : result.text;
             setEditorValue(nextValue);
             editor.scrollTop = editor.scrollHeight;
-            showStatus('Transcription complete', 'success', 2000);
+            showStatus('Transcription complete', 'is-ok', 2000);
         } else {
             hideStatus();
         }
     } catch (err) {
         console.error('Transcription error:', err);
         showError('Transcription failed: ' + err.message + '. Try again.');
-    } finally {
-        statusDot.classList.remove('is-processing');
     }
 }
 
