@@ -11,7 +11,7 @@ from src.core.json_store import read_json, write_json
 from src.features.file_manager import settings_file
 
 _DEFAULTS: dict = {
-    "model_size": "base",
+    "model_size": "base.en",   # English-only: faster AND more accurate than "base"
     "language": "en",
     "vad_filter": True,
     "accent": "neutral",

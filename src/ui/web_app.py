@@ -22,7 +22,7 @@ from src.dictation.postprocess.pipeline import (
     postprocess_transcript,
 )
 from src.dictation.asr import AsrEngine, TranscribeContext, create_engine
-from src.dictation.transcriber import SUPPORTED_MODELS
+from src.dictation.transcriber import SUPPORTED_MODELS, resolve_model
 from src.features.accent_corrections import ACCENT_LABELS
 from src.features.file_manager import (
     report_filename,
@@ -266,9 +266,7 @@ def _render_html(theme: str) -> str:
 def _get_engine() -> AsrEngine:
     """Return an ASR engine configured for the current saved model setting."""
     global asr_engine, asr_engine_model_size
-    model_size = _settings().get("model_size", "base")
-    if model_size not in SUPPORTED_MODELS:
-        model_size = "base"
+    model_size = resolve_model(_settings().get("model_size"))
 
     with transcriber_lock:
         if asr_engine is None or asr_engine_model_size != model_size:
@@ -312,9 +310,7 @@ def _warm_up_singletons() -> None:
         warm_up_async,
     )
 
-    model_size = _settings().get("model_size", "base")
-    if model_size not in SUPPORTED_MODELS:
-        model_size = "base"
+    model_size = resolve_model(_settings().get("model_size"))
     warm_up_async(postprocess_warmers() + [transcriber_warmer(model_size)])
 
 

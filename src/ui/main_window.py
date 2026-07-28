@@ -229,7 +229,9 @@ class MainWindow(QMainWindow):
                 warm_up_async,
             )
 
-            model_size = self.settings.get("model_size", "base")
+            from src.dictation.transcriber import resolve_model
+
+            model_size = resolve_model(self.settings.get("model_size"))
             # Warm the model the recording worker will actually load: an active
             # fine-tuned directory overrides model_size (recording_session
             # passes it to LiveTranscribeWorker), and the process-wide model

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QAction, QKeySequence
 
-from src.dictation.transcriber import SUPPORTED_MODELS
+from src.dictation.transcriber import SUPPORTED_MODELS, resolve_model
 from src.dictation.postprocess import CLEANUP_LEVEL_LABELS
 from src.features.accent_corrections import ACCENT_LABELS
 from src.medical import macros
@@ -265,11 +265,16 @@ def build_recording_bar(window: MainWindow) -> QFrame:
     # Model / VAD controls
     window.model_combo = QComboBox()
     window.model_combo.addItems(SUPPORTED_MODELS)
-    window.model_combo.setCurrentText(window.settings.get("model_size", "base"))
+    # resolve_model, not the raw setting: setCurrentText is a no-op on a
+    # non-editable combo when no item matches, so an unknown name would leave the
+    # picker on its first entry and silently dictate with the wrong model.
+    window.model_combo.setCurrentText(resolve_model(window.settings.get("model_size")))
     window.model_combo.setToolTip(
+        "'.en' models are English-only — faster and more accurate for English "
+        "dictation than the same size multilingual model.\n"
         "tiny/base = fastest  |  small/medium = better accuracy  |  large-v2/v3 = best (needs GPU)"
     )
-    window.model_combo.setFixedWidth(90)
+    window.model_combo.setFixedWidth(104)
 
     window.vad_checkbox = QCheckBox("VAD")
     window.vad_checkbox.setToolTip("Voice activity detection - filters silence (recommended)")

@@ -53,6 +53,73 @@ policy.** A faster engine is the only thing that moves it. That is M3.
 | Cache `_project_root()` | 0.566 ms against a 1–3 s cycle — below the noise floor of what it improves |
 | Prefilter the 151-rule terminology table | Its ASCII safety valve is switched off upstream by the degree sign in `measurements.py:47`, making it net *slower* on real MSK reports |
 
+## Update 2026-07-28 — the app was not running the model its settings named
+
+The review above measured `small.en` directly, by loading it in a script. The
+*app* was loading something else.
+
+`SUPPORTED_MODELS` listed only multilingual sizes — no `.en` variants — while
+`dictation_settings.json` said `small.en`. Nothing matched, and both front-ends
+dropped it silently:
+
+- **Desktop:** `views.py` built the picker with `addItems(SUPPORTED_MODELS)` then
+  `setCurrentText("small.en")`. On a non-editable `QComboBox` that is a **no-op**
+  when no item matches, so the picker stayed on its first entry — `tiny` — and
+  `recording_session.py:134` handed `tiny` to the worker.
+- **Web:** `if model_size not in SUPPORTED_MODELS: model_size = "base"`.
+- Worse, `main_window.py` warmed `small.en` from the *setting* while recording
+  used `tiny` from the *combo*, so startup paid to load a model it never used.
+
+### What that cost, measured
+
+`python -m scripts.eval.run_eval --set tts --model <m>` — 30 clips, 10.8 min.
+Synthetic audio, so these are vocabulary numbers, not real-acoustics numbers.
+
+| model | WER | **medical-term error** | false-correction | RTF (median) |
+|---|---|---|---|---|
+| `tiny.en` | 8.4 % | **9.4 %** | 7.3 % | 0.14 |
+| `base.en` | 10.1 % | 8.8 % | 3.1 % | 0.21 |
+| `small.en` | **5.5 %** | **3.4 %** | 11.1 % | 0.47 |
+
+**Medical-term error rate nearly tripled** on the model the app was actually
+running. That is the number that matters here — a report can post a respectable
+WER while mangling every anatomical word in it.
+
+Fixed: `.en` variants are selectable, `resolve_model()` is the single place a
+model name is validated, and it **logs** when it falls back instead of
+reassigning in silence. A test asserts the shipped default is a model that
+exists, which is the assertion that would have caught this.
+
+**Note on speed:** `small.en` at RTF 0.47 still decodes about twice as fast as
+speech arrives. Lag is not decode throughput — it is the chunk-close policy plus
+a fixed ~3.6 s cost per decode call (Whisper pads every clip to a 30 s window).
+That fixed cost is why shortening `chunk_min_sec` backfires: halving chunk length
+nearly doubles total decode.
+
+## Update 2026-07-28 — 81 % of the radiology dictionary never reaches the decoder
+
+The dictionary *is* already inside the decoder, as `initial_prompt`
+(`radiology_prompt.txt`, passed by `worker._build_context_prompt`). But Whisper's
+prompt slot is 223 tokens and the file is **1,150 tokens**, so faster-whisper
+keeps only the last 223 and discards **927**.
+
+Measured against the installed tokenizer, not inferred from the file's comment.
+
+What survives is the generic MRI/ultrasound physics vocabulary at the end of the
+file ("Gadolinium, post-contrast, Hyperechoic…"). What is dropped is the whole
+front — **ACL, PCL, supraspinatus, infraspinatus, subscapularis, glenohumeral** —
+the musculoskeletal terms. The file's header says it orders "most universal terms
+at the END" on purpose, so the truncation is intended; the scale of it is not
+obviously intended, and the terms being lost are the specialty ones.
+
+Not fixed here, deliberately: choosing *which* 223 tokens is a domain judgement,
+and the only instrument that could prove an improvement is the `own` gold set
+(real acoustics, MSK vocabulary). The `tts` set is generic radiology, so it would
+score the change as noise. **Record the `own` set first, then this is measurable.**
+
+Adding faster-whisper's `hotwords` argument would not help: `get_prompt()` spends
+hotwords and the prompt from the *same* 223-token budget, so they compete.
+
 ## Acted on
 
 `perf.log_summary` logged stage timings only and never read `gauges()`, so
