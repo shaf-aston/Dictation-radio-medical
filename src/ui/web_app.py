@@ -474,6 +474,17 @@ def _gate_critical_findings(payload: ReportRequest) -> None:
         audit_log.log_critical_finding_overridden("; ".join(f.term for f in findings), patient_id)
 
 
+@app.post("/api/report/check")
+async def check_report_endpoint(payload: ReportRequest):
+    """Run the critical-findings gate without emitting a file.
+
+    Copy puts the report on the clipboard, which leaves the app just as surely as a
+    download does. It has no file to fetch, so it asks the gate this way instead.
+    """
+    _gate_critical_findings(payload)
+    return {"ok": True}
+
+
 @app.post("/api/report/save-txt")
 async def save_report_txt_endpoint(payload: ReportRequest):
     _gate_critical_findings(payload)

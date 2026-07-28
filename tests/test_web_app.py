@@ -434,6 +434,37 @@ def test_report_without_an_urgent_finding_is_not_gated(monkeypatch) -> None:
     assert response.status_code == 200
 
 
+def test_copy_is_gated_and_audited_like_every_other_way_out(monkeypatch) -> None:
+    # Copy is the primary bar action and puts the report on the clipboard, which
+    # leaves the app exactly as a download does. It gets the same gate and the same
+    # audit entry — otherwise the fastest button is the one with no warning.
+    overrides: list[tuple] = []
+    monkeypatch.setattr(
+        web_app.audit_log, "log_critical_finding_overridden",
+        lambda terms, patient_id: overrides.append((terms, patient_id)),
+    )
+    with _client(monkeypatch) as client:
+        body: dict = {"text": _URGENT_TEXT, "patient": {"id": "P1"}}
+        refused = client.post("/api/report/check", json=body)
+        answered = client.post("/api/report/check", json={**body, "acknowledged": False})
+
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["reason"] == "critical_findings"
+    assert answered.status_code == 200
+    assert len(overrides) == 1 and "pneumothorax" in overrides[0][0]
+
+
+def test_every_way_a_report_leaves_the_app_runs_the_gate() -> None:
+    # A new export route that forgets _gate_critical_findings is the exact defect
+    # Copy had, so the set of exits is asserted rather than left to review.
+    exits = {"/api/report/check", "/api/report/save-txt", "/api/report/export-word"}
+    routed = {
+        r.path for r in web_app.app.routes  # type: ignore[attr-defined]
+        if getattr(r, "path", "").startswith("/api/report/")
+    }
+    assert routed == exits
+
+
 def test_a_scanner_fault_never_blocks_a_report(monkeypatch) -> None:
     # Fail open here on purpose: a crashing scanner must not stop a radiologist
     # sending a report. The failure is logged, not swallowed silently.

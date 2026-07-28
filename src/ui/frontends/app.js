@@ -511,6 +511,56 @@ function triggerDownload(blob, filename) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function postReport(url, acknowledged) {
+    return fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            text: editor.value,
+            patient: collectPatientInfo(),
+            acknowledged: acknowledged,
+        }),
+    });
+}
+
+// Returns the findings payload, or null if this 409 was something else.
+async function readCriticalFindings(response) {
+    try {
+        const body = await response.clone().json();
+        const detail = body && body.detail;
+        return (detail && detail.reason === 'critical_findings') ? detail : null;
+    } catch (err) {
+        return null;
+    }
+}
+
+// Sends the report and clears the critical-findings gate on the way.
+// acknowledged starts unset. The server refuses with 409 when the report carries a
+// critical finding, we show it, and only then re-send with the radiologist's answer.
+// Same warning the desktop app gives. Every path that lets the report leave the app
+// goes through here, clipboard included — a gate one button can skip is not a gate.
+async function postGatedReport(endpoint) {
+    const response = await postReport(endpoint, null);
+    if (response.status !== 409) {
+        return response;
+    }
+    const info = await readCriticalFindings(response);
+    if (!info) {
+        return response;
+    }
+    const acknowledged = window.confirm(
+        (info.worst_level === 1
+            ? 'LIFE-THREATENING FINDING DETECTED\n\n'
+            : 'URGENT FINDING DETECTED\n\n')
+        + info.summary
+        + '\nConfirm verbal communication with the referring clinician '
+        + 'before releasing this report.\n\n'
+        + 'OK = I have communicated this finding\n'
+        + 'Cancel = proceed without acknowledging (recorded in the audit log)'
+    );
+    return postReport(endpoint, acknowledged);
+}
+
 async function downloadReport(kind) {
     if (reportRequestInFlight) {
         return;
@@ -524,50 +574,8 @@ async function downloadReport(kind) {
     const endpoint = kind === 'word' ? '/api/report/export-word' : '/api/report/save-txt';
     const fallbackName = kind === 'word' ? 'radiology_report.docx' : 'radiology_report.txt';
 
-    const postReport = (url, acknowledged) => fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            text: editor.value,
-            patient: collectPatientInfo(),
-            acknowledged: acknowledged,
-        }),
-    });
-
-    // Returns the findings payload, or null if this 409 was something else.
-    const readCriticalFindings = async (response) => {
-        try {
-            const body = await response.clone().json();
-            const detail = body && body.detail;
-            return (detail && detail.reason === 'critical_findings') ? detail : null;
-        } catch (err) {
-            return null;
-        }
-    };
-
     try {
-        // acknowledged starts unset. The server refuses with 409 when the report
-        // carries a critical finding, we show it, and only then re-send with the
-        // radiologist's answer. Same warning the desktop app gives.
-        let acknowledged = null;
-        let response = await postReport(endpoint, acknowledged);
-
-        if (response.status === 409) {
-            const info = await readCriticalFindings(response);
-            if (info) {
-                acknowledged = window.confirm(
-                    (info.worst_level === 1
-                        ? 'LIFE-THREATENING FINDING DETECTED\n\n'
-                        : 'URGENT FINDING DETECTED\n\n')
-                    + info.summary
-                    + '\nConfirm verbal communication with the referring clinician '
-                    + 'before releasing this report.\n\n'
-                    + 'OK = I have communicated this finding\n'
-                    + 'Cancel = proceed without acknowledging (recorded in the audit log)'
-                );
-                response = await postReport(endpoint, acknowledged);
-            }
-        }
+        const response = await postGatedReport(endpoint);
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -675,27 +683,39 @@ clearBtn.addEventListener('click', () => {
 saveTxtBtn.addEventListener('click', () => downloadReport('txt'));
 exportWordBtn.addEventListener('click', () => downloadReport('word'));
 
-// Copy with visual feedback
-copyBtn.addEventListener('click', () => {
-    if (editor.value.trim() === '') {
-        copyText.textContent = 'Nothing to copy';
-        setTimeout(() => { copyText.textContent = 'Copy'; }, 2000);
+// Copy with visual feedback. The clipboard is an exit from the app, so it clears the
+// same critical-findings gate the downloads do before the text goes anywhere.
+copyBtn.addEventListener('click', async () => {
+    if (editor.value.trim() === '' || reportRequestInFlight) {
+        if (!reportRequestInFlight) {
+            copyText.textContent = 'Nothing to copy';
+            setTimeout(() => { copyText.textContent = 'Copy'; }, 2000);
+        }
         return;
     }
-    navigator.clipboard.writeText(editor.value)
-        .then(() => {
-            copyText.textContent = 'Copied!';
-            copyIcon.className = 'fas fa-check';
-            setTimeout(() => {
-                copyText.textContent = 'Copy';
-                copyIcon.className = 'fas fa-copy';
-            }, 2000);
-        })
-        .catch(err => {
-            console.error('Failed to copy', err);
-            copyText.textContent = 'Copy failed';
-            setTimeout(() => { copyText.textContent = 'Copy'; }, 2000);
-        });
+
+    reportRequestInFlight = true;
+    syncReportButtons();
+    try {
+        const response = await postGatedReport('/api/report/check');
+        if (!response.ok) {
+            throw new Error('Report check failed');
+        }
+        await navigator.clipboard.writeText(editor.value);
+        copyText.textContent = 'Copied!';
+        copyIcon.className = 'fas fa-check';
+        setTimeout(() => {
+            copyText.textContent = 'Copy';
+            copyIcon.className = 'fas fa-copy';
+        }, 2000);
+    } catch (err) {
+        console.error('Failed to copy', err);
+        copyText.textContent = 'Copy failed';
+        setTimeout(() => { copyText.textContent = 'Copy'; }, 2000);
+    } finally {
+        reportRequestInFlight = false;
+        syncReportButtons();
+    }
 });
 
 modelSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });

@@ -141,9 +141,16 @@ def snapshot() -> Dict[str, Dict[str, float]]:
 
 
 def log_summary(title: str = "perf") -> None:
-    """Log one INFO line per stage, slowest total first. No-op when empty."""
+    """Log one INFO line per stage, slowest total first, then every gauge.
+
+    Gauges are logged too because ``stream.decode_ratio`` is the headline number for
+    chunk-once streaming — leaving it out of the end-of-recording log meant the one
+    metric worth reading was only ever visible at ``GET /api/debug/perf``.
+    No-op when there is nothing to report.
+    """
     stats = snapshot()
-    if not stats:
+    current = gauges()
+    if not stats and not current:
         return
     logger.info("--- %s (rolling, last %d samples/stage) ---", title, _MAX_SAMPLES)
     for name, s in stats.items():
@@ -152,6 +159,8 @@ def log_summary(title: str = "perf") -> None:
             name, int(s["count"]), s["mean_ms"], s["p95_ms"],
             s["max_ms"], s["total_ms"],
         )
+    for name, value in sorted(current.items()):
+        logger.info("%-38s %.3f", name, value)
 
 
 def reset() -> None:

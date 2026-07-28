@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 
 import pytest
@@ -63,6 +64,15 @@ class TestGauges:
         perf.set_gauge("g", 1.0)
         perf.reset()
         assert perf.gauges() == {}
+
+    def test_summary_logs_the_gauge_even_with_no_stage_timings(self, caplog) -> None:
+        # stream.decode_ratio is the headline number for chunk-once streaming, and a
+        # gauge with no stage timings alongside it must still be logged.
+        perf.set_gauge("stream.decode_ratio", 1.35)
+        with caplog.at_level(logging.INFO, logger=perf.logger.name):
+            perf.log_summary()
+        assert "stream.decode_ratio" in caplog.text
+        assert "1.350" in caplog.text
 
 
 class TestStats:
