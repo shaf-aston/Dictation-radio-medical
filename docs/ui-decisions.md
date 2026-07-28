@@ -9,6 +9,41 @@ is the picture; this file is the record.
 
 ---
 
+## 2026-07-28 — Five directions for the rest of the app (proposed, not yet built)
+
+**Mockups:** https://claude.ai/code/artifact/3c909d2e-3819-4d13-bffd-10134b215cda
+
+Named directions for the five parts of the app that had no considered design.
+Proposed only — nothing here is built yet, so this entry records the thinking, not
+a shipped change.
+
+| Area | Direction | The idea in one line |
+|---|---|---|
+| Critical findings | **The Red Dot** | Marks in the editor's own margin, not a floating dialog — borrowed from the adhesive dot on a film packet |
+| Scan assistant | **The Margin Note** | Region outline inside the frame, label outside it and phrased as a question; the abstention is shown as prominently as the finding |
+| Recording state | **The Wet Edge** | One column where opacity only ever increases — makes the "committed text never rewrites itself" guarantee visible |
+| Model warm-up | **The Tube Warm-up** | Named ritual with a real number, the app usable throughout; the mic is the only disabled control |
+| Quick phrases | **The Stamp Block** | A `:trigger` under the caret and a spoken label; region becomes a ranking signal instead of a mode |
+
+**Two things carried into every direction:** cyan is the machine's voice and red is
+severity — neither borrows the other's meaning; and each direction states one thing
+it must never do, because in this app the failure modes are the design.
+
+**One defect this surfaced, fixed the same day.** Copy is the primary bar action after
+the Option A change below, and it wrote to the clipboard with no critical-findings gate
+and no audit entry — while Save TXT and Word both had one. A report naming a
+pneumothorax could be pasted into the RIS with no warning ever shown. Every path that
+lets text leave the web app now runs the same gate (`/api/report/check`), and a test
+asserts the whole set of exits so a new route cannot quietly skip it.
+
+**Still open, and it is why the Red Dot is worth building first.** In the desktop app
+the check fires from `on_transcription_finished` — when you stop talking, before the
+impression is written — and never again at export. The fix is the design itself:
+acknowledgement should be a *state of the report* ("dots outstanding"), not an event
+bound to one moment.
+
+---
+
 ## 2026-07-26 — Dictation screen: dictate first, everything else folds away
 
 **Chosen: Option A.** The editor and microphone take the top of the screen at
