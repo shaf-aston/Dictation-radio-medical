@@ -30,6 +30,8 @@ ultrasound
 ultrasonography
 sonography
 sonographic
+transabdominal
+transvaginal
 tomography
 fluoroscopy
 fluoroscopic
@@ -49,11 +51,16 @@ densitometry
 elastography
 tomosynthesis
 projection
+anteroposterior
+posteroanterior
+craniocaudal
 radiopharmaceutical
 radiotracer
 radionuclide
 radioisotope
 contrast
+non-contrast
+contrast-enhanced
 gadolinium
 iodinated
 intravenous
@@ -68,9 +75,12 @@ longitudinal
 reformatted
 reformat
 reconstruction
+multiplanar
+multiphase
 acquisition
 sequence
 weighted
+diffusion-weighted
 diffusion
 perfusion
 isotropic
@@ -89,6 +99,7 @@ isodense
 hyperattenuating
 hypoattenuating
 attenuation
+hounsfield
 radiodense
 radiolucent
 radiopaque
@@ -114,20 +125,26 @@ hypervascular
 hypovascular
 avascular
 vascularity
+doppler
 
 # ---------------------------------------------------------------------------
 # Chest / thorax (trauma focus — deepest section)
 # ---------------------------------------------------------------------------
+thorax
+thoracic
 pneumothorax
+pneumothoraces
 hydropneumothorax
 pneumomediastinum
 pneumopericardium
 emphysema
 emphysematous
+subcutaneous
 consolidation
 atelectasis
 atelectatic
 collapse
+contusion
 effusion
 pleural
 pleura
@@ -143,12 +160,21 @@ pericardium
 cardiomegaly
 mediastinum
 mediastinal
+cardiomediastinal
+oesophagus
+oesophageal
+oesophagitis
 hilum
+hila
 hilar
 perihilar
 peribronchial
 bronchovascular
 peribronchovascular
+trachea
+tracheal
+carina
+carinal
 bronchus
 bronchi
 bronchial
@@ -213,6 +239,7 @@ oedema
 kerley
 effacement
 apical
+apices
 basal
 basilar
 lingula
@@ -222,6 +249,7 @@ lobar
 segmental
 fissure
 fissural
+interlobar
 scarring
 plaque
 mesothelioma
@@ -230,12 +258,16 @@ silicosis
 sarcoidosis
 tuberculosis
 endobronchial
+haemoptysis
 
 # ---------------------------------------------------------------------------
 # Cardiovascular
 # ---------------------------------------------------------------------------
 aorta
 aortic
+artery
+arterial
+venous
 atherosclerosis
 atherosclerotic
 ectasia
@@ -272,9 +304,13 @@ cava
 caval
 ventricle
 ventricular
+interventricular
 atrium
+atria
 atrial
 tamponade
+myocardium
+myocardial
 cardiomyopathy
 hypertrophy
 hypertrophic
@@ -300,9 +336,12 @@ cholecystectomy
 cholangitis
 cholangiocarcinoma
 gallbladder
+gallstone
+pericholecystic
 biliary
 intrahepatic
 extrahepatic
+pancreas
 pancreatitis
 pancreatic
 peripancreatic
@@ -311,6 +350,11 @@ splenule
 nephrolithiasis
 urolithiasis
 ureterolithiasis
+calculus
+calculi
+ureter
+ureteric
+bladder
 hydronephrosis
 hydroureter
 pyelonephritis
@@ -326,6 +370,7 @@ cortical
 medullary
 parenchyma
 parenchymal
+viscera
 adrenal
 adenoma
 myelolipoma
@@ -346,6 +391,11 @@ diverticula
 appendicitis
 appendix
 appendiceal
+caecum
+caecal
+colon
+colonic
+sigmoid
 colitis
 enteritis
 ileus
@@ -370,6 +420,9 @@ seminal
 vesicle
 uterus
 uterine
+cervix
+anteverted
+retroverted
 endometrial
 endometrium
 myometrium
@@ -380,6 +433,9 @@ adnexal
 adnexa
 ovarian
 ovary
+torsion
+testicular
+ectopic
 follicle
 follicular
 cyst
@@ -394,11 +450,17 @@ hematocolpos
 # ---------------------------------------------------------------------------
 # Neuro / head & neck
 # ---------------------------------------------------------------------------
+intracranial
+extra-axial
 cerebral
 cerebellar
 cerebrum
 cerebellum
 hemisphere
+sulcus
+sulci
+cistern
+calvarium
 ventriculomegaly
 hydrocephalus
 periventricular
@@ -406,6 +468,8 @@ subarachnoid
 subdural
 epidural
 extradural
+intraparenchymal
+intraventricular
 hematoma
 haematoma
 hemorrhage
@@ -433,7 +497,9 @@ sella
 sellar
 suprasellar
 thalamus
+thalami
 thalamic
+ganglia
 brainstem
 pons
 pontine
@@ -449,7 +515,11 @@ microbleed
 vasospasm
 mastoid
 mastoiditis
+paranasal
 sinusitis
+extraocular
+meningitis
+encephalitis
 
 # ---------------------------------------------------------------------------
 # Musculoskeletal (second-deepest section)
@@ -458,6 +528,8 @@ rotator
 supraspinatus
 infraspinatus
 subscapularis
+teres
+deltoid
 subacromial
 subdeltoid
 glenohumeral
@@ -467,13 +539,39 @@ labral
 acromioclavicular
 acromion
 acromial
+coracoid
+tuberosity
+capsulitis
 bursa
+bursae
 bursitis
 bursal
 tendon
 tendinosis
 tendinopathy
 tenosynovitis
+biceps
+bicipital
+brachialis
+triceps
+quadriceps
+hamstring
+adductor
+iliopsoas
+iliotibial
+gluteus
+gluteal
+maximus
+medius
+minimus
+extensor
+flexor
+longus
+brevis
+hallucis
+digitorum
+tibialis
+peroneus
 cruciate
 ligament
 ligamentous
@@ -488,13 +586,19 @@ chondral
 osteochondral
 chondromalacia
 subchondral
+outerbridge
+modic
 marrow
 patella
 patellar
 patellofemoral
+suprapatellar
+infrapatellar
 tibiofemoral
+popliteal
 femoral
 femur
+femora
 tibia
 tibial
 fibula
@@ -505,14 +609,20 @@ epicondyle
 epicondylar
 plateau
 intercondylar
+fossa
 trochlea
 trochlear
 malleolus
 malleolar
+retromalleolar
 calcaneus
 calcaneal
+retrocalcaneal
 talus
 talar
+subtalar
+talofibular
+calcaneofibular
 navicular
 cuboid
 cuneiform
@@ -528,24 +638,40 @@ fascia
 achilles
 peroneal
 tarsal
+tarsi
+hindfoot
+midfoot
+forefoot
 scaphoid
 lunate
 triquetrum
+scapholunate
+lunotriquetral
 pisiform
 trapezium
 trapezoid
 capitate
 hamate
 carpal
+radiocarpal
 metacarpal
 metacarpophalangeal
 interphalangeal
+fibrocartilage
+prestyloid
 radius
 radial
 ulna
 ulnar
+radioulnar
+interosseous
 olecranon
 coronoid
+cubital
+capitellum
+humeroradial
+humeroulnar
+radiocapitellar
 humerus
 humeral
 scapula
@@ -559,15 +685,25 @@ sternal
 manubrium
 xiphoid
 costal
+cervical
+lumbar
+spinal
 vertebra
 vertebrae
 vertebral
+intervertebral
+uncovertebral
+endplate
+end-plate
 pedicle
 lamina
 laminae
+interarticularis
 spinous
+interspinous
 facet
 foramen
+foramina
 foraminal
 neuroforaminal
 spondylosis
@@ -586,14 +722,17 @@ sequestration
 radiculopathy
 myelopathy
 conus
+medullaris
 cauda
 equina
 thecal
 ligamentum
 flavum
+paraspinal
 lordosis
 kyphosis
 scoliosis
+malalignment
 listhesis
 retrolisthesis
 anterolisthesis
@@ -607,9 +746,11 @@ iliac
 ilium
 ischium
 ischial
+ischiopubic
 pubic
 pubis
 symphysis
+sciatic
 acetabulum
 acetabular
 femoroacetabular
@@ -618,6 +759,13 @@ trochanter
 trochanteric
 osteoarthritis
 osteoarthrosis
+osteoporosis
+osteoporotic
+osteopenia
+osteopaenia
+osteopenic
+osteopaenic
+trabecular
 osteophyte
 osteophytosis
 enthesophyte
@@ -675,6 +823,13 @@ lipoma
 ganglion
 geode
 permeative
+intrasubstance
+intra-articular
+extra-articular
+periarticular
+full-thickness
+partial-thickness
+hyperextension
 
 # ---------------------------------------------------------------------------
 # Shared descriptors, comparison, and report vocabulary
@@ -696,6 +851,7 @@ circumscribed
 marginated
 margin
 contour
+calibre
 irregular
 infiltrative
 expansile
@@ -703,6 +859,7 @@ aggressive
 indolent
 benign
 malignant
+malignancy
 suspicious
 indeterminate
 incidental
@@ -730,6 +887,7 @@ posttraumatic
 degenerative
 inflammatory
 infectious
+abscess
 neoplastic
 congenital
 acquired
@@ -740,7 +898,11 @@ superimposed
 adjacent
 overlying
 underlying
+anterosuperior
 peripheral
+osseous
+musculoskeletal
+neurovascular
 cortex
 capsule
 capsular

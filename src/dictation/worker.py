@@ -26,8 +26,12 @@ happen once chunks never overlap). This worker instead:
 After recording stops there is no full re-transcribe. A confidence-targeted
 polish (:meth:`LiveTranscribeWorker._run_confidence_targeted_polish`)
 re-decodes only the committed chunks whose mean word confidence fell below
-``_POLISH_CONFIDENCE_CEILING``, plus whatever audio was still open, at higher
+``polish_confidence_ceiling``, plus whatever audio was still open, at higher
 beam width.
+
+Beam widths and the confidence ceiling arrive as constructor arguments (the
+caller reads them from settings — see :mod:`src.ui.recording_session`); this
+worker never reads settings itself.
 """
 
 from __future__ import annotations
@@ -62,9 +66,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _MIN_AUDIO_SEC = 0.8     # ignore audio shorter than this
 _MIN_GROWTH_SEC = 0.5    # min new audio before re-checking for a chunk cut
-_LIVE_BEAM_SIZE = 2      # beam=1 caused repetition; beam=2 still real-time
-_FINAL_BEAM_SIZE = 5     # higher quality for the confidence-targeted polish
-_POLISH_CONFIDENCE_CEILING = 0.75  # committed chunks below this get one re-decode after stop
 
 
 class LiveTranscribeWorker(QObject):
@@ -96,6 +97,9 @@ class LiveTranscribeWorker(QObject):
         model_path: Optional[Union[str, Path]] = None,
         chunk_policy: Optional[ChunkPolicy] = None,
         silence_rms_floor: float = 0.002,
+        live_beam_size: int = 2,
+        final_beam_size: int = 5,
+        polish_confidence_ceiling: float = 0.75,
     ) -> None:
         super().__init__()
         self.audio_path = audio_path
@@ -108,6 +112,9 @@ class LiveTranscribeWorker(QObject):
         self.vad_enabled = vad_enabled
         self.pause_threshold = pause_threshold
         self.silence_rms_floor = max(0.0, float(silence_rms_floor))
+        self.live_beam_size = max(1, int(live_beam_size))
+        self.final_beam_size = max(1, int(final_beam_size))
+        self.polish_confidence_ceiling = float(polish_confidence_ceiling)
         self.model_path = model_path
         self._ledger = ChunkLedger(
             chunk_policy or ChunkPolicy(), pause_threshold=pause_threshold
@@ -238,7 +245,7 @@ class LiveTranscribeWorker(QObject):
                         TranscribeContext(
                             language=self.language,
                             vad_filter=False,  # already cut at a VAD boundary
-                            beam_size=_LIVE_BEAM_SIZE,
+                            beam_size=self.live_beam_size,
                             pause_threshold=self.pause_threshold,
                             condition_on_previous_text=False,
                             initial_prompt=self._build_context_prompt(),
@@ -299,7 +306,7 @@ class LiveTranscribeWorker(QObject):
                     TranscribeContext(
                         language=self.language,
                         vad_filter=False,
-                        beam_size=_LIVE_BEAM_SIZE,
+                        beam_size=self.live_beam_size,
                         pause_threshold=self.pause_threshold,
                         condition_on_previous_text=False,
                         initial_prompt=self._build_context_prompt(),
@@ -328,7 +335,7 @@ class LiveTranscribeWorker(QObject):
         t0 = time.time()
         prompt = self._build_context_prompt()
 
-        for i in self._ledger.low_confidence_indices(_POLISH_CONFIDENCE_CEILING):
+        for i in self._ledger.low_confidence_indices(self.polish_confidence_ceiling):
             c = self._ledger.committed[i]
             clip = audio[c.start_sample:c.end_sample]
             if not len(clip):
@@ -339,7 +346,7 @@ class LiveTranscribeWorker(QObject):
                     TranscribeContext(
                         language=self.language,
                         vad_filter=self.vad_enabled,
-                        beam_size=_FINAL_BEAM_SIZE,
+                        beam_size=self.final_beam_size,
                         pause_threshold=self.pause_threshold,
                         condition_on_previous_text=True,
                         initial_prompt=prompt,
@@ -362,7 +369,7 @@ class LiveTranscribeWorker(QObject):
                     TranscribeContext(
                         language=self.language,
                         vad_filter=self.vad_enabled,
-                        beam_size=_FINAL_BEAM_SIZE,
+                        beam_size=self.final_beam_size,
                         pause_threshold=self.pause_threshold,
                         condition_on_previous_text=True,
                         initial_prompt=prompt,
@@ -482,9 +489,18 @@ class LiveTranscribeWorker(QObject):
         Whisper to echo prior words back into the current chunk under the
         small live beam. Chunks never overlap in this design, so there is no
         boundary-dedup step to lean on instead; the prompt just stays fixed.
+
+        **Order is priority.** Whisper's prompt slot holds 223 tokens and it keeps
+        the LAST 223, discarding the front without a word. The curated radiology
+        vocabulary is sized to fit that slot on its own, so it goes last and
+        always survives. The learned terms go in front, where they fill whatever
+        room is left and are the ones dropped when there is none. Putting them
+        last instead — as this did — let a full custom vocabulary (capped at 80
+        terms, about 216 tokens) push almost the entire shipped dictionary out of
+        the decoder, which is invisible from the outside.
         """
         if custom_terms := get_custom_prompt_suffix():
-            return f"{RADIOLOGY_PROMPT} {custom_terms}"
+            return f"{custom_terms} {RADIOLOGY_PROMPT}"
         else:
             return RADIOLOGY_PROMPT
 

@@ -17,7 +17,7 @@ from src.ui.postprocess_worker import PostprocessWorker, build_changes
 from src.features.accent_corrections import ACCENT_LABELS, suggest_accent
 from src.features import audit_log
 from src.medical.critical_findings import scan_for_critical_findings, format_findings_for_dialog
-from src.ui.styles import COLOR_HEALTHY, COLOR_CLIPPING, COLOR_LOW, LEVEL_BAR_STYLESHEET
+from src.ui.styles import set_level_state
 
 if TYPE_CHECKING:
     from src.ui.main_window import MainWindow
@@ -179,6 +179,9 @@ def on_start_recording(window: MainWindow) -> None:
             force_cut_sec=float(window.settings.get("chunk_force_cut_sec")),
         ),
         silence_rms_floor=float(window.settings.get("silence_rms_floor", 0.002)),
+        live_beam_size=int(window.settings.get("live_beam_size")),
+        final_beam_size=int(window.settings.get("final_beam_size")),
+        polish_confidence_ceiling=float(window.settings.get("polish_confidence_ceiling")),
     )
     window.live_worker.moveToThread(window.live_thread)
     window.live_thread.started.connect(window.live_worker.run)
@@ -201,7 +204,7 @@ def on_stop_recording(window: MainWindow) -> None:
     finally:
         window._level_timer.stop()
         window._level_bar.setValue(0)
-        window._level_bar.setStyleSheet(LEVEL_BAR_STYLESHEET.format(color=COLOR_HEALTHY))
+        set_level_state(window._level_bar, "healthy")
         window.btn_record.setEnabled(True)
         window.btn_stop.setEnabled(False)
         window._show_status("Processing final pass...")
@@ -474,9 +477,9 @@ def update_level_display(window: MainWindow) -> None:
     clipping = window.recorder.is_clipping
     window._level_bar.setValue(int(level * 100))
     if clipping:
-        window._level_bar.setStyleSheet(LEVEL_BAR_STYLESHEET.format(color=COLOR_CLIPPING))
+        set_level_state(window._level_bar, "clipping")
         window._show_status("Microphone clipping — reduce input gain", 1500)
     elif level < 0.03:
-        window._level_bar.setStyleSheet(LEVEL_BAR_STYLESHEET.format(color=COLOR_LOW))
+        set_level_state(window._level_bar, "low")
     else:
-        window._level_bar.setStyleSheet(LEVEL_BAR_STYLESHEET.format(color=COLOR_HEALTHY))
+        set_level_state(window._level_bar, "healthy")

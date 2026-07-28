@@ -53,8 +53,11 @@ class TestContextPrompt:
 
         prompt = worker._build_context_prompt()
 
-        assert prompt.startswith(RADIOLOGY_PROMPT)
-        assert prompt.endswith("custom terms")
+        # Learned terms first, shipped vocabulary last. Whisper keeps only the
+        # LAST 223 tokens of a prompt, so the text written last is the text that
+        # survives — see tests/test_prompt_budget.py.
+        assert prompt.startswith("custom terms")
+        assert prompt.endswith(RADIOLOGY_PROMPT)
         assert "word0" not in prompt
         assert "word199" not in prompt
 
@@ -190,6 +193,11 @@ def _polish_worker(monkeypatch, ledger, engine):
     worker.vad_enabled = True
     worker.pause_threshold = 2.5
     worker.silence_rms_floor = 0.002
+    # Normally injected by the caller from settings (live_beam_size /
+    # final_beam_size / polish_confidence_ceiling); __init__ is bypassed here.
+    worker.live_beam_size = 2
+    worker.final_beam_size = 5
+    worker.polish_confidence_ceiling = 0.75
     worker._ledger = ledger
     worker._decode_sec_total = 0.0
     worker._last_emitted = ""

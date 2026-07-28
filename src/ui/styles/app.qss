@@ -139,3 +139,14 @@ QToolBar {
     border-bottom: 1px solid {{edge}};
     spacing: 4px;
 }
+
+/* Microphone level meter. The `level` property carries the state, so the three
+   state colours sit here with every other colour and follow the active theme. */
+QProgressBar#level_bar {
+    border: 1px solid {{edge}};
+    border-radius: 3px;
+    background-color: {{room}};
+}
+QProgressBar#level_bar::chunk { border-radius: 2px; background-color: {{ok}}; }
+QProgressBar#level_bar[level="low"]::chunk { background-color: {{warn}}; }
+QProgressBar#level_bar[level="clipping"]::chunk { background-color: {{rec}}; }

@@ -14,7 +14,7 @@ Two wordlists with two distinct jobs (keeping them separate is what fixes the
   should preferentially snap to.
 
 :func:`get_symspell` builds a SymSpell index over the *membership* set (so any
-of the ~98k known terms is a valid correction, not just the 756-term curated
+of the ~98k known terms is a valid correction, not just the curated radiology
 lexicon — terms like "esophageal" or "thyroid" are only in the generic list),
 with correction-target entries given a large frequency boost so a tied edit
 distance still prefers the clean radiology spelling (e.g. "efusion" ->

@@ -38,6 +38,7 @@ python -m src.ui.web_app             # web app on http://127.0.0.1:8005 — veri
 - **Critical findings** — a rule-based (NegEx) scan that flags urgent results before sign-off (`src/medical/critical_findings.py`).
 - **De-identification (PHI scrub)** — stripping patient-identifying info before anything leaves the device; only exercised if cloud training is opted in (`src/medical/deid.py`).
 - **Templates** — starter report text per exam type (chest, MSK, etc.), in `src/templates/`.
+- **Design tokens** — the 11 named colours in `src/ui/tokens.json`. Both front-ends render their stylesheets from this one file (`src/ui/theme.py`), so the desktop app and the web app always look like the same product. Red means recording or clinical severity; cyan is the machine's voice; nothing else is coloured.
 - **Abstention** — the optional X-ray assistant's rule to stay silent unless confident and able to localize a finding (`src/imaging/abstention.py`).
 
 ## Where things live

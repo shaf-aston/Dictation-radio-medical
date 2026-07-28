@@ -19,7 +19,7 @@ from src.dictation.postprocess import CLEANUP_LEVEL_LABELS
 from src.features.accent_corrections import ACCENT_LABELS
 from src.medical import macros
 from src.features.file_manager import templates_dir
-from src.ui.styles import COLOR_HEALTHY, LEVEL_BAR_STYLESHEET
+from src.ui.styles import set_level_state
 from src.features.report_manager import DOCX_AVAILABLE
 from src.ui.recording_session import on_start_recording, on_stop_recording
 from src.ui.dialogs import (
@@ -337,13 +337,14 @@ def build_recording_bar(window: MainWindow) -> QFrame:
 
     # Microphone level meter
     window._level_bar = QProgressBar()
+    window._level_bar.setObjectName("level_bar")
     window._level_bar.setRange(0, 100)
     window._level_bar.setValue(0)
     window._level_bar.setFixedWidth(80)
     window._level_bar.setFixedHeight(14)
     window._level_bar.setTextVisible(False)
     window._level_bar.setToolTip("Microphone input level")
-    window._level_bar.setStyleSheet(LEVEL_BAR_STYLESHEET.format(color=COLOR_HEALTHY))
+    set_level_state(window._level_bar, "healthy")
 
     layout.addWidget(window.btn_record)
     layout.addWidget(window.btn_stop)

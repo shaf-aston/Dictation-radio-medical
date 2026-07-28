@@ -16,6 +16,12 @@ _DEFAULTS: dict = {
     "vad_filter": True,
     "accent": "neutral",
     "cleanup_level": "medium",  # post-dictation cleanup intensity: soft/medium/hard
+    # The guessing post-processing stages may not rewrite a word the decoder
+    # reported at or above this confidence (src/dictation/postprocess/
+    # confidence_gate.py). PROVISIONAL: being swept on the eval harness
+    # (scripts/eval/run_eval.py --confidence-ceiling) against false-correction
+    # rate; expect this number to move once the sweep has a winner.
+    "correction_confidence_ceiling": 0.90,
     "theme": "dark",
     "font_size": 13,
     "auto_save_interval": 60,   # seconds
@@ -29,6 +35,11 @@ _DEFAULTS: dict = {
     "chunk_min_sec": 6.0,
     "chunk_soft_max_sec": 15.0,
     "chunk_force_cut_sec": 20.0,
+    # --- Live transcription decode quality (see src/dictation/worker.py) ---
+    "live_beam_size": 2,        # beam=1 caused repetition; beam=2 still real-time
+    "final_beam_size": 5,       # higher quality for the confidence-targeted polish
+    # committed chunks below this mean word confidence get one re-decode after stop
+    "polish_confidence_ceiling": 0.75,
     "beam_size": 5,             # beam width for one-shot (web) batch transcription
     "silence_rms_floor": 0.002,  # skip live cycles quieter than this (anti-hallucination)
     "autosave_retention_days": 30,  # days to keep autosave files

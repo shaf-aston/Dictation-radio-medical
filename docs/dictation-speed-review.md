@@ -17,7 +17,7 @@ on this CPU-only machine.
 |---|---|---|
 | Chunk-close latency | 6–20 s by construction | policy, not inefficiency — `chunk_min_sec` / `chunk_force_cut_sec`; M6 makes it tunable |
 | Decode of a committed chunk | ~5 s at ~0.31 real-time | **M3 only** |
-| Post-stop confidence-targeted polish | re-decode of weak chunks at `_FINAL_BEAM_SIZE` | M6 knob |
+| Post-stop confidence-targeted polish | re-decode of weak chunks at `final_beam_size` | M6 knob (now in settings) |
 | Everything else | 5–14 ms per pipeline pass | noise |
 
 The post-processing pipeline costs **0.08 % of a cycle** — 5–14 ms against the

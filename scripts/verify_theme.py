@@ -70,6 +70,44 @@ finally:
     theme._QSS_FILE = real
     stub.unlink()
 
+# 6. The sheets survive contact with real Qt, and the microphone meter shows
+#    three distinct states in each theme. Qt reports neither a stylesheet it
+#    failed to parse nor a property selector it failed to match — it just paints
+#    something plausible — and the test suite stubs PySide6 out entirely, so this
+#    is the only thing standing between a broken sheet and the radiologist. The
+#    meter was in fact stuck on dark-theme colours until this check was written.
+try:
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QProgressBar
+
+    from src.ui.styles import LEVEL_STATES, set_level_state
+except ImportError:
+    print("note: PySide6 not installed — skipped the painted check (sections 1-5 ran)")
+else:
+    app = QApplication.instance() or QApplication([])
+    for name in theme.THEMES:
+        app.setStyleSheet(sheets[name])
+        painted = {}
+        for state in LEVEL_STATES:
+            bar = QProgressBar()
+            bar.setObjectName("level_bar")
+            bar.setRange(0, 100)
+            bar.setValue(80)
+            bar.setTextVisible(False)
+            bar.setFixedSize(80, 14)
+            set_level_state(bar, state)
+            bar.show()
+            app.processEvents()
+            # Inside the filled chunk, clear of the 1px border.
+            painted[state] = bar.grab().toImage().pixelColor(20, 7).name()
+            bar.close()
+        check(len(set(painted.values())) == len(LEVEL_STATES),
+              f"{name}: mic meter states are not distinct on screen — {painted}")
+        check(set(painted.values()) <= {v.lower() for v in theme.tokens(name).values()},
+              f"{name}: mic meter painted a colour that is not a token — {painted}")
+
 if failures:
     print("FAILED:")
     for line in failures:

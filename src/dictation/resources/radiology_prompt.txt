@@ -1,104 +1,40 @@
 # Domain-specific Whisper initial prompt to prime vocabulary for radiology.
-# Loaded by src/dictation/transcriber.py. Whisper truncates from the front and keeps
-# the last ~224 tokens — so the most universal terms and example phrasing
-# appear at the END of this file.
+# Loaded by src/dictation/transcriber.py.
+#
+# BUDGET: 223 tokens, and this file is sized to fit inside it.
+# faster-whisper keeps only the LAST 223 tokens of initial_prompt
+# (faster_whisper/transcribe.py::get_prompt keeps previous_tokens[-(448//2 - 1):])
+# and silently drops the rest. This file used to be ~1150 tokens, so 81% of it
+# never reached the decoder — including the whole musculoskeletal section, which
+# sat at the front. tests/test_prompt_budget.py holds the line.
+#
+# Order still matters, because truncation eats the FRONT: the least valuable
+# terms come first, the ones Whisper most often mis-hears come last. Generic
+# imaging-physics vocabulary (T2-weighted, Hounsfield, echogenicity...) was
+# dropped outright — it is what used to survive, and it is the least valuable.
+# Learned custom vocabulary (adaptive_learning.get_custom_prompt_suffix) is
+# appended after this file and competes for the same 223 tokens, so pay for any
+# addition here with a deletion.
 #
 # Lines beginning with '#' and blank lines are stripped at load time.
 # Remaining content is joined with single spaces.
 
 Radiology report.
 
-# Ligament acronyms
-ACL, PCL, MCL, LCL, UCL, TFCC, SLIL, ATFL, CFL, SLAP, HAGL.
+# Findings whose mis-transcription changes the clinical meaning
+Pneumothorax, pulmonary embolism, subdural haematoma.
+Undisplaced, comminuted, avulsion fracture.
 
-# Rotator cuff
-Rotator cuff tear, supraspinatus, infraspinatus, subscapularis, teres minor.
+# Musculoskeletal and trauma vocabulary — the highest-value priming, kept last
+ACL, PCL, MCL, LCL, TFCC, SLAP lesion, labral tear.
+Supraspinatus, infraspinatus, subscapularis, rotator cuff tear.
+Glenohumeral, acromioclavicular, patellofemoral, acetabular.
+Menisci, meniscal tear, chondromalacia, osteochondral, subchondral.
+Scaphoid, lunate, calcaneus, talus, navicular.
+Tendinopathy, tenosynovitis, spondylolisthesis.
 
-# Joints
-Glenohumeral, acromioclavicular, patellofemoral, tibiofemoral, sacroiliac.
-
-# Menisci and cartilage
-Meniscus, meniscal tear, menisci, chondromalacia, osteochondral, subchondral, articular cartilage.
-
-# Anatomy directions
-Medial, lateral, anterior, posterior, proximal, distal, superior, inferior.
-Medial meniscus, lateral meniscus, medial collateral ligament, lateral collateral ligament.
-Anterior cruciate ligament, posterior cruciate ligament.
-
-# Bones
-Femoral, tibial, fibular, humeral, radial, ulnar, calcaneus, talus, navicular, scaphoid, lunate.
-Patella, patellar, acetabulum, acetabular, glenoid, acromion, malleolus.
-
-# Spine
-Cervical, thoracic, lumbar, sacral, vertebral.
-Disc protrusion, disc extrusion, disc bulge, disc herniation, foraminal stenosis, spinal stenosis.
-
-# MSK pathology
-Tear, tears, torn, rupture, partial-thickness, full-thickness, intrasubstance.
-Effusion, oedema, bone marrow oedema, avascular necrosis.
-Degenerative, osteoarthritis, erosion, erosive.
-Tendinopathy, tenosynovitis, bursitis, synovitis, enthesopathy, enthesitis.
-Osteophyte, osteophytosis, impingement, contusion, subluxation.
-Spondylolisthesis, spondylolysis, spondylosis.
-
-# Soft tissue
-Labrum, labral, Achilles, plantar fasciitis, fascia, ligament, collateral, cruciate.
-Capsule, capsulitis, bursa, periosteum, retinaculum, ganglion.
-Intact, hyperextension, periarticular, intra-articular, extra-articular.
-
-# Grading
-Kellgren-Lawrence, Outerbridge, Modic, ARCO, SPARCC.
-
-# Chest / CTPA
-Pulmonary embolism, filling defect, pulmonary artery, right ventricle, left ventricle.
-Consolidation, ground-glass opacity, ground glass, atelectasis, bronchiectasis, emphysema.
-Pleural effusion, pneumothorax, pericardial effusion, mediastinal lymphadenopathy.
-Hilar lymphadenopathy, carinal, subcarinal, paratracheal.
-
-# Neuro / CT head
-Infarction, acute infarct, haemorrhage, subdural haematoma, epidural haematoma.
-Subarachnoid haemorrhage, midline shift, hydrocephalus, cerebral, cerebellar.
-Basal ganglia, thalamus, internal capsule, ASPECTS score.
-Hyperdense, hypodense, isodense.
-
-# Abdomen / pelvis
-Hepatomegaly, splenomegaly, cholelithiasis, cholecystitis, choledocholithiasis.
-Common bile duct, biliary dilatation, pancreatic duct, pancreatitis.
-Hydronephrosis, nephrolithiasis, renal calculus, ureteric calculus, urolithiasis.
-Appendicitis, diverticulitis, diverticulosis, bowel obstruction, ileus, ascites.
-Peritoneal, retroperitoneal, mesenteric, lymphadenopathy.
-Aortic aneurysm, aortic dissection, thrombus, thrombosis.
-
-# Ultrasound
-Murphy's sign, gallstone, gallstones, pericholecystic.
-Endometrium, endometrial, myometrium, adnexa, adnexal.
-Ovarian, follicle, corpus luteum, fibroid, leiomyoma.
-
-# MRI sequences
-T1-weighted, T2-weighted, STIR, PDFS, FLAIR, DWI, ADC.
-Hyperintense, hypointense, isointense.
-Fat-saturated, fat-suppressed, proton density-weighted.
-Gadolinium, post-contrast, enhancement, non-enhancing.
-
-# Ultrasound echogenicity
-Hyperechoic, hypoechoic, isoechoic, anechoic, echotexture, echogenicity.
-Homogeneous, heterogeneous, colour Doppler, power Doppler, vascularity.
-Greyscale, through-transmission, acoustic shadowing, posterior enhancement.
-
-# CT terminology
-Hounsfield units, HU, CTPA, CT KUB.
-Ascending colon, descending colon, transverse colon, sigmoid colon, caecum.
-
-# Lab / general
-Amylase, amylases, lipase, lipases, creatinine, haemoglobin.
-
-# Measurements and report structure
-Millimetres, centimetres, degrees.
+# Report structure and example phrasing (primes Whisper's style)
 Examination: Clinical Indication: Technique: Findings: Impression:
-
-# Example report phrasing (primes Whisper's style)
 The anterior cruciate ligament is intact.
 There is a partial-thickness tear of the supraspinatus tendon.
 No acute fracture or dislocation is identified.
-No filling defect is seen within the pulmonary arteries.
-No acute intracranial abnormality.

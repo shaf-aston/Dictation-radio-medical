@@ -62,7 +62,13 @@ src/
 ├── ui/          main_window.py · views.py · recording_session.py · dialogs.py
 │   ├── postprocess_worker.py  runs the pipeline OFF the UI thread, latest-only
 │   ├── web_app.py        FastAPI single-page app (host/port from settings)
-│   ├── styles.py · styles/*.qss · frontends/   desktop + web assets
+│   ├── tokens.json       the ONLY place a UI colour is written down
+│   ├── theme.py          the only reader of tokens.json — renders the Qt sheet
+│   │                       and the web page's CSS custom properties, so the two
+│   │                       front-ends cannot drift apart
+│   ├── styles.py · styles/app.qss · frontends/   desktop + web assets
+│   │                       (neither stylesheet contains a hex value;
+│   │                        scripts/verify_theme.py fails the build if one does)
 │   └── __main__.py       enables `python -m src.ui`
 ├── medical/     medical_dict.py · critical_findings.py (NegEx) · macros.py ·
 │                  deid.py (DeIdentifier + PrivacyError — PHI de-id, the upload
