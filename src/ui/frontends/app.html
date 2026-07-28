@@ -70,6 +70,17 @@
             <textarea id="editor" class="editor" spellcheck="true"
                       placeholder="Press the microphone and start speaking."></textarea>
 
+            <!-- Highlight a word and its neighbourhood appears here: terms that
+                 look like it above, terms that go with it below. Nothing is
+                 applied until the radiologist clicks one. -->
+            <div id="termPop" class="termpop" hidden role="group"
+                 aria-label="Suggestions for the highlighted term">
+                <p class="tp-head"><span id="tpKey"></span></p>
+                <div id="tpSpelling" class="tp-tier"></div>
+                <div id="tpRelated" class="tp-tier tp-quiet"></div>
+                <p class="tp-foot">Click one to replace the highlighted text.</p>
+            </div>
+
             <div class="stage-foot">
                 <button id="dictateBtn" class="rec" type="button"
                         aria-label="Start or stop recording" aria-pressed="false">

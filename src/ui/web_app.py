@@ -5,6 +5,7 @@ import anyio
 import logging
 import time
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from pathlib import Path
 from threading import Lock
 from typing import Literal, Optional
@@ -38,7 +39,7 @@ from src.features.file_manager import (
 )
 from src.features.report_manager import DOCX_AVAILABLE, export_to_word_bytes, format_plain_text_report
 from src.features.report_release import check_release, record_release, unfilled_fields
-from src.medical import macros
+from src.medical import macros, term_lookup
 from src.medical.macros import reload_macros
 from src.ui.theme import css_variables
 
@@ -548,6 +549,25 @@ async def export_word_endpoint(payload: ReportRequest):
     filename = _download_filename(patient, "docx")
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return Response(content=docx_bytes, media_type=DOCX_MIME, headers=headers)
+
+
+@app.get("/api/terms/lookup")
+async def term_lookup_endpoint(q: str = ""):
+    """The two suggestion lists for a highlighted word or phrase.
+
+    Thin: the ranking, the wordlists and the limit all live in
+    ``src.medical.term_lookup``, so this front-end and the desktop one cannot
+    show different neighbours for the same word. Runs off the event loop
+    because the very first call builds the spelling index if start-up warming
+    did not get there first.
+    """
+    limit = term_lookup.max_query_chars()
+    if len(q) > limit:
+        raise HTTPException(
+            status_code=422, detail=f"Select at most {limit} characters"
+        )
+    result = await anyio.to_thread.run_sync(term_lookup.lookup, q)
+    return asdict(result)
 
 
 @app.get("/api/debug/perf")

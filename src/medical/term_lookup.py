@@ -187,6 +187,15 @@ def warm() -> None:
     _index()
 
 
+def max_query_chars() -> int:
+    """Longest selection worth looking up, so a caller can refuse a novel-sized one.
+
+    The transport asks rather than keeping its own copy: the knob lives in
+    ``related_terms.json``, and two copies of a limit is one limit too many.
+    """
+    return _index().tuning["max_query_chars"]
+
+
 def reset() -> None:
     """Drop the cached indexes. For tests, and for reloading an edited file."""
     global _INDEX

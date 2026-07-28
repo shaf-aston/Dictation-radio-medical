@@ -614,3 +614,34 @@ def test_the_ack_endpoint_records_it_in_the_setting_both_front_ends_read(monkeyp
     assert response.status_code == 200
     assert response.json() == {"acknowledged": True}
     assert settings.get("disclaimer_shown") is True
+
+
+def test_term_lookup_returns_both_tiers(monkeypatch) -> None:
+    """The endpoint is a pass-through: the service decides, this only shapes it."""
+    monkeypatch.setattr(
+        web_app.term_lookup, "lookup",
+        lambda q: web_app.term_lookup.TermLookup(
+            query=q, key=q,
+            similar_spelling=[web_app.term_lookup.Suggestion("pneumothorax", "1 letter away")],
+            related=[web_app.term_lookup.Suggestion("chest drain", "pleural space")],
+        ),
+    )
+    with _client(monkeypatch) as client:
+        response = client.get("/api/terms/lookup", params={"q": "pnemothorax"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "query": "pnemothorax",
+        "key": "pnemothorax",
+        "similar_spelling": [{"term": "pneumothorax", "note": "1 letter away"}],
+        "related": [{"term": "chest drain", "note": "pleural space"}],
+    }
+
+
+def test_term_lookup_refuses_an_oversized_selection(monkeypatch) -> None:
+    """A whole report dragged into the endpoint is refused at the boundary."""
+    limit = web_app.term_lookup.max_query_chars()
+    with _client(monkeypatch) as client:
+        response = client.get("/api/terms/lookup", params={"q": "x" * (limit + 1)})
+
+    assert response.status_code == 422

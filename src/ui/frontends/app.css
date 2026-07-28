@@ -414,6 +414,66 @@ select:disabled, input:disabled { opacity: .5; }
 .chips button:hover { border-color: var(--glow); color: var(--glow); }
 
 /* --------------------------------------------------------------------------
+   Term popover: the neighbourhood of the highlighted word
+   Two tiers, and the size difference is the whole message — what the word
+   might have been reads at full strength, what merely goes with it is
+   deliberately quieter so it can be skimmed past. Suggestions are the
+   machine's voice, so they wear --glow, never --rec.
+   -------------------------------------------------------------------------- */
+
+.termpop {
+    position: fixed;
+    z-index: 30;
+    max-width: 22rem;
+    padding: .5rem .55rem .45rem;
+    background: var(--room-2);
+    border: 1px solid var(--edge);
+    border-radius: var(--r);
+    box-shadow: 0 10px 30px rgb(0 0 0 / .35);
+}
+.termpop[hidden] { display: none; }
+
+.tp-head {
+    margin: 0 0 .35rem;
+    font: 600 .72rem var(--mono);
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+
+.tp-tier { display: flex; flex-wrap: wrap; gap: .3rem; }
+.tp-tier:empty { display: none; }
+
+/* The dim tier sits under a divider so the two are read as two answers. */
+.tp-quiet {
+    margin-top: .4rem;
+    padding-top: .4rem;
+    border-top: 1px solid var(--edge);
+}
+
+.tp-tier button {
+    display: inline-flex; align-items: baseline; gap: .35rem;
+    padding: .28rem .55rem;
+    border: 1px solid var(--edge);
+    border-radius: 999px;
+    background: var(--room);
+    color: var(--text);
+    font: inherit; font-size: .88rem;
+    cursor: pointer;
+    transition: border-color .12s var(--ease), color .12s var(--ease);
+}
+.tp-tier button:hover, .tp-tier button:focus-visible {
+    border-color: var(--glow);
+    color: var(--glow);
+}
+.tp-tier button .tp-why { font-size: .7rem; color: var(--text-dim); }
+
+.tp-quiet button { font-size: .78rem; color: var(--text-dim); }
+.tp-quiet button .tp-why { font-size: .66rem; }
+
+.tp-foot { margin: .45rem 0 0; font-size: .68rem; color: var(--text-dim); }
+
+/* --------------------------------------------------------------------------
    Modal: the first-launch clinical disclaimer
    The scrim is the room dimmed further, so it reads as "behind" in both
    themes; the card sits on the same raised chrome as the overflow menu.

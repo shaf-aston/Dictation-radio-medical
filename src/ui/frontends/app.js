@@ -999,6 +999,180 @@ function initDisclaimer() {
     });
 }
 
+// ---------------------------------------------------------------------------
+// The neighbourhood of a highlighted word. Highlight a term and a small panel
+// offers what it might have been (spelling) and what goes with it (related).
+// Both lists — and their order — come from src/medical/term_lookup.py, the
+// same service the desktop window asks, so the two front-ends cannot suggest
+// different things for the same word. Nothing is ever applied on its own.
+// ---------------------------------------------------------------------------
+
+const TERM_POP_DELAY_MS = 300;   // wait for the highlight to settle
+const TERM_POP_OFFSET = 12;      // gap between the pointer and the panel
+
+const termPop = document.getElementById('termPop');
+const termPopKey = document.getElementById('tpKey');
+const termPopSpelling = document.getElementById('tpSpelling');
+const termPopRelated = document.getElementById('tpRelated');
+
+let termPopTimer = null;
+let termPopRequest = 0;
+let termPopSelection = null;
+let lastPointer = null;
+
+function hideTermPop() {
+    if (termPopTimer) {
+        clearTimeout(termPopTimer);
+        termPopTimer = null;
+    }
+    termPopRequest += 1;
+    termPop.hidden = true;
+    termPopSelection = null;
+}
+
+function placeTermPop() {
+    // Anchored to where the highlight was made. A textarea gives no caret
+    // rectangle, so the pointer is the honest answer; a keyboard selection
+    // falls back to the editor's own top-left.
+    const rect = editor.getBoundingClientRect();
+    const from = lastPointer || { x: rect.left + 16, y: rect.top + 16 };
+    const size = termPop.getBoundingClientRect();
+    const left = Math.max(8, Math.min(from.x, window.innerWidth - size.width - 8));
+    const below = from.y + TERM_POP_OFFSET;
+    const top = below + size.height > window.innerHeight - 8
+        ? Math.max(8, from.y - TERM_POP_OFFSET - size.height)
+        : below;
+    termPop.style.left = `${Math.round(left)}px`;
+    termPop.style.top = `${Math.round(top)}px`;
+}
+
+function applyTermSuggestion(term) {
+    const range = termPopSelection;
+    hideTermPop();
+    if (!range) return;
+    editor.value = editor.value.slice(0, range.start) + term + editor.value.slice(range.end);
+    const caret = range.start + term.length;
+    editor.setSelectionRange(caret, caret);
+    editor.focus();
+    pushUndoState();
+}
+
+function renderTermTier(host, items) {
+    host.innerHTML = '';
+    items.forEach((item) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.title = `Replace with "${item.term}"`;
+        const term = document.createElement('span');
+        term.textContent = item.term;
+        btn.appendChild(term);
+        if (item.note) {
+            const why = document.createElement('span');
+            why.className = 'tp-why';
+            why.textContent = item.note;
+            btn.appendChild(why);
+        }
+        btn.addEventListener('click', () => applyTermSuggestion(item.term));
+        host.appendChild(btn);
+    });
+}
+
+function showTermPop(result, range) {
+    const spelling = result.similar_spelling || [];
+    const related = result.related || [];
+    if (!spelling.length && !related.length) {
+        hideTermPop();
+        return;
+    }
+    termPopSelection = range;
+    termPopKey.textContent = result.key || '';
+    renderTermTier(termPopSpelling, spelling);
+    renderTermTier(termPopRelated, related);
+    termPop.hidden = false;
+    placeTermPop();
+}
+
+async function lookupSelectedTerm() {
+    // Recording rewrites the report every second; a panel pinned to text that
+    // is moving underneath it is noise. Lookups are for reviewing.
+    if (isRecording || document.activeElement !== editor) {
+        hideTermPop();
+        return;
+    }
+    const range = { start: editor.selectionStart, end: editor.selectionEnd };
+    const selected = editor.value.slice(range.start, range.end).trim();
+    if (!selected) {
+        hideTermPop();
+        return;
+    }
+
+    termPopRequest += 1;
+    const request = termPopRequest;
+    try {
+        const response = await fetch(`/api/terms/lookup?q=${encodeURIComponent(selected)}`);
+        if (request !== termPopRequest) return;   // a newer highlight won
+        if (!response.ok) {
+            hideTermPop();
+            return;
+        }
+        showTermPop(await response.json(), range);
+    } catch (err) {
+        // A lookup that cannot answer must never interrupt the report.
+        console.warn('Term lookup failed:', err);
+        hideTermPop();
+    }
+}
+
+function scheduleTermLookup() {
+    if (termPopTimer) clearTimeout(termPopTimer);
+    termPopTimer = setTimeout(lookupSelectedTerm, TERM_POP_DELAY_MS);
+}
+
+function initTermPop() {
+    editor.addEventListener('mousemove', (event) => {
+        lastPointer = { x: event.clientX, y: event.clientY };
+    });
+    document.addEventListener('selectionchange', () => {
+        if (document.activeElement === editor) scheduleTermLookup();
+    });
+    editor.addEventListener('input', hideTermPop);
+    editor.addEventListener('blur', () => {
+        // Clicking a suggestion blurs the editor; let that click land first.
+        setTimeout(() => {
+            if (!termPop.contains(document.activeElement)) hideTermPop();
+        }, 0);
+    });
+    window.addEventListener('resize', hideTermPop);
+    document.addEventListener('scroll', hideTermPop, true);
+    document.addEventListener('click', (event) => {
+        if (!termPop.hidden && !termPop.contains(event.target) && event.target !== editor) {
+            hideTermPop();
+        }
+    });
+
+    // Keyboard: Down from the editor steps into the list, arrows move along
+    // it, Escape closes and hands the report back.
+    document.addEventListener('keydown', (event) => {
+        if (termPop.hidden) return;
+        const items = [...termPop.querySelectorAll('button')];
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            hideTermPop();
+            editor.focus();
+        } else if (event.key === 'ArrowDown' && document.activeElement === editor) {
+            event.preventDefault();
+            items[0]?.focus();
+        } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            const at = items.indexOf(document.activeElement);
+            if (at === -1) return;
+            event.preventDefault();
+            const step = event.key === 'ArrowDown' ? 1 : -1;
+            items[(at + step + items.length) % items.length].focus();
+        }
+    });
+}
+
 initPanels();
 initOverflowMenu();
 initDisclaimer();
+initTermPop();
