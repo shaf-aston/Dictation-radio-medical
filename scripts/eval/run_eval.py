@@ -3,6 +3,8 @@
     python -m scripts.eval.run_eval --set tts --set bench
     python -m scripts.eval.run_eval --set tts --baseline data/eval/reports/m0.json
     python -m scripts.eval.run_eval --set tts --label m1-asr-port
+    python -m scripts.eval.run_eval --set tts --confidence-ceiling 0.85   # sweep the veto
+    python -m scripts.eval.run_eval --set tts --confidence-ceiling none   # veto off
 
 Transcribes every clip in the chosen sets, runs the post-processing pipeline on
 the result, and scores three things the project could not previously see:
@@ -34,7 +36,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from scripts.eval.corpus import Clip, KNOWN_SETS, load_set
 from scripts.eval.metrics import correction_effect, term_error_rate, word_error_rate
@@ -70,6 +72,10 @@ class ClipResult:
     reference: str = ""
     raw: str = ""
     processed: str = ""
+    #: Rewrites the confidence veto refused, "orig" -> "repl". Empty when the
+    #: gate is off; kept in full because a gate that blocks the wrong edit has
+    #: to be inspectable, not just countable.
+    vetoed_spans: List[str] = field(default_factory=list)
 
     def as_dict(self, include_text: bool) -> dict:
         data = asdict(self)
@@ -128,10 +134,24 @@ class WhisperRunner:
         """
         self._engine.preload()
 
-    def transcribe(self, path: Path) -> tuple[str, float]:
+    def transcribe(self, path: Path) -> tuple[str, List[Optional[float]], float]:
+        """Transcribe one clip, returning its text, per-word confidences, seconds.
+
+        Word confidence is always requested: it is what the post-processing
+        confidence veto gates on, and asking for it unconditionally keeps the
+        decode cost identical across gated and un-gated runs, so a sweep of the
+        ceiling compares accuracy rather than two different decodes.
+        """
         start = time.perf_counter()
-        result = self._engine.transcribe(str(path), self._ctx_cls(beam_size=self.beam_size))
-        return result.text, time.perf_counter() - start
+        result = self._engine.transcribe(
+            str(path),
+            self._ctx_cls(beam_size=self.beam_size, want_word_confidence=True),
+        )
+        elapsed = time.perf_counter() - start
+        confidences: List[Optional[float]] = [
+            w.confidence for seg in result.segments for w in seg.words
+        ]
+        return result.text, confidences, elapsed
 
 
 # ---------------------------------------------------------------------------
@@ -140,15 +160,27 @@ class WhisperRunner:
 
 def evaluate_clip(
     clip: Clip, runner: WhisperRunner, lexicon: Sequence[str], accent: str,
-    cleanup_level: str,
+    cleanup_level: str, confidence_ceiling: Optional[float] = None,
 ) -> ClipResult:
     """Transcribe, post-process, and score one clip."""
     from src.dictation.postprocess.pipeline import postprocess_transcript
 
-    raw, decode_sec = runner.transcribe(clip.audio_path)
+    raw, confidences, decode_sec = runner.transcribe(clip.audio_path)
+    if confidence_ceiling is not None and len(confidences) != len(raw.split()):
+        # The gate fails safe on a length mismatch, i.e. silently does nothing.
+        # Say so, or a whole sweep could measure an ungated pipeline.
+        logger.warning(
+            "%s: %d word confidences vs %d words - confidence veto inert here",
+            clip.clip_id, len(confidences), len(raw.split()),
+        )
 
+    vetoed: List[str] = []
     pp_start = time.perf_counter()
-    processed = postprocess_transcript(raw, accent=accent, cleanup_level=cleanup_level)
+    processed = postprocess_transcript(
+        raw, accent=accent, cleanup_level=cleanup_level,
+        confidences=confidences or None, confidence_ceiling=confidence_ceiling,
+        vetoed_out=vetoed,
+    )
     pp_sec = time.perf_counter() - pp_start
 
     audio_sec = clip.duration_sec or 0.0
@@ -164,6 +196,7 @@ def evaluate_clip(
         reference=clip.reference,
         raw=raw,
         processed=processed,
+        vetoed_spans=vetoed,
     )
 
 
@@ -201,6 +234,7 @@ def summarise(results: List[ClipResult]) -> Dict[str, float]:
         "true_fixes": true_fixes,
         "false_corrections": false_corrections,
         "net_gain": true_fixes - false_corrections,
+        "vetoed_spans": sum(len(r.vetoed_spans) for r in results),
         # Wall-clock speed on this machine is genuinely noisy — the same 30
         # clips have measured a 0.74 and a 1.00 mean RTF on consecutive runs,
         # with single clips ranging 0.5-2.4. The median is the number to compare
@@ -222,6 +256,7 @@ def summarise(results: List[ClipResult]) -> Dict[str, float]:
 
 def evaluate_sets(
     set_names: List[str], runner: WhisperRunner, accent: str, cleanup_level: str,
+    confidence_ceiling: Optional[float] = None, limit: int = 0,
 ) -> List[SetResult]:
     from src.medical.medical_dict import get_correction_targets
 
@@ -231,9 +266,21 @@ def evaluate_sets(
     out: List[SetResult] = []
     for name in set_names:
         clips = load_set(name)
+        if limit and limit < len(clips):
+            # Always the FIRST n, never a sample: two runs must score the same
+            # clips or their numbers are not comparable, which is the whole point
+            # of running a subset. Loudly, because a partial score read as a full
+            # one is exactly the kind of flattering number this harness exists to
+            # prevent.
+            logger.warning(
+                "Set '%s': --limit %d of %d clip(s) — a PARTIAL score, not "
+                "comparable with a full run", name, limit, len(clips),
+            )
+            clips = clips[:limit]
         logger.info("Set '%s': %d clip(s) - %s", name, len(clips), KNOWN_SETS.get(name, ""))
         results = [
-            evaluate_clip(c, runner, lexicon, accent, cleanup_level) for c in clips
+            evaluate_clip(c, runner, lexicon, accent, cleanup_level, confidence_ceiling)
+            for c in clips
         ]
         for i, r in enumerate(results, 1):
             logger.info(
@@ -256,7 +303,7 @@ def evaluate_sets(
 
 def build_report(
     sets: List[SetResult], runner: WhisperRunner, accent: str, cleanup_level: str,
-    label: str, include_text: bool,
+    label: str, include_text: bool, confidence_ceiling: Optional[float] = None,
 ) -> dict:
     return {
         "label": label,
@@ -269,6 +316,9 @@ def build_report(
             **runner.describe(),
             "accent": accent,
             "cleanup_level": cleanup_level,
+            # None = the confidence veto was off for this run. Recorded so two
+            # reports from a ceiling sweep are comparable at a glance.
+            "confidence_ceiling": confidence_ceiling,
         },
         "sets": {
             s.set_name: {
@@ -309,12 +359,38 @@ def print_summary(report: dict, baseline: dict | None) -> None:
         print(f"   {'true fixes / false':<22} "
               f"{summary.get('true_fixes', 0):>4} / {summary.get('false_corrections', 0)}"
               f"   net {summary.get('net_gain', 0):+d}")
+        ceiling = report.get("config", {}).get("confidence_ceiling")
+        print(f"   {'confidence veto':<22} "
+              f"{'off' if ceiling is None else f'>={ceiling:.2f}'}"
+              f"   {summary.get('vetoed_spans', 0)} span(s) kept")
         print()
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+def _resolve_ceiling(flag: str, settings: Settings) -> Optional[float]:
+    """Turn ``--confidence-ceiling`` into the value the pipeline takes.
+
+    Empty flag = the shipped setting, ``"none"`` = veto off, anything else must
+    be a probability. A typo'd ceiling raises rather than quietly evaluating an
+    ungated pipeline under a gated label.
+    """
+    raw = (flag or "").strip().lower()
+    if not raw:
+        value = settings.get("correction_confidence_ceiling")
+        return None if value is None else float(value)
+    if raw == "none":
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"--confidence-ceiling: not a number: {flag!r}") from None
+    if not 0.0 <= value <= 1.0:
+        raise ValueError(f"--confidence-ceiling must be within 0-1, got {value}")
+    return value
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Evaluate dictation accuracy and speed")
@@ -327,8 +403,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--beam-size", type=int, default=0, help="override beam width")
     parser.add_argument("--cleanup-level", default="", choices=["", "soft", "medium", "hard"],
                         help="override the post-processing level from settings")
+    parser.add_argument("--confidence-ceiling", default="",
+                        help="post-processing confidence veto: a float 0-1, or "
+                             "'none' to disable it (default: the setting)")
     parser.add_argument("--no-text", action="store_true",
                         help="omit per-clip transcripts from the report (smaller file)")
+    parser.add_argument("--limit", type=int, default=0,
+                        help="score only the first N clips of each set — a fast, "
+                             "PARTIAL run for comparing two configurations; never "
+                             "quote its numbers as a set's score")
     args = parser.parse_args(argv)
 
     setup_logging()
@@ -337,6 +420,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     beam = args.beam_size or int(settings.get("beam_size", 5))
     accent = settings.get("accent", "neutral")
     cleanup_level = args.cleanup_level or settings.get("cleanup_level", "medium")
+    try:
+        ceiling = _resolve_ceiling(args.confidence_ceiling, settings)
+    except ValueError as exc:
+        logger.error("%s", exc)
+        return 1
 
     baseline = None
     if args.baseline:
@@ -348,17 +436,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
 
     runner = WhisperRunner(model_size=model, beam_size=beam)
-    logger.info("Loading %s (beam=%d, cleanup=%s)...", model, beam, cleanup_level)
+    logger.info(
+        "Loading %s (beam=%d, cleanup=%s, confidence veto=%s)...",
+        model, beam, cleanup_level, "off" if ceiling is None else f">={ceiling:.2f}",
+    )
     runner.warmup()
 
     try:
-        sets = evaluate_sets(args.sets, runner, accent, cleanup_level)
+        sets = evaluate_sets(
+            args.sets, runner, accent, cleanup_level, ceiling, args.limit
+        )
     except (FileNotFoundError, ValueError) as exc:
         logger.error("%s", exc)
         return 1
 
     label = args.label or f"{model}-beam{beam}"
-    report = build_report(sets, runner, accent, cleanup_level, label, not args.no_text)
+    report = build_report(
+        sets, runner, accent, cleanup_level, label, not args.no_text, ceiling
+    )
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = eval_reports_dir() / f"{label.replace('/', '_')}_{stamp}.json"

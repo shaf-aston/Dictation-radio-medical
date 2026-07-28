@@ -18,10 +18,14 @@ _DEFAULTS: dict = {
     "cleanup_level": "medium",  # post-dictation cleanup intensity: soft/medium/hard
     # The guessing post-processing stages may not rewrite a word the decoder
     # reported at or above this confidence (src/dictation/postprocess/
-    # confidence_gate.py). PROVISIONAL: being swept on the eval harness
-    # (scripts/eval/run_eval.py --confidence-ceiling) against false-correction
-    # rate; expect this number to move once the sweep has a winner.
-    "correction_confidence_ceiling": 0.90,
+    # confidence_gate.py). None = off, which is what it measured its way to:
+    # on the `tts` gold set at 0.90 the gate blocked two rewrites and both were
+    # correct ones, so it could only subtract. Whisper is confidently wrong often
+    # enough that its confidence does not separate a misheard word from a heard
+    # one — at least not on synthetic audio, where every word scores high.
+    # Set a float to switch it on; the honest test is the `own` set, real
+    # acoustics, where confidence actually varies. See docs/dictation-accuracy.md.
+    "correction_confidence_ceiling": None,
     "theme": "dark",
     "font_size": 13,
     "auto_save_interval": 60,   # seconds

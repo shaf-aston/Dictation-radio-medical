@@ -255,6 +255,12 @@ unrealistically clean audio) · `libri` (public-domain read speech: general
 English regression + per-engine RTF) · `bench` (the existing `data/bench_audio/`
 clips, once hand-corrected).
 
+What the harness has actually decided so far — including the two changes that
+moved the false-correction rate and the one that was measured and switched back
+off — is in [docs/dictation-accuracy.md](docs/dictation-accuracy.md). Read it
+before proposing an accuracy change; several obvious ones are already refuted
+there.
+
 Sets live in `data/eval/<name>/` (gitignored — the `own` set is the user's
 recorded voice). A reference still marked `[UNREVIEWED]` is a machine draft, and
 `corpus.load_set` refuses to score against one: grading a model on its own
