@@ -91,9 +91,9 @@ try:
     import os
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication, QProgressBar
+    from PySide6.QtWidgets import QApplication, QLabel, QProgressBar
 
-    from src.ui.styles import LEVEL_STATES, set_level_state
+    from src.ui.styles import LEVEL_STATES, STATUS_STATES, set_level_state, set_status_state
 except ImportError:
     print("note: PySide6 not installed — skipped the painted check (sections 1-5 ran)")
 else:
@@ -118,6 +118,26 @@ else:
               f"{name}: mic meter states are not distinct on screen — {painted}")
         check(set(painted.values()) <= {v.lower() for v in theme.tokens(name).values()},
               f"{name}: mic meter painted a colour that is not a token — {painted}")
+
+        # The status pill signals its state through colour and border, not
+        # background (its background stays {{room}} except while recording) —
+        # so the border is what to sample, not the fill the mic meter uses.
+        pill_painted = {}
+        for state in STATUS_STATES:
+            pill = QLabel("REC")
+            pill.setObjectName("state_pill")
+            pill.setFixedSize(60, 30)
+            set_status_state(pill, state)
+            pill.show()
+            app.processEvents()
+            # Left border, mid-height — inside the straight run between the
+            # rounded corners (radius 10, half-height 15), clear of the text.
+            pill_painted[state] = pill.grab().toImage().pixelColor(0, 15).name()
+            pill.close()
+        check(len(set(pill_painted.values())) == len(STATUS_STATES),
+              f"{name}: status pill states are not distinct on screen — {pill_painted}")
+        check(set(pill_painted.values()) <= {v.lower() for v in theme.tokens(name).values()},
+              f"{name}: status pill painted a colour that is not a token — {pill_painted}")
 
 if failures:
     print("FAILED:")
