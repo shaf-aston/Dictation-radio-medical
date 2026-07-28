@@ -47,15 +47,9 @@
 :root {
     color-scheme: dark light;
 
-    --room:      #0B1116;   /* the dim reading room */
-    --room-2:    #131E25;   /* raised chrome */
-    --film:      #16232B;   /* the lit editor surface */
-    --edge:      #253742;
-    --text:      #DEE8ED;
-    --text-dim:  #8298A5;
-    --glow:      #4FB6C6;   /* lightbox cyan */
-    --rec:       #E2564F;   /* recording, and only recording */
-    --ok:        #5FBF8B;
+    /* Colours are NOT here. They come from src/ui/tokens.json, rendered into
+       the page's <head> by src/ui/theme.py — the same file the desktop
+       stylesheet reads, so the two front-ends cannot drift apart. */
 
     --r:      6px;
     --gap:    clamp(.7rem, 1.6vw, 1.1rem);
@@ -68,43 +62,6 @@
     --ease: cubic-bezier(.2, .7, .3, 1);
 }
 
-@media (prefers-color-scheme: light) {
-    :root {
-        --room:     #E7EDF0;
-        --room-2:   #F3F7F9;
-        --film:     #FFFFFF;
-        --edge:     #CBD8DE;
-        --text:     #101A21;
-        --text-dim: #5A7181;
-        --glow:     #157F91;
-        --rec:      #C43F38;
-        --ok:       #2F8558;
-    }
-}
-
-:root[data-theme="light"] {
-    --room:     #E7EDF0;
-    --room-2:   #F3F7F9;
-    --film:     #FFFFFF;
-    --edge:     #CBD8DE;
-    --text:     #101A21;
-    --text-dim: #5A7181;
-    --glow:     #157F91;
-    --rec:      #C43F38;
-    --ok:       #2F8558;
-}
-
-:root[data-theme="dark"] {
-    --room:     #0B1116;
-    --room-2:   #131E25;
-    --film:     #16232B;
-    --edge:     #253742;
-    --text:     #DEE8ED;
-    --text-dim: #8298A5;
-    --glow:     #4FB6C6;
-    --rec:      #E2564F;
-    --ok:       #5FBF8B;
-}
 
 /* --------------------------------------------------------------------------
    Base
@@ -221,7 +178,7 @@ body {
     color: var(--room);
     font-weight: 600;
 }
-.btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--glow) 85%, #fff); }
+.btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--glow) 85%, var(--text)); }
 
 .btn-quiet { font-size: .82rem; padding: .35rem .65rem; color: var(--text-dim); }
 .btn-quiet:hover:not(:disabled) { color: var(--text); }
@@ -318,7 +275,7 @@ body {
     border-radius: 50%;
     border: 0;
     background: var(--rec);
-    color: #fff;
+    color: var(--film);
     font-size: 1.2rem;
     display: grid; place-items: center;
     cursor: pointer;

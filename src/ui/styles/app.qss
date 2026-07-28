@@ -1,0 +1,141 @@
+/* ===========================================================================
+   Radio Dictate — desktop stylesheet
+   ---------------------------------------------------------------------------
+   ONE sheet for both themes. Every placeholder below is filled in from
+   tokens.json by src/ui/theme.py, the same file the web front-end reads — so the
+   two apps cannot drift apart. Never write a hex value in here; add a token.
+
+   The idea, shared with the web app: the report is a film on a lightbox. The
+   editor is the brightest surface on screen and everything around it is the dim
+   reading room. Red means recording or clinical severity and nothing else, so
+   when red appears it always means something.
+   =========================================================================== */
+
+QMainWindow, QWidget {
+    background-color: {{room}};
+    color: {{text}};
+    font-family: 'Segoe UI Variable Text', 'Segoe UI', Arial, sans-serif;
+}
+
+/* The lit surface. */
+QTextEdit {
+    background-color: {{film}};
+    color: {{text}};
+    border: 1px solid {{edge}};
+    border-radius: 4px;
+    padding: 8px;
+    selection-background-color: {{glow}};
+    selection-color: {{room}};
+}
+
+QPushButton {
+    background-color: {{room2}};
+    color: {{text}};
+    border: 1px solid {{edge}};
+    border-radius: 4px;
+    padding: 5px 12px;
+    min-height: 28px;
+}
+QPushButton:hover    { background-color: {{hover}}; }
+QPushButton:pressed  { background-color: {{edge}}; }
+QPushButton:disabled { background-color: {{room}}; color: {{textDim}}; border-color: {{room2}}; }
+
+/* The only coloured control: the one that puts the app into the recording state. */
+QPushButton#btn_record {
+    background-color: {{rec}};
+    color: {{film}};
+    border-color: {{rec}};
+    font-weight: 600;
+}
+QPushButton#btn_record:hover    { background-color: {{rec}}; border-color: {{text}}; }
+QPushButton#btn_record:disabled { background-color: {{room2}}; color: {{textDim}}; border-color: {{edge}}; }
+
+QPushButton#btn_stop, QPushButton#btn_word { font-weight: 600; }
+
+QComboBox {
+    background-color: {{room2}};
+    color: {{text}};
+    border: 1px solid {{edge}};
+    border-radius: 4px;
+    padding: 4px 8px;
+    min-height: 26px;
+}
+QComboBox::drop-down { border: none; }
+QComboBox QAbstractItemView {
+    background-color: {{room2}};
+    color: {{text}};
+    border: 1px solid {{edge}};
+    selection-background-color: {{hover}};
+}
+
+QLineEdit {
+    background-color: {{film}};
+    color: {{text}};
+    border: 1px solid {{edge}};
+    border-radius: 4px;
+    padding: 4px 8px;
+    min-height: 26px;
+}
+QLineEdit:focus { border-color: {{glow}}; }
+
+QLabel { color: {{textDim}}; }
+
+QStatusBar {
+    background-color: {{room2}};
+    color: {{textDim}};
+    border-top: 1px solid {{edge}};
+}
+QStatusBar::item { border: none; }
+
+QMenuBar {
+    background-color: {{room2}};
+    color: {{text}};
+    border-bottom: 1px solid {{edge}};
+}
+QMenuBar::item:selected { background-color: {{hover}}; }
+QMenu {
+    background-color: {{room2}};
+    color: {{text}};
+    border: 1px solid {{edge}};
+}
+QMenu::item:selected { background-color: {{hover}}; }
+QMenu::separator { background-color: {{edge}}; height: 1px; }
+
+QToolButton#fold_header {
+    background-color: transparent;
+    border: none;
+    color: {{textDim}};
+    font-weight: 600;
+    font-size: 11px;
+    text-align: left;
+    padding: 4px 6px;
+}
+QToolButton#fold_header:hover { color: {{text}}; }
+
+QFrame#patient_panel, QFrame#macros_panel {
+    background-color: {{room2}};
+    border: 1px solid {{edge}};
+    border-radius: 4px;
+}
+
+QScrollArea { background-color: transparent; border: none; }
+QScrollBar:vertical { background-color: {{room}}; width: 8px; }
+QScrollBar::handle:vertical { background-color: {{edge}}; border-radius: 4px; }
+QScrollBar::handle:vertical:hover { background-color: {{textDim}}; }
+
+QSplitter::handle { background-color: {{edge}}; width: 2px; }
+
+QCheckBox { color: {{text}}; }
+QCheckBox::indicator {
+    width: 16px; height: 16px;
+    border: 1px solid {{edge}};
+    border-radius: 3px;
+    background-color: {{room2}};
+}
+QCheckBox::indicator:checked { background-color: {{glow}}; border-color: {{glow}}; }
+
+QToolBar {
+    background-color: {{room2}};
+    border-bottom: 1px solid {{edge}};
+    spacing: 4px;
+}

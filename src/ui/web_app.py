@@ -35,6 +35,7 @@ from src.features.report_manager import DOCX_AVAILABLE, export_to_word_bytes, fo
 from src.medical import macros
 from src.medical.critical_findings import format_findings_for_dialog, scan_for_critical_findings
 from src.medical.macros import reload_macros
+from src.ui.theme import css_variables
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +260,7 @@ def _render_html(theme: str) -> str:
     return (
         _frontend_file("app.html")
         .replace("__THEME__", _normalize_theme(theme))
+        .replace("__THEME_VARS__", css_variables())
         .replace("__BOOTSTRAP_SCRIPT__", script)
     )
 
