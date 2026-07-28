@@ -75,21 +75,26 @@ def build_panels(window: MainWindow) -> QWidget:
     """Stack the three secondary panels, each in the same folding section.
 
     One mechanism for all three (``ui/collapsible.Section``), so they fold and
-    look identically and a fourth panel costs three lines. Template is open by
-    default because it is the one reached for at the start of every report; the
-    patient section's state is restored from the saved setting by MainWindow,
-    and the View menu's Ctrl+P still drives the same state.
+    look identically and a fourth panel costs three lines. Each section's fold
+    state is restored from its saved setting; the patient section additionally
+    stays in sync with the View menu's Ctrl+P through MainWindow.
     """
     holder = QWidget()
     layout = QVBoxLayout(holder)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(2)
 
-    window.template_section = Section("Template and text size", build_template_panel(window), True)
+    window.template_section = Section(
+        "Template and text size", build_template_panel(window),
+        window.settings.get("panel_template_open", True),
+    )
     window.patient_panel = build_patient_panel(window)
     window.patient_section = Section("Patient details", window.patient_panel)
     window.patient_section.header.setToolTip("Show or hide the patient fields (Ctrl+P)")
-    window.settings_section = Section("Dictation settings", build_settings_panel(window))
+    window.settings_section = Section(
+        "Dictation settings", build_settings_panel(window),
+        window.settings.get("panel_settings_open", False),
+    )
 
     for section in (window.template_section, window.patient_section, window.settings_section):
         layout.addWidget(section)

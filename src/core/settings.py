@@ -62,6 +62,8 @@ _DEFAULTS: dict = {
     "recent_reports": [],
     "patient_info_visible": True,
     "macros_panel_visible": True,
+    "panel_template_open": True,
+    "panel_settings_open": False,
     "last_template": "",
     "last_macro_region": "Knee",
     "window_width": 1200,

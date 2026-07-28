@@ -185,6 +185,8 @@ class MainWindow(QMainWindow):
 
         build_ui(self)
         self.patient_section.toggled.connect(self._on_patient_section_toggled)
+        self.template_section.toggled.connect(self._on_template_section_toggled)
+        self.settings_section.toggled.connect(self._on_settings_section_toggled)
         build_menu(self)
         self._setup_shortcuts()
         self._setup_autosave_timer()
@@ -363,6 +365,14 @@ class MainWindow(QMainWindow):
     def _on_patient_section_toggled(self, visible: bool) -> None:
         if self.settings.get("patient_info_visible") != visible:
             self.settings.set("patient_info_visible", visible)
+
+    def _on_template_section_toggled(self, expanded: bool) -> None:
+        if self.settings.get("panel_template_open") != expanded:
+            self.settings.set("panel_template_open", expanded)
+
+    def _on_settings_section_toggled(self, expanded: bool) -> None:
+        if self.settings.get("panel_settings_open") != expanded:
+            self.settings.set("panel_settings_open", expanded)
 
     def _set_macros_panel_visible(self, visible: bool) -> None:
         self.macros_panel.setVisible(visible)
