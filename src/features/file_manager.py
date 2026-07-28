@@ -106,6 +106,15 @@ def radiology_lexicon_path() -> Path:
     """
     return _project_root() / "src" / "resources" / "radiology_lexicon.txt"
 
+def related_terms_path() -> Path:
+    """Curated term relations + tuning for the highlight-a-word lookup.
+
+    The half of "the neighbourhood of a word" a stem cannot find
+    (pneumothorax -> chest drain); see :mod:`src.medical.term_lookup`.
+    Read-only static resource.
+    """
+    return _project_root() / "src" / "resources" / "related_terms.json"
+
 def medical_dict_cache_path() -> Path:
     """Cached SymSpell index built from the medical wordlist + radiology lexicon.
 

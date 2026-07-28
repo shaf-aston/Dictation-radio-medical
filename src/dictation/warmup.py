@@ -74,16 +74,28 @@ def _warm_english_guard() -> None:
     _english_known("warmup")
 
 
-def postprocess_warmers() -> List[Warmer]:
-    """Warmers for the post-process singletons — no model, no settings needed.
+def _warm_term_lookup() -> None:
+    # Mines the lexicon's stem families and reads the curated relations file
+    # (~150 ms) for the highlight-a-word panel. Warmed here, with the rest,
+    # because both front-ends already call this list — a warmer added only to
+    # one of them is how the two drift apart.
+    from src.medical import term_lookup
 
-    Always safe to run: these are device-agnostic, pure-Python index builds.
+    term_lookup.warm()
+
+
+def postprocess_warmers() -> List[Warmer]:
+    """Warmers for the pure-Python singletons — no model, no settings needed.
+
+    Always safe to run: these are device-agnostic index builds, wanted by every
+    front-end before the radiologist's first word (or first highlight).
     """
     return [
         ("medical_symspell", _warm_symspell),
         ("english_guard", _warm_english_guard),
         ("terminology", _warm_terminology),
         ("context_model", _warm_context_model),
+        ("term_lookup", _warm_term_lookup),
     ]
 
 

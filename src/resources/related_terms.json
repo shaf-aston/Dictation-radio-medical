@@ -1,0 +1,85 @@
+{
+  "_why": "The curated half of 'the neighbourhood of the word' (src/medical/term_lookup.py). When a radiologist highlights a term, the service shows terms that look like it (spelling, from radiology_lexicon.txt) and terms that go with it (this file, plus stem families mined from the lexicon). Stems find pneumothorax -> haemothorax for free; only a human can say pneumothorax -> chest drain. That is what belongs here.",
+  "_how_to_extend": "Add a term to an existing group, or add a new group. A group is a set of terms that belong together clinically; every member is offered as a neighbour of every other member, so no pair has to be written twice. Terms may be phrases ('chest drain') and need not be in the lexicon. Two rules: keep groups small (a 30-term group makes every one of its members a weak suggestion), and put first the members a shared stem could never find — only the first few of a group are shown before the mined stems, and writing 'haemothorax' under 'pneumothorax' spends that space on something the stems already produce.",
+  "_not_clinical_guidance": "These are associative hints for finding a word, never a differential diagnosis and never advice. Nothing here is applied to the report automatically.",
+
+  "tuning": {
+    "_why": "Knobs live here rather than in the code that reads them. min_morpheme_chars is the one worth understanding: at 4 the mined stems start matching grammar rather than meaning (fracture -> echotexture on '-ture', meniscus -> meningioma on 'meni-'); 5 keeps '-thorax', 'pneumo-' and '-ectasis' and drops those.",
+    "max_query_chars": 60,
+    "max_similar": 6,
+    "max_related": 8,
+    "max_curated_before_stems": 4,
+    "spelling_edit_distance": 2,
+    "min_morpheme_chars": 5,
+    "min_remainder_chars": 2,
+    "min_family_terms": 2,
+    "max_family_terms": 12
+  },
+
+  "groups": [
+    {
+      "name": "pleural space",
+      "terms": ["pneumothorax", "chest drain", "tension pneumothorax", "effusion", "empyema", "pleural", "intercostal drain", "haemothorax"]
+    },
+    {
+      "name": "chest trauma",
+      "terms": ["rib fracture", "flail chest", "pneumothorax", "haemothorax", "contusion", "clavicle", "scapula", "sternum", "pneumomediastinum", "subcutaneous emphysema"]
+    },
+    {
+      "name": "chest drain and lines",
+      "terms": ["chest drain", "intercostal drain", "central line", "endotracheal tube", "nasogastric tube", "pneumothorax", "malposition"]
+    },
+    {
+      "name": "bone injury",
+      "terms": ["fracture", "dislocation", "subluxation", "avulsion", "comminuted", "displaced", "nondisplaced", "angulation", "impaction"]
+    },
+    {
+      "name": "fracture healing",
+      "terms": ["callus", "malunion", "nonunion", "periosteal", "occult", "stress fracture", "insufficiency"]
+    },
+    {
+      "name": "joint effusion and blood",
+      "terms": ["hemarthrosis", "haemarthrosis", "lipohemarthrosis", "effusion", "synovitis", "fracture"]
+    },
+    {
+      "name": "shoulder girdle",
+      "terms": ["clavicle", "acromioclavicular", "sternoclavicular", "scapula", "glenoid", "glenohumeral", "acromion", "dislocation"]
+    },
+    {
+      "name": "rotator cuff",
+      "terms": ["supraspinatus", "infraspinatus", "subscapularis", "teres", "tendinopathy", "subacromial", "bursitis", "full-thickness", "partial-thickness"]
+    },
+    {
+      "name": "knee internal derangement",
+      "terms": ["meniscus", "cruciate", "ligament", "patella", "chondral", "effusion", "sprain"]
+    },
+    {
+      "name": "airspace disease",
+      "terms": ["consolidation", "atelectasis", "collapse", "infiltrate", "bronchopneumonia", "aspiration", "ground-glass", "air bronchogram"]
+    },
+    {
+      "name": "heart failure",
+      "terms": ["cardiomegaly", "oedema", "edema", "congestion", "effusion", "kerley", "upper lobe diversion"]
+    },
+    {
+      "name": "degenerative spine",
+      "terms": ["spondylosis", "osteophyte", "facet", "foraminal", "protrusion", "extrusion", "listhesis", "endplate", "modic"]
+    },
+    {
+      "name": "bone density",
+      "terms": ["osteopenia", "osteoporosis", "sclerosis", "lytic", "permeative", "trabecular", "insufficiency"]
+    },
+    {
+      "name": "lung nodule",
+      "terms": ["nodule", "mass", "spiculated", "lobulated", "calcified", "granuloma", "cavitation", "lymphadenopathy"]
+    },
+    {
+      "name": "pulmonary embolism",
+      "terms": ["embolism", "embolus", "thrombus", "filling defect", "ctpa", "infarct"]
+    },
+    {
+      "name": "abdominal free gas and fluid",
+      "terms": ["pneumoperitoneum", "ascites", "perforation", "free fluid", "haemoperitoneum"]
+    }
+  ]
+}
