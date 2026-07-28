@@ -24,6 +24,12 @@ from src.dictation.postprocess.pipeline import (
 from src.dictation.asr import AsrEngine, TranscribeContext, create_engine
 from src.dictation.transcriber import SUPPORTED_MODELS, resolve_model
 from src.features.accent_corrections import ACCENT_LABELS
+from src.features.clinical_disclaimer import (
+    DISCLAIMER_TEXT,
+    DISCLAIMER_TITLE,
+    mark_shown,
+    needs_showing,
+)
 from src.features.file_manager import (
     report_filename,
     settings_file,
@@ -218,6 +224,20 @@ def _bootstrap_payload() -> dict:
         ],
         "macros": _macros_payload(),
         "docx_available": DOCX_AVAILABLE,
+        # The first-launch clinical disclaimer, shipped with the rest of the
+        # first-load state rather than fetched separately — the page must be
+        # able to show it before the radiologist can type anything.
+        #
+        # There is deliberately no learning-consent equivalent here: adaptive
+        # learning is captured only by the desktop window (main_window.py
+        # `flush_dictation_edits` / `track_edit`), so the web app collects
+        # nothing to consent to. Wiring capture into this front-end means
+        # adding the consent gate with it.
+        "disclaimer": {
+            "title": DISCLAIMER_TITLE,
+            "text": DISCLAIMER_TEXT,
+            "needed": needs_showing(_settings()),
+        },
     }
 
 
@@ -339,6 +359,19 @@ async def favicon():
     if favicon_path.exists():
         return Response(content=favicon_path.read_bytes(), media_type="image/svg+xml")
     return Response(content=b"", status_code=204)
+
+
+@app.post("/api/disclaimer/ack")
+async def acknowledge_disclaimer():
+    """Record that the radiologist has read the first-launch disclaimer.
+
+    The HTTP shape of the shared statement in
+    ``features/clinical_disclaimer.py``; the text itself rides in the page
+    bootstrap. The same setting the desktop dialog writes, so acknowledging in
+    either front-end settles it for both.
+    """
+    mark_shown(_settings())
+    return {"acknowledged": True}
 
 
 @app.get("/api/theme")

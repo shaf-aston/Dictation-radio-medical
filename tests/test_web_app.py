@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from uuid import uuid4
@@ -477,3 +478,54 @@ def test_a_scanner_fault_never_blocks_a_report(monkeypatch) -> None:
         response = _save_txt(client, _URGENT_TEXT)
 
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# First-launch clinical disclaimer
+#
+# The desktop app has shown it since day one and the web app showed nothing,
+# while both read the same setting — so a web-only radiologist never saw it.
+# ---------------------------------------------------------------------------
+
+def _bootstrap_from(html: str) -> dict:
+    marker = "window.__BOOTSTRAP__="
+    start = html.index(marker) + len(marker)
+    return json.loads(html[start:html.index(";</script>", start)])
+
+
+def test_first_load_ships_the_disclaimer_and_the_modal_to_show_it_in(monkeypatch) -> None:
+    settings = DummySettings({"theme": "dark"})
+    monkeypatch.setattr(web_app, "_settings", lambda: settings)
+
+    with _client(monkeypatch) as client:
+        response = client.get("/")
+
+    disclaimer = _bootstrap_from(response.text)["disclaimer"]
+    assert disclaimer["needed"] is True
+    assert "FDA" in disclaimer["text"]
+    assert disclaimer["title"]
+    # The page has somewhere to put it, and the wording is not duplicated there.
+    assert 'id="disclaimerModal"' in response.text
+    assert 'id="disclaimerAckBtn"' in response.text
+
+
+def test_an_acknowledged_disclaimer_is_not_shown_again(monkeypatch) -> None:
+    settings = DummySettings({"theme": "dark", "disclaimer_shown": True})
+    monkeypatch.setattr(web_app, "_settings", lambda: settings)
+
+    with _client(monkeypatch) as client:
+        response = client.get("/")
+
+    assert _bootstrap_from(response.text)["disclaimer"]["needed"] is False
+
+
+def test_the_ack_endpoint_records_it_in_the_setting_both_front_ends_read(monkeypatch) -> None:
+    settings = DummySettings({"theme": "dark"})
+    monkeypatch.setattr(web_app, "_settings", lambda: settings)
+
+    with _client(monkeypatch) as client:
+        response = client.post("/api/disclaimer/ack")
+
+    assert response.status_code == 200
+    assert response.json() == {"acknowledged": True}
+    assert settings.get("disclaimer_shown") is True

@@ -192,6 +192,22 @@
     </main>
 </div>
 
+<!-- First-launch clinical disclaimer. The wording is not here: it comes from
+     src/features/clinical_disclaimer.py through the bootstrap payload, so the
+     desktop dialog and this modal cannot say different things. -->
+<div id="disclaimerModal" class="scrim" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="disclaimerTitle"
+         aria-describedby="disclaimerText">
+        <h2 id="disclaimerTitle" class="modal-title"></h2>
+        <p id="disclaimerText" class="modal-text"></p>
+        <div class="modal-foot">
+            <button id="disclaimerAckBtn" class="btn btn-primary" type="button">
+                I understand
+            </button>
+        </div>
+    </div>
+</div>
+
 <script>__BOOTSTRAP_SCRIPT__</script>
 <script src="/static/app.js"></script>
 </body>

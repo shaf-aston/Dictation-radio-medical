@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QMessageBox
 
+from src.features import clinical_disclaimer
 from src.features.adaptive_learning import get_adaptive_learning
 
 if TYPE_CHECKING:
@@ -437,21 +438,21 @@ def _append_reference_cases(layout, result) -> None:
 
 
 def show_disclaimer_if_needed(window: MainWindow) -> None:
-    """Show clinical disclaimer dialog on first launch."""
-    if window.settings.get("disclaimer_shown", False):
+    """Show the clinical disclaimer on first launch.
+
+    The desktop shape of the shared statement in
+    ``features/clinical_disclaimer.py`` — the wording and the "have they seen
+    it" decision live there, alongside the web front-end's modal. This function
+    owns only the message box.
+    """
+    if not clinical_disclaimer.needs_showing(window.settings):
         return
     QMessageBox.information(
         window,
-        "Clinical Disclaimer",
-        "DISCLAIMER — IMPORTANT\n\n"
-        "This tool uses OpenAI Whisper for speech recognition. Whisper is a "
-        "general-purpose model and is not FDA-cleared or CE-marked for clinical "
-        "medical documentation.\n\n"
-        "All transcriptions MUST be reviewed and verified by a qualified "
-        "radiologist before clinical use or patient record entry.\n\n"
-        "The software author accepts no liability for transcription errors.",
+        clinical_disclaimer.DISCLAIMER_TITLE,
+        clinical_disclaimer.DISCLAIMER_TEXT,
     )
-    window.settings.set("disclaimer_shown", True)
+    clinical_disclaimer.mark_shown(window.settings)
 
 
 def validate_template_fields(window: MainWindow) -> bool:

@@ -926,5 +926,57 @@ function initOverflowMenu() {
     });
 }
 
+// ---------------------------------------------------------------------------
+// First-launch clinical disclaimer. The desktop app has always shown this and
+// the web app never did, while both read the same "already seen" setting. The
+// wording and that decision live in src/features/clinical_disclaimer.py; this
+// only renders what the bootstrap hands over.
+// ---------------------------------------------------------------------------
+
+function initDisclaimer() {
+    const info = BOOTSTRAP.disclaimer;
+    const scrim = document.getElementById('disclaimerModal');
+    const ackBtn = document.getElementById('disclaimerAckBtn');
+    if (!scrim || !ackBtn || !info || !info.needed) return;
+
+    document.getElementById('disclaimerTitle').textContent = info.title || '';
+    document.getElementById('disclaimerText').textContent = info.text || '';
+    scrim.hidden = false;
+    ackBtn.focus();
+
+    // It is shown once in the life of the install, so Escape must not skip it:
+    // that would silently spend the only showing. Tab is pinned to the single
+    // button, and nothing behind the modal hears a keystroke.
+    const guard = (event) => {
+        if (event.key === 'Escape' || event.key === 'Tab') {
+            event.preventDefault();
+            ackBtn.focus();
+        }
+        event.stopPropagation();
+    };
+    document.addEventListener('keydown', guard, true);
+
+    ackBtn.addEventListener('click', async () => {
+        ackBtn.disabled = true;
+        try {
+            const response = await fetch('/api/disclaimer/ack', { method: 'POST' });
+            if (!response.ok) {
+                throw new Error('Acknowledgement was not recorded');
+            }
+        } catch (err) {
+            // Deliberate trade-off: a failed ack still dismisses the modal, but
+            // the flag stays unset so it appears again next load. Better to show
+            // it twice than to lock a radiologist out of the app over a POST.
+            showError('The disclaimer will be shown again next time: ' + err.message);
+        } finally {
+            document.removeEventListener('keydown', guard, true);
+            scrim.hidden = true;
+            ackBtn.disabled = false;
+            editor.focus();
+        }
+    });
+}
+
 initPanels();
 initOverflowMenu();
+initDisclaimer();
