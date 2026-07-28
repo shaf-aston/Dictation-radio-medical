@@ -36,6 +36,17 @@ for sheet in (UI / "frontends" / "app.css", UI / "styles" / "app.qss"):
     found = HEX.findall(sheet.read_text(encoding="utf-8"))
     check(not found, f"{sheet.name} hardcodes {found} — move it into tokens.json")
 
+# 1b. Nor does the markup or the script. The web status pill once carried
+#     `--dot-color: rgba(96,165,250,.22)` inside app.js — a palette leak this
+#     file could not see, so it survived a theme overhaul the stylesheets did
+#     not. JS/HTML set state *classes*; the stylesheet maps classes to tokens.
+COLOUR_FN = re.compile(r"\b(?:rgba?|hsla?)\s*\(")
+for page in (UI / "frontends" / "app.js", UI / "frontends" / "app.html"):
+    text = page.read_text(encoding="utf-8")
+    found = HEX.findall(text) + COLOUR_FN.findall(text)
+    check(not found, f"{page.name} hardcodes colour {found} — set a state class, "
+          "map it to tokens in app.css")
+
 # 2. Both themes render, every placeholder filled, and they are really different
 #    sheets (a copy-pasted theme would pass every check but this one).
 sheets = {name: theme.render_qss(name) for name in theme.THEMES}
