@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import logging
 from typing import TYPE_CHECKING
 
@@ -10,13 +9,12 @@ from PySide6.QtWidgets import QMessageBox
 
 from src.features import clinical_disclaimer
 from src.features.adaptive_learning import get_adaptive_learning
+from src.features.report_release import unfilled_fields
 
 if TYPE_CHECKING:
     from src.ui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
-
-_UNFILLED_FIELD_RE = re.compile(r"\[([A-Z][A-Z0-9 _/-]{1,40})\]|\{\{([^}]{1,40})\}\}")
 
 _Yes = QMessageBox.StandardButton.Yes
 _No = QMessageBox.StandardButton.No
@@ -455,20 +453,23 @@ def show_disclaimer_if_needed(window: MainWindow) -> None:
     clinical_disclaimer.mark_shown(window.settings)
 
 
-def validate_template_fields(window: MainWindow) -> bool:
-    """Return True if safe to proceed; show warning and return False otherwise."""
-    text = window.editor.toPlainText()
-    matches = _UNFILLED_FIELD_RE.findall(text)
-    if not matches:
+def confirm_unfilled_fields(window: MainWindow) -> bool:
+    """Ask before releasing a report that still has template fields in it.
+
+    The desktop shape of ``report_release.unfilled_fields`` — what counts as
+    unfilled lives there, alongside the web app's 409. This function owns only
+    the message box, including how many names fit in it. Returns True to
+    proceed; False means the radiologist cancelled and the report stays put.
+    """
+    fields = unfilled_fields(window.editor.toPlainText())
+    if not fields:
         return True
-    fields = [m[0] or m[1] for m in matches]
-    unique_fields = list(dict.fromkeys(fields))
     reply = QMessageBox.warning(
         window,
         "Unfilled Template Fields",
-        f"The report contains {len(unique_fields)} unfilled field(s):\n\n"
-        + "\n".join(f"  • {f}" for f in unique_fields[:10])
-        + ("\n  …" if len(unique_fields) > 10 else "")
+        f"The report contains {len(fields)} unfilled field(s):\n\n"
+        + "\n".join(f"  • {f}" for f in fields[:10])
+        + ("\n  …" if len(fields) > 10 else "")
         + "\n\nDo you want to proceed anyway?",
         _Yes | _No,
         _No,

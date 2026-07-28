@@ -16,6 +16,7 @@ from src.features.file_manager import create_temp_wav
 from src.ui.postprocess_worker import PostprocessWorker, build_changes
 from src.features.accent_corrections import ACCENT_LABELS, suggest_accent
 from src.features.report_release import check_release, record_release
+from src.ui.dialogs import confirm_unfilled_fields
 from src.ui.styles import set_level_state
 
 if TYPE_CHECKING:
@@ -424,19 +425,26 @@ def show_corrections_banner(window: MainWindow) -> None:
     window._corrections_seen = set()
 
 
-def confirm_release(window: MainWindow) -> None:
-    """Show any critical finding in the report and audit the radiologist's answer.
+def confirm_release(window: MainWindow) -> bool:
+    """Run both release rules and return True if the report may leave.
 
     The desktop shape of the shared gate in ``features/report_release.py`` — the
-    decision and the audit trail live there, alongside the web app's 409. Called
+    rules and the audit trail live there, alongside the web app's 409. Called
     from every exit (copy / save / export) immediately before the text leaves,
-    so a finding typed into the impression after dictation ended is still
-    caught. The report is never withheld: both answers proceed and only the
-    audit entry differs.
+    so a field or finding typed in after dictation ended is still caught.
+
+    Unfilled fields are asked about first, because that is the only answer that
+    can cancel: cancelling must never leave a findings acknowledgement in the
+    audit log for a report that then did not leave. The findings answer itself
+    never withholds the report — both answers proceed and only the audit entry
+    differs — so False here always means "the radiologist cancelled".
     """
+    if not confirm_unfilled_fields(window):
+        return False
+
     check = check_release(window.editor.toPlainText())
     if not check.needs_acknowledgement:
-        return
+        return True
 
     msg = QMessageBox(window)
     msg.setWindowTitle("Critical / Urgent Finding Detected")
@@ -458,6 +466,7 @@ def confirm_release(window: MainWindow) -> None:
         window._get_patient_info().get("id", ""),
         msg.clickedButton() == btn_ack,
     )
+    return True
 
 
 def setup_level_timer(window: MainWindow) -> None:

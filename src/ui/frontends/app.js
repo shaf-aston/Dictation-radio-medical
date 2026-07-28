@@ -480,20 +480,6 @@ function resetPatientInfo() {
     savePatientDraft();
 }
 
-function confirmTemplateFieldCompletion() {
-    const matches = editor.value.match(/\[([A-Z][A-Z0-9 _/-]{1,40})\]|\{\{([^}]{1,40})\}\}/g);
-    if (!matches || matches.length === 0) {
-        return true;
-    }
-    const unique = Array.from(new Set(matches));
-    return confirm(
-        `The report contains ${unique.length} unfilled field(s):\n\n` +
-        unique.slice(0, 10).map((item) => `• ${item}`).join('\n') +
-        (unique.length > 10 ? '\n…' : '') +
-        '\n\nContinue anyway?'
-    );
-}
-
 function parseDownloadFilename(contentDisposition, fallback) {
     const match = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(contentDisposition || '');
     const candidate = match && (match[1] || match[2]);
@@ -511,44 +497,50 @@ function triggerDownload(blob, filename) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function postReport(url, acknowledged) {
+function postReport(url, answers) {
     return fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             text: editor.value,
             patient: collectPatientInfo(),
-            acknowledged: acknowledged,
+            acknowledged: answers.acknowledged,
+            proceed_unfilled: answers.proceed_unfilled,
         }),
     });
 }
 
-// Returns the findings payload, or null if this 409 was something else.
-async function readCriticalFindings(response) {
+// Returns the refusal the server wants answered, or null if this response was
+// not one — an ordinary error still has to reach the caller as an error.
+async function readReleaseGate(response) {
+    if (response.status !== 409) {
+        return null;
+    }
     try {
         const body = await response.clone().json();
         const detail = body && body.detail;
-        return (detail && detail.reason === 'critical_findings') ? detail : null;
+        const known = detail && (detail.reason === 'unfilled_fields' || detail.reason === 'critical_findings');
+        return known ? detail : null;
     } catch (err) {
         return null;
     }
 }
 
-// Sends the report and clears the critical-findings gate on the way.
-// acknowledged starts unset. The server refuses with 409 when the report carries a
-// critical finding, we show it, and only then re-send with the radiologist's answer.
-// Same warning the desktop app gives. Every path that lets the report leave the app
-// goes through here, clipboard included — a gate one button can skip is not a gate.
-async function postGatedReport(endpoint) {
-    const response = await postReport(endpoint, null);
-    if (response.status !== 409) {
-        return response;
-    }
-    const info = await readCriticalFindings(response);
-    if (!info) {
-        return response;
-    }
-    const acknowledged = window.confirm(
+// Cancellable: No means the report does not leave. Field names come from the
+// server, so the browser holds no copy of what counts as unfilled.
+function confirmUnfilledFields(fields) {
+    const names = fields || [];
+    return window.confirm(
+        `The report contains ${names.length} unfilled field(s):\n\n`
+        + names.slice(0, 10).map((name) => `  • ${name}`).join('\n')
+        + (names.length > 10 ? '\n  …' : '')
+        + '\n\nDo you want to proceed anyway?'
+    );
+}
+
+// Never cancellable: the report is not withheld, only the audit entry differs.
+function confirmCriticalFindings(info) {
+    return window.confirm(
         (info.worst_level === 1
             ? 'LIFE-THREATENING FINDING DETECTED\n\n'
             : 'URGENT FINDING DETECTED\n\n')
@@ -558,14 +550,38 @@ async function postGatedReport(endpoint) {
         + 'OK = I have communicated this finding\n'
         + 'Cancel = proceed without acknowledging (recorded in the audit log)'
     );
-    return postReport(endpoint, acknowledged);
+}
+
+// Sends the report and clears the release gate on the way. Both answers start
+// unset; the server refuses with 409 one rule at a time — unfilled fields first,
+// then critical findings — we ask, and re-send with the radiologist's answer.
+// Same questions the desktop app asks. Every path that lets the report leave the
+// app goes through here, clipboard included — a gate one button can skip is not a
+// gate. Returns null when the radiologist cancelled: not an error, just a stop.
+async function postGatedReport(endpoint) {
+    const answers = { acknowledged: null, proceed_unfilled: false };
+    let response = await postReport(endpoint, answers);
+
+    for (let rule = 0; rule < 2; rule++) {
+        const gate = await readReleaseGate(response);
+        if (!gate) {
+            break;
+        }
+        if (gate.reason === 'unfilled_fields') {
+            if (!confirmUnfilledFields(gate.fields)) {
+                return null;
+            }
+            answers.proceed_unfilled = true;
+        } else {
+            answers.acknowledged = confirmCriticalFindings(gate);
+        }
+        response = await postReport(endpoint, answers);
+    }
+    return response;
 }
 
 async function downloadReport(kind) {
     if (reportRequestInFlight) {
-        return;
-    }
-    if (!confirmTemplateFieldCompletion()) {
         return;
     }
 
@@ -576,6 +592,11 @@ async function downloadReport(kind) {
 
     try {
         const response = await postGatedReport(endpoint);
+        if (response === null) {
+            // The radiologist chose to go back and fill the report in.
+            showStatus('Export cancelled', 'info', 1800);
+            return;
+        }
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -684,7 +705,7 @@ saveTxtBtn.addEventListener('click', () => downloadReport('txt'));
 exportWordBtn.addEventListener('click', () => downloadReport('word'));
 
 // Copy with visual feedback. The clipboard is an exit from the app, so it clears the
-// same critical-findings gate the downloads do before the text goes anywhere.
+// same release gate the downloads do before the text goes anywhere.
 copyBtn.addEventListener('click', async () => {
     if (editor.value.trim() === '' || reportRequestInFlight) {
         if (!reportRequestInFlight) {
@@ -698,6 +719,11 @@ copyBtn.addEventListener('click', async () => {
     syncReportButtons();
     try {
         const response = await postGatedReport('/api/report/check');
+        if (response === null) {
+            // The radiologist chose to go back and fill the report in.
+            showStatus('Copy cancelled', 'info', 1800);
+            return;
+        }
         if (!response.ok) {
             throw new Error('Report check failed');
         }

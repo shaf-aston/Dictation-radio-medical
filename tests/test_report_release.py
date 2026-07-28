@@ -1,5 +1,5 @@
-"""The shared report-release gate: the decision, the audit trail, and the
-guarantee that every desktop exit consults it."""
+"""The shared report-release gate: the two decisions, the audit trail, and the
+guarantee that every desktop exit consults them."""
 
 from __future__ import annotations
 
@@ -7,10 +7,42 @@ import ast
 from pathlib import Path
 
 from src.features import report_release
-from src.features.report_release import ReleaseCheck, check_release, record_release
+from src.features.report_release import (
+    ReleaseCheck, check_release, record_release, unfilled_fields,
+)
 from src.medical.critical_findings import CriticalFinding
 
 _URGENT_TEXT = "Findings: Large right pneumothorax with mediastinal shift."
+
+
+# ---------------------------------------------------------------------------
+# unfilled_fields — the cancellable decision
+# ---------------------------------------------------------------------------
+
+def test_a_filled_in_report_has_no_unfilled_fields() -> None:
+    assert unfilled_fields("Findings: No acute cardiopulmonary process.") == ()
+
+
+def test_one_placeholder_is_returned_without_its_brackets() -> None:
+    assert unfilled_fields("Findings: [FINDINGS]") == ("FINDINGS",)
+
+
+def test_both_placeholder_styles_are_found_in_first_appearance_order() -> None:
+    text = "Impression: [IMPRESSION]\nPatient: {{patient_name}}\nBody: [FINDINGS]"
+    assert unfilled_fields(text) == ("IMPRESSION", "patient_name", "FINDINGS")
+
+
+def test_the_same_field_left_in_twice_is_reported_once() -> None:
+    # The question is which fields are unfilled, not how many brackets there are:
+    # a repeat would inflate the count the radiologist is shown.
+    assert unfilled_fields("[FINDINGS] ... more ... [FINDINGS]") == ("FINDINGS",)
+
+
+def test_ordinary_bracketed_text_is_not_a_placeholder() -> None:
+    # Checked against the regex, not assumed: a placeholder is SHOUTED and at
+    # least two characters, so measurements and sentence-case asides are text.
+    text = "Nodule [5 mm] in [Segment] six, per [A] prior study."
+    assert unfilled_fields(text) == ()
 
 
 # ---------------------------------------------------------------------------
@@ -145,10 +177,40 @@ def _methods_calling(func_name: str) -> set[str]:
     }
 
 
+def _methods_obeying(func_name: str) -> set[str]:
+    """Methods containing ``if not <func_name>(...): return``."""
+    tree = ast.parse(_MAIN_WINDOW.read_text(encoding="utf-8"))
+    found = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for stmt in ast.walk(node):
+            test = getattr(stmt, "test", None)
+            if not isinstance(stmt, ast.If) or not isinstance(test, ast.UnaryOp):
+                continue
+            call = test.operand
+            if (
+                isinstance(test.op, ast.Not)
+                and isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == func_name
+                and any(isinstance(inner, ast.Return) for inner in stmt.body)
+            ):
+                found.add(node.name)
+    return found
+
+
 def test_every_desktop_exit_confirms_release() -> None:
     # The defect this replaces: the gate fired once when dictation stopped, so a
     # finding typed into the impression afterwards left the app unwarned.
     assert _GATED_EXITS <= _methods_calling("confirm_release")
+
+
+def test_every_desktop_exit_stops_when_the_radiologist_cancels() -> None:
+    # Calling the gate is not enough now that one of its two rules can say no:
+    # an exit that ignores the answer would export the report anyway. Copy had
+    # no unfilled-fields check at all before this.
+    assert _GATED_EXITS <= _methods_obeying("confirm_release")
 
 
 def test_autosave_is_not_gated() -> None:

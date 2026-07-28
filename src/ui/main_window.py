@@ -52,9 +52,7 @@ from src.ui.recording_session import (
 )
 
 # Dialog handling
-from src.ui.dialogs import (
-    show_learning_consent_if_needed, show_disclaimer_if_needed, validate_template_fields
-)
+from src.ui.dialogs import show_learning_consent_if_needed, show_disclaimer_if_needed
 
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="pkg_resources")
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
@@ -481,7 +479,8 @@ class MainWindow(QMainWindow):
 
     def on_copy(self) -> None:
         # The clipboard leaves the app just as surely as a file does.
-        confirm_release(self)
+        if not confirm_release(self):
+            return
         QApplication.clipboard().setText(self.editor.toPlainText())
         self._show_status("Copied to clipboard.", 1500)
 
@@ -492,7 +491,12 @@ class MainWindow(QMainWindow):
         log_fn(path, self._get_patient_info().get("id", ""))
 
     def on_save_txt(self) -> None:
-        if not validate_template_fields(self):
+        # Before the file dialog: these are the questions worth full attention,
+        # and asking them once someone has already picked a filename catches them
+        # in "just save it" mode. Acknowledging and then cancelling the dialog
+        # only over-records — the acknowledgement did happen, and the release
+        # itself is logged separately by _post_save.
+        if not confirm_release(self):
             return
         default = self._default_filename(".txt")
         path, _ = QFileDialog.getSaveFileName(
@@ -500,8 +504,6 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
-        # After the file dialog, so a cancelled save is never audited as a release.
-        confirm_release(self)
         try:
             text = self.editor.toPlainText()
             self.flush_dictation_edits()
@@ -520,7 +522,7 @@ class MainWindow(QMainWindow):
                 "  pip install python-docx"
             )
             return
-        if not validate_template_fields(self):
+        if not confirm_release(self):  # before the dialog — see on_save_txt
             return
         default = self._default_filename(".docx")
         path, _ = QFileDialog.getSaveFileName(
@@ -528,7 +530,6 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
-        confirm_release(self)
         try:
             self.flush_dictation_edits()
             export_to_word(path, self.editor.toPlainText(), self._get_patient_info())

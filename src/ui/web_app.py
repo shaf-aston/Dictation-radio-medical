@@ -37,7 +37,7 @@ from src.features.file_manager import (
     templates_dir,
 )
 from src.features.report_manager import DOCX_AVAILABLE, export_to_word_bytes, format_plain_text_report
-from src.features.report_release import check_release, record_release
+from src.features.report_release import check_release, record_release, unfilled_fields
 from src.medical import macros
 from src.medical.macros import reload_macros
 from src.ui.theme import css_variables
@@ -93,6 +93,10 @@ class ReportRequest(BaseModel):
     #: True = radiologist confirmed verbal communication; False = proceeded anyway.
     #: Both outcomes are audited; only None is refused (see _confirm_release).
     acknowledged: Optional[bool] = None
+    #: The answer to the unfilled-fields question, which is a plain permission
+    #: rather than an audited one: only True releases the report. Not asked yet
+    #: and "no, take me back" are the same thing here, so both are False.
+    proceed_unfilled: bool = False
 
 
 def _model_to_dict(model: BaseModel) -> dict:
@@ -467,16 +471,28 @@ async def load_template(template_name: str):
 
 
 def _confirm_release(payload: ReportRequest) -> None:
-    """Refuse to emit a report carrying a critical finding the radiologist hasn't seen.
+    """Refuse to emit a report the radiologist has not answered for yet.
 
-    The HTTP shape of the shared gate in ``features/report_release.py`` — the decision
+    The HTTP shape of the shared gate in ``features/report_release.py`` — the rules
     and the audit trail live there, alongside the desktop front-end's dialog. Enforced
     here rather than in the browser so a client that forgets to ask cannot silently
     skip the warning.
 
+    Both rules refuse with 409 and a ``reason``, one at a time. Unfilled fields go
+    first because that is the only answer that can cancel: asking about findings
+    first would audit an acknowledgement for a report that then did not leave.
+
     Raises:
-        HTTPException: 409 with the findings when acknowledged is still None.
+        HTTPException: 409 with the unfilled field names while proceed_unfilled is
+            False, then 409 with the findings while acknowledged is still None.
     """
+    fields = unfilled_fields(payload.text)
+    if fields and not payload.proceed_unfilled:
+        raise HTTPException(
+            status_code=409,
+            detail={"reason": "unfilled_fields", "fields": list(fields)},
+        )
+
     check = check_release(payload.text)
     if not check.needs_acknowledgement:
         return
@@ -496,7 +512,7 @@ def _confirm_release(payload: ReportRequest) -> None:
 
 @app.post("/api/report/check")
 async def check_report_endpoint(payload: ReportRequest):
-    """Run the critical-findings gate without emitting a file.
+    """Run the release gate without emitting a file.
 
     Copy puts the report on the clipboard, which leaves the app just as surely as a
     download does. It has no file to fetch, so it asks the gate this way instead.

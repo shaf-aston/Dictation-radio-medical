@@ -165,10 +165,12 @@ def test_script_regex_literals_are_not_double_escaped(monkeypatch) -> None:
     assert script.status_code == 200
     assert script.headers["content-type"].startswith("text/javascript")
     assert r"/[\s\n]$/" in script.text
-    assert r"/\[([A-Z][A-Z0-9 _/-]{1,40})\]|\{\{([^}]{1,40})\}\}/g" in script.text
     assert r"/filename\*=UTF-8''([^;]+)|filename=" in script.text
     assert r"/[\\s\\n]$/" not in script.text
-    assert r"/\\[([A-Z]" not in script.text
+    # The placeholder regex used to be here too, a second copy of a rule the
+    # server enforces. It now exists once, in features/report_release.py, and
+    # the browser is told the field names — so it must not reappear here.
+    assert "[A-Z0-9 _/-]" not in script.text
 
 
 def test_static_route_serves_only_the_bundled_front_end(monkeypatch) -> None:
@@ -465,6 +467,89 @@ def test_every_way_a_report_leaves_the_app_runs_the_gate() -> None:
         if getattr(r, "path", "").startswith("/api/report/")
     }
     assert routed == exits
+
+
+# ---------------------------------------------------------------------------
+# Unfilled-fields gate
+#
+# Report quality, not clinical safety: unlike the findings gate this one *can*
+# cancel, and it is not audited. Server-side for the same reason — the browser
+# used to hold its own copy of the rule, and Copy skipped it entirely.
+# ---------------------------------------------------------------------------
+
+_UNFILLED_TEXT = "Findings: [FINDINGS]\nImpression: normal study."
+
+
+def test_an_unfilled_field_is_refused_until_answered_for(monkeypatch) -> None:
+    with _client(monkeypatch) as client:
+        response = _save_txt(client, _UNFILLED_TEXT)
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["reason"] == "unfilled_fields"
+    assert detail["fields"] == ["FINDINGS"]
+
+
+def test_proceeding_past_an_unfilled_field_exports_the_report(monkeypatch) -> None:
+    with _client(monkeypatch) as client:
+        response = client.post(
+            "/api/report/save-txt",
+            json={"text": _UNFILLED_TEXT, "patient": {"id": "P1"},
+                  "proceed_unfilled": True},
+        )
+
+    assert response.status_code == 200
+    assert "[FINDINGS]" in response.text
+
+
+def test_declining_an_unfilled_field_exports_nothing(monkeypatch) -> None:
+    # "No, take me back" is the client simply not re-sending; a request that
+    # still says False must never produce a file, or the answer meant nothing.
+    with _client(monkeypatch) as client:
+        response = client.post(
+            "/api/report/save-txt",
+            json={"text": _UNFILLED_TEXT, "patient": {"id": "P1"},
+                  "proceed_unfilled": False},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["reason"] == "unfilled_fields"
+
+
+def test_copy_is_gated_on_unfilled_fields_like_every_other_way_out(monkeypatch) -> None:
+    with _client(monkeypatch) as client:
+        body: dict = {"text": _UNFILLED_TEXT, "patient": {"id": "P1"}}
+        refused = client.post("/api/report/check", json=body)
+        answered = client.post("/api/report/check", json={**body, "proceed_unfilled": True})
+
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["reason"] == "unfilled_fields"
+    assert answered.status_code == 200
+
+
+def test_the_cancellable_question_is_asked_before_the_audited_one(monkeypatch) -> None:
+    # Order matters: acknowledging a critical finding is written to the audit
+    # log, so it must not be asked for a report the radiologist then cancels.
+    logged: list = []
+    monkeypatch.setattr(
+        report_release.audit_log, "log_critical_finding_overridden",
+        lambda terms, patient_id: logged.append((terms, patient_id)),
+    )
+    both = _URGENT_TEXT + "\nImpression: [IMPRESSION]"
+    with _client(monkeypatch) as client:
+        body: dict = {"text": both, "patient": {"id": "P1"}}
+        first = client.post("/api/report/save-txt", json=body)
+        second = client.post("/api/report/save-txt", json={**body, "proceed_unfilled": True})
+        third = client.post(
+            "/api/report/save-txt",
+            json={**body, "proceed_unfilled": True, "acknowledged": False},
+        )
+
+    assert first.json()["detail"]["reason"] == "unfilled_fields"
+    assert second.json()["detail"]["reason"] == "critical_findings"
+    assert third.status_code == 200
+    # Nothing was audited until the report actually left.
+    assert len(logged) == 1
 
 
 def test_a_scanner_fault_never_blocks_a_report(monkeypatch) -> None:
