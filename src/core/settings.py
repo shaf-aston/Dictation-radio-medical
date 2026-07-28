@@ -41,10 +41,12 @@ _DEFAULTS: dict = {
     "chunk_force_cut_sec": 20.0,
     # --- Live transcription decode quality (see src/dictation/worker.py) ---
     "live_beam_size": 2,        # beam=1 caused repetition; beam=2 still real-time
-    "final_beam_size": 5,       # higher quality for the confidence-targeted polish
+    # Every decode that is not the live loop: the desktop's post-stop polish and
+    # the web app's one-shot upload. Both are "transcribe this once, properly",
+    # so they share one knob — the web app used to have its own copy of it.
+    "final_beam_size": 5,
     # committed chunks below this mean word confidence get one re-decode after stop
     "polish_confidence_ceiling": 0.75,
-    "beam_size": 5,             # beam width for one-shot (web) batch transcription
     "silence_rms_floor": 0.002,  # skip live cycles quieter than this (anti-hallucination)
     "autosave_retention_days": 30,  # days to keep autosave files
     # --- Web front-end (src/ui/web_app.py) ---

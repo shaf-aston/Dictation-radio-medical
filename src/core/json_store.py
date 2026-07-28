@@ -14,8 +14,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -38,15 +39,33 @@ def write_json(path: Path, data: Any) -> None:
     Written atomically (temp file + ``os.replace``) so a crash mid-write can
     never leave a truncated file — a corrupt registry/settings file is silently
     read back as the empty default, losing the active fine-tuned-model pointer.
+
+    The temp file gets a name unique to this writer rather than ``<target>.tmp``.
+    These files have more than one writer: the desktop app and the web app run
+    against the same ``dictation_settings.json``, which is why ``Settings`` has a
+    ``refresh()`` at all. With a single shared temp name two writers collide —
+    the second ``os.replace`` finds the file already consumed, or, worse, moves a
+    half-written temp over the target. That is the exact corruption this function
+    exists to prevent, so a shared name would defeat its own purpose.
     """
     path = Path(path)
+    tmp: Optional[str] = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, ensure_ascii=False)
         os.replace(tmp, path)
+        tmp = None  # renamed, so there is nothing left to clean up
     except (OSError, TypeError) as exc:
         logger.warning("Could not write %s: %s", path, exc)
+    finally:
+        if tmp is not None:
+            # A failed write must not leave a stray temp file next to the real one.
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def append_jsonl(path: Path, records: Iterable[Dict[str, Any]]) -> int:

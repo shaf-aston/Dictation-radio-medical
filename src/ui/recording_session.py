@@ -15,8 +15,7 @@ from src.dictation.worker import LiveTranscribeWorker
 from src.features.file_manager import create_temp_wav
 from src.ui.postprocess_worker import PostprocessWorker, build_changes
 from src.features.accent_corrections import ACCENT_LABELS, suggest_accent
-from src.features import audit_log
-from src.medical.critical_findings import scan_for_critical_findings, format_findings_for_dialog
+from src.features.report_release import check_release, record_release
 from src.ui.styles import set_level_state
 
 if TYPE_CHECKING:
@@ -382,7 +381,6 @@ def on_transcription_finished(window: MainWindow) -> None:
     cleanup_temp_audio(window)
     check_accent_suggestion(window)
     show_corrections_banner(window)
-    check_critical_findings(window)
 
 
 def cleanup_temp_audio(window: MainWindow) -> None:
@@ -426,42 +424,40 @@ def show_corrections_banner(window: MainWindow) -> None:
     window._corrections_seen = set()
 
 
-def check_critical_findings(window: MainWindow) -> None:
-    """Scan the report for critical/urgent findings and alert the radiologist."""
-    text = window.editor.toPlainText()
-    if not text.strip():
-        return
-    try:
-        findings = scan_for_critical_findings(text)
-    except Exception as exc:
-        logger.warning("Critical findings scan failed: %s", exc)
-        return
-    if not findings:
-        return
+def confirm_release(window: MainWindow) -> None:
+    """Show any critical finding in the report and audit the radiologist's answer.
 
-    pid = window._get_patient_info().get("id", "")
-    summary = format_findings_for_dialog(findings)
-    level1 = [f for f in findings if f.level == 1]
+    The desktop shape of the shared gate in ``features/report_release.py`` — the
+    decision and the audit trail live there, alongside the web app's 409. Called
+    from every exit (copy / save / export) immediately before the text leaves,
+    so a finding typed into the impression after dictation ended is still
+    caught. The report is never withheld: both answers proceed and only the
+    audit entry differs.
+    """
+    check = check_release(window.editor.toPlainText())
+    if not check.needs_acknowledgement:
+        return
 
     msg = QMessageBox(window)
     msg.setWindowTitle("Critical / Urgent Finding Detected")
-    msg.setIcon(QMessageBox.Icon.Critical if level1 else QMessageBox.Icon.Warning)
+    msg.setIcon(
+        QMessageBox.Icon.Critical if check.worst_level == 1 else QMessageBox.Icon.Warning
+    )
     msg.setText(
         "The following critical or urgent finding(s) were detected in this report.\n\n"
         "Please confirm verbal communication with the referring clinician before saving."
     )
-    msg.setDetailedText(summary)
+    msg.setDetailedText(check.summary)
     btn_ack = msg.addButton("I have communicated this finding", QMessageBox.ButtonRole.AcceptRole)
     msg.addButton("Proceed without acknowledging", QMessageBox.ButtonRole.RejectRole)
     msg.setDefaultButton(btn_ack)
     msg.exec()
 
-    if msg.clickedButton() == btn_ack:
-        for f in findings:
-            audit_log.log_critical_finding_acknowledged(f.term, pid, f.level)
-    else:
-        terms_str = "; ".join(f.term for f in findings)
-        audit_log.log_critical_finding_overridden(terms_str, pid)
+    record_release(
+        check,
+        window._get_patient_info().get("id", ""),
+        msg.clickedButton() == btn_ack,
+    )
 
 
 def setup_level_timer(window: MainWindow) -> None:

@@ -30,10 +30,9 @@ from src.features.file_manager import (
     startup_cleanup,
     templates_dir,
 )
-from src.features import audit_log
 from src.features.report_manager import DOCX_AVAILABLE, export_to_word_bytes, format_plain_text_report
+from src.features.report_release import check_release, record_release
 from src.medical import macros
-from src.medical.critical_findings import format_findings_for_dialog, scan_for_critical_findings
 from src.medical.macros import reload_macros
 from src.ui.theme import css_variables
 
@@ -86,7 +85,7 @@ class ReportRequest(BaseModel):
     patient: PatientInfo = Field(default_factory=PatientInfo)
     #: None = the client has not yet been shown the critical-findings warning.
     #: True = radiologist confirmed verbal communication; False = proceeded anyway.
-    #: Both outcomes are audited; only None is refused (see _gate_critical_findings).
+    #: Both outcomes are audited; only None is refused (see _confirm_release).
     acknowledged: Optional[bool] = None
 
 
@@ -434,42 +433,32 @@ async def load_template(template_name: str):
     return {"name": path.name, "content": content}
 
 
-def _gate_critical_findings(payload: ReportRequest) -> None:
+def _confirm_release(payload: ReportRequest) -> None:
     """Refuse to emit a report carrying a critical finding the radiologist hasn't seen.
 
-    Parity with the desktop front-end (ui/recording_session.py::check_critical_findings):
-    the report is never withheld, but the radiologist is always shown the finding and the
-    outcome is always audited. Enforced here rather than in the browser so a client that
-    forgets to ask cannot silently skip the warning.
+    The HTTP shape of the shared gate in ``features/report_release.py`` — the decision
+    and the audit trail live there, alongside the desktop front-end's dialog. Enforced
+    here rather than in the browser so a client that forgets to ask cannot silently
+    skip the warning.
 
     Raises:
         HTTPException: 409 with the findings when acknowledged is still None.
     """
-    if not payload.text.strip():
+    check = check_release(payload.text)
+    if not check.needs_acknowledgement:
         return
-    try:
-        findings = scan_for_critical_findings(payload.text)
-    except Exception as exc:  # a scanner fault must not block a report
-        logger.warning("Critical findings scan failed: %s", exc)
-        return
-    if not findings:
-        return
-
-    patient_id = _model_to_dict(payload.patient).get("id", "")
     if payload.acknowledged is None:
         raise HTTPException(
             status_code=409,
             detail={
                 "reason": "critical_findings",
-                "summary": format_findings_for_dialog(findings),
-                "worst_level": min(f.level for f in findings),
+                "summary": check.summary,
+                "worst_level": check.worst_level,
             },
         )
-    if payload.acknowledged:
-        for f in findings:
-            audit_log.log_critical_finding_acknowledged(f.term, patient_id, f.level)
-    else:
-        audit_log.log_critical_finding_overridden("; ".join(f.term for f in findings), patient_id)
+    record_release(
+        check, _model_to_dict(payload.patient).get("id", ""), payload.acknowledged
+    )
 
 
 @app.post("/api/report/check")
@@ -479,13 +468,13 @@ async def check_report_endpoint(payload: ReportRequest):
     Copy puts the report on the clipboard, which leaves the app just as surely as a
     download does. It has no file to fetch, so it asks the gate this way instead.
     """
-    _gate_critical_findings(payload)
+    _confirm_release(payload)
     return {"ok": True}
 
 
 @app.post("/api/report/save-txt")
 async def save_report_txt_endpoint(payload: ReportRequest):
-    _gate_critical_findings(payload)
+    _confirm_release(payload)
     patient = _model_to_dict(payload.patient)
     content = format_plain_text_report(payload.text, patient)
     filename = _download_filename(patient, "txt")
@@ -498,7 +487,7 @@ async def export_word_endpoint(payload: ReportRequest):
     if not DOCX_AVAILABLE:
         raise HTTPException(status_code=503, detail="Word export is unavailable")
 
-    _gate_critical_findings(payload)
+    _confirm_release(payload)
 
     patient = _model_to_dict(payload.patient)
     try:
@@ -544,9 +533,11 @@ async def transcribe_audio(file: UploadFile = File(...)):
         t_start = time.time()
         prefs = _current_preferences()
         pause_threshold = settings.get("pause_threshold", 2.5)
-        # This is a one-shot batch transcription of the whole clip (not the
-        # latency-critical live loop), so use a proper beam search for accuracy.
-        beam_size = int(settings.get("beam_size", 5))
+        # A one-shot batch transcription of the whole clip, not the
+        # latency-critical live loop — so it wants the same proper beam search as
+        # the desktop's post-stop polish, and reads the same setting. Two names
+        # for one decision is how the two front-ends drift apart.
+        beam_size = int(settings.get("final_beam_size"))
 
         # Whisper transcription and post-processing are synchronous and
         # multi-second/CPU-bound. Run them in a worker thread so a request does

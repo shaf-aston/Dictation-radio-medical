@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from src.core.settings import Settings
 from src.dictation.asr import AsrResult
+import src.features.report_release as report_release
 import src.ui.web_app as web_app
 
 
@@ -393,7 +394,7 @@ def test_urgent_finding_is_refused_until_the_radiologist_has_seen_it(monkeypatch
 def test_acknowledged_urgent_finding_saves_and_is_audited(monkeypatch) -> None:
     logged: list[tuple] = []
     monkeypatch.setattr(
-        web_app.audit_log, "log_critical_finding_acknowledged",
+        report_release.audit_log, "log_critical_finding_acknowledged",
         lambda term, patient_id, level: logged.append((term, patient_id, level)),
     )
     with _client(monkeypatch) as client:
@@ -411,11 +412,11 @@ def test_overridden_urgent_finding_saves_and_is_audited_separately(monkeypatch) 
     overrides: list[tuple] = []
     acknowledged: list[tuple] = []
     monkeypatch.setattr(
-        web_app.audit_log, "log_critical_finding_overridden",
+        report_release.audit_log, "log_critical_finding_overridden",
         lambda terms, patient_id: overrides.append((terms, patient_id)),
     )
     monkeypatch.setattr(
-        web_app.audit_log, "log_critical_finding_acknowledged",
+        report_release.audit_log, "log_critical_finding_acknowledged",
         lambda term, patient_id, level: acknowledged.append((term, patient_id, level)),
     )
     with _client(monkeypatch) as client:
@@ -440,7 +441,7 @@ def test_copy_is_gated_and_audited_like_every_other_way_out(monkeypatch) -> None
     # audit entry — otherwise the fastest button is the one with no warning.
     overrides: list[tuple] = []
     monkeypatch.setattr(
-        web_app.audit_log, "log_critical_finding_overridden",
+        report_release.audit_log, "log_critical_finding_overridden",
         lambda terms, patient_id: overrides.append((terms, patient_id)),
     )
     with _client(monkeypatch) as client:
@@ -455,7 +456,7 @@ def test_copy_is_gated_and_audited_like_every_other_way_out(monkeypatch) -> None
 
 
 def test_every_way_a_report_leaves_the_app_runs_the_gate() -> None:
-    # A new export route that forgets _gate_critical_findings is the exact defect
+    # A new export route that forgets _confirm_release is the exact defect
     # Copy had, so the set of exits is asserted rather than left to review.
     exits = {"/api/report/check", "/api/report/save-txt", "/api/report/export-word"}
     routed = {
@@ -471,7 +472,7 @@ def test_a_scanner_fault_never_blocks_a_report(monkeypatch) -> None:
     def _boom(_text):
         raise RuntimeError("scanner exploded")
 
-    monkeypatch.setattr(web_app, "scan_for_critical_findings", _boom)
+    monkeypatch.setattr(report_release, "scan_for_critical_findings", _boom)
     with _client(monkeypatch) as client:
         response = _save_txt(client, _URGENT_TEXT)
 

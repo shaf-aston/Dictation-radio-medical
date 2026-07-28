@@ -47,8 +47,8 @@ from src.ui.views import (
 
 # Recording control
 from src.ui.recording_session import (
-    on_partial_text, on_processed_text, on_start_recording, on_stop_recording,
-    on_transcription_finished, setup_level_timer,
+    confirm_release, on_partial_text, on_processed_text, on_start_recording,
+    on_stop_recording, on_transcription_finished, setup_level_timer,
 )
 
 # Dialog handling
@@ -480,6 +480,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Open Error", str(exc))
 
     def on_copy(self) -> None:
+        # The clipboard leaves the app just as surely as a file does.
+        confirm_release(self)
         QApplication.clipboard().setText(self.editor.toPlainText())
         self._show_status("Copied to clipboard.", 1500)
 
@@ -498,6 +500,8 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        # After the file dialog, so a cancelled save is never audited as a release.
+        confirm_release(self)
         try:
             text = self.editor.toPlainText()
             self.flush_dictation_edits()
@@ -524,6 +528,7 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        confirm_release(self)
         try:
             self.flush_dictation_edits()
             export_to_word(path, self.editor.toPlainText(), self._get_patient_info())
