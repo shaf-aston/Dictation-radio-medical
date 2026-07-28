@@ -22,6 +22,14 @@ happen once chunks never overlap). This worker instead:
 4. Only the still-open tail — bounded by ``chunk_policy.force_cut_sec`` — is
    ever re-decoded, and only for a stable live preview via LocalAgreement-2
    (:mod:`src.dictation.stream.tail`); that preview is never committed.
+5. **That preview is dropped when the machine cannot afford it** — see
+   :func:`should_skip_preview`. On a CPU that decodes slower than speech, the
+   preview re-decode of a 20-second open tail costs more than the closed chunks
+   waiting behind it, so words arrived in late bursts. Skipping it spends every
+   remaining second on the text that is actually kept. Because the preview is
+   never committed, this changes only what is shown *early*; the committed and
+   final text are byte-for-byte unaffected. It also lowers
+   ``stream.decode_ratio`` (the preview is the bulk of the re-decode above 1.0x).
 
 After recording stops there is no full re-transcribe. A confidence-targeted
 polish (:meth:`LiveTranscribeWorker._run_confidence_targeted_polish`)
@@ -67,6 +75,34 @@ logger = logging.getLogger(__name__)
 _MIN_AUDIO_SEC = 0.8     # ignore audio shorter than this
 _MIN_GROWTH_SEC = 0.5    # min new audio before re-checking for a chunk cut
 
+# Progress states the UI shows while the live loop runs.
+_STATE_LIVE = "Live transcribing..."
+_STATE_CATCHING_UP = "Catching up..."
+
+
+def should_skip_preview(
+    open_tail_sec: float, decode_cost: float, max_lag_sec: float
+) -> bool:
+    """Whether to drop this cycle's live preview decode.
+
+    Two conditions, both required:
+
+    * ``decode_cost`` — measured wall seconds spent decoding per second of
+      audio decoded — is above 1.0, i.e. this machine decodes slower than
+      speech arrives. A machine that keeps up has slack to spend on a preview
+      and always keeps it.
+    * the still-open tail is longer than *max_lag_sec*, so the preview
+      re-decode of it is expensive and the words it shows are already stale.
+
+    Requiring both is why a fast machine never loses the preview and a slow one
+    only loses it once it is genuinely behind. ``max_lag_sec <= 0`` turns the
+    skip off entirely; ``decode_cost`` of 0.0 means "not measured yet", which
+    keeps the preview for the first cycles of a recording.
+    """
+    if max_lag_sec <= 0:
+        return False
+    return decode_cost > 1.0 and open_tail_sec > max_lag_sec
+
 
 class LiveTranscribeWorker(QObject):
     """Decodes each closed chunk exactly once; the open tail is a stable preview only.
@@ -100,6 +136,7 @@ class LiveTranscribeWorker(QObject):
         live_beam_size: int = 2,
         final_beam_size: int = 5,
         polish_confidence_ceiling: float = 0.75,
+        preview_max_lag_sec: float = 3.0,
     ) -> None:
         super().__init__()
         self.audio_path = audio_path
@@ -115,6 +152,7 @@ class LiveTranscribeWorker(QObject):
         self.live_beam_size = max(1, int(live_beam_size))
         self.final_beam_size = max(1, int(final_beam_size))
         self.polish_confidence_ceiling = float(polish_confidence_ceiling)
+        self.preview_max_lag_sec = float(preview_max_lag_sec)
         self.model_path = model_path
         self._ledger = ChunkLedger(
             chunk_policy or ChunkPolicy(), pause_threshold=pause_threshold
@@ -131,6 +169,16 @@ class LiveTranscribeWorker(QObject):
         # (target: <= 1.4x, versus the old sliding window's ~8x).
         self._decode_sec_total: float = 0.0
         self._audio_sec_total: float = 0.0
+        # Wall time actually spent inside engine.transcribe(). Against
+        # _decode_sec_total this gives the measured cost of a second of audio on
+        # this machine, which is what decides whether a preview is affordable.
+        self._decode_wall_total: float = 0.0
+        # The last stable preview shown. Re-shown while previews are being
+        # skipped, so the display stalls instead of losing words it already
+        # showed. Cleared whenever a chunk closes, since the committed text
+        # then covers that audio.
+        self._last_stable: str = ""
+        self._progress_state: str = ""
 
     # ------------------------------------------------------------------
     # Public control
@@ -156,7 +204,7 @@ class LiveTranscribeWorker(QObject):
                 model_size=self.model_size, device="auto", model_path=self.model_path
             )
             logger.info("Model loaded in %.2fs", time.time() - wall_start)
-            self.progress.emit("Live transcribing...")
+            self._emit_state(_STATE_LIVE)
 
             final_grace = 0
             while self._keep_running or self._final_requested:
@@ -238,6 +286,7 @@ class LiveTranscribeWorker(QObject):
                 self._ledger.commit(chunk, "", None)
                 committed_any = True
                 continue
+            decode_started = time.time()
             try:
                 with perf.stage("worker.transcribe_chunk"):
                     result = engine.transcribe(
@@ -256,6 +305,7 @@ class LiveTranscribeWorker(QObject):
             except Exception as exc:
                 logger.warning("Chunk transcription failed: %s", exc)
                 break  # retry this (and any later) chunk next cycle
+            self._decode_wall_total += time.time() - decode_started
             self._decode_sec_total += len(chunk_audio) / sr
             self._emit_absolute_segments(result, chunk.start_sample, sr)
             self._ledger.commit(chunk, result.text, _mean_confidence(result))
@@ -263,8 +313,22 @@ class LiveTranscribeWorker(QObject):
 
         if committed_any:
             self._agreement.reset()
+            self._last_stable = ""
 
-        stable_tail = self._decode_open_tail(engine, chunks, tail_audio, tail_start, sr)
+        open_tail_sec = (total_samples - self._ledger.open_start_sample) / sr
+        if should_skip_preview(
+            open_tail_sec, self._decode_cost(), self.preview_max_lag_sec
+        ):
+            # Cosmetic only: the last stable preview stays on screen and every
+            # remaining second goes to the chunks that are actually kept.
+            self._emit_state(_STATE_CATCHING_UP)
+            stable_tail = self._last_stable
+        else:
+            self._emit_state(_STATE_LIVE)
+            stable_tail = self._decode_open_tail(
+                engine, chunks, tail_audio, tail_start, sr
+            )
+            self._last_stable = stable_tail
 
         committed_text = self._ledger.committed_text
         output = committed_text
@@ -278,6 +342,21 @@ class LiveTranscribeWorker(QObject):
             self.partial.emit(output, len(committed_text))
 
         return emitted, time.time() - t0
+
+    def _decode_cost(self) -> float:
+        """Measured wall seconds of decoding per second of audio decoded.
+
+        ``0.0`` until the first decode has been timed.
+        """
+        if self._decode_sec_total <= 0:
+            return 0.0
+        return self._decode_wall_total / self._decode_sec_total
+
+    def _emit_state(self, state: str) -> None:
+        """Emit a live-loop status only when it changes."""
+        if state != self._progress_state:
+            self._progress_state = state
+            self.progress.emit(state)
 
     def _decode_open_tail(
         self, engine: AsrEngine, chunks: List[Chunk], tail_audio: np.ndarray,
@@ -299,6 +378,7 @@ class LiveTranscribeWorker(QObject):
         if self._rms(open_audio) < self.silence_rms_floor:
             return self._agreement.update("")
 
+        decode_started = time.time()
         try:
             with perf.stage("worker.transcribe_live"):
                 result = engine.transcribe(
@@ -316,6 +396,7 @@ class LiveTranscribeWorker(QObject):
         except Exception as exc:
             logger.warning("Live preview transcription failed: %s", exc)
             return self._agreement.update("")
+        self._decode_wall_total += time.time() - decode_started
         self._decode_sec_total += len(open_audio) / sr
         return self._agreement.update(result.text.strip())
 
@@ -335,7 +416,12 @@ class LiveTranscribeWorker(QObject):
         t0 = time.time()
         prompt = self._build_context_prompt()
 
-        for i in self._ledger.low_confidence_indices(self.polish_confidence_ceiling):
+        # This pass can take several seconds per chunk, and it runs after the
+        # radiologist has already pressed Stop — say what it is doing rather
+        # than leaving the window looking hung.
+        targets = list(self._ledger.low_confidence_indices(self.polish_confidence_ceiling))
+        for done, i in enumerate(targets, start=1):
+            self.progress.emit(f"Polishing chunk {done}/{len(targets)}...")
             c = self._ledger.committed[i]
             clip = audio[c.start_sample:c.end_sample]
             if not len(clip):
@@ -363,6 +449,7 @@ class LiveTranscribeWorker(QObject):
         # decode here, at final quality.
         tail = audio[self._ledger.open_start_sample:]
         if len(tail) and self._rms(tail) >= self.silence_rms_floor:
+            self.progress.emit("Polishing final section...")
             try:
                 result = engine.transcribe(
                     tail,

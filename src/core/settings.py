@@ -45,6 +45,12 @@ _DEFAULTS: dict = {
     # the web app's one-shot upload. Both are "transcribe this once, properly",
     # so they share one knob — the web app used to have its own copy of it.
     "final_beam_size": 5,
+    # The live preview of the still-open tail is dropped once that tail is
+    # longer than this AND the machine is measured to decode slower than speech
+    # (src/dictation/worker.py::should_skip_preview). The preview is never
+    # committed, so this trades early sight of a few words for the committed
+    # chunks arriving on time. 0 keeps the preview no matter how far behind.
+    "preview_max_lag_sec": 3.0,
     # committed chunks below this mean word confidence get one re-decode after stop
     "polish_confidence_ceiling": 0.75,
     "silence_rms_floor": 0.002,  # skip live cycles quieter than this (anti-hallucination)

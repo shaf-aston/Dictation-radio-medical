@@ -20,7 +20,11 @@ from src.dictation.postprocess import (  # noqa: E402
     postprocess_transcript,
     postprocess_transcript_with_changes,
 )
-from src.dictation.worker import RADIOLOGY_PROMPT, LiveTranscribeWorker  # noqa: E402
+from src.dictation.worker import (  # noqa: E402
+    RADIOLOGY_PROMPT,
+    LiveTranscribeWorker,
+    should_skip_preview,
+)
 
 
 def make_worker() -> LiveTranscribeWorker:
@@ -60,6 +64,38 @@ class TestContextPrompt:
         assert prompt.endswith(RADIOLOGY_PROMPT)
         assert "word0" not in prompt
         assert "word199" not in prompt
+
+
+class TestPreviewSkip:
+    """When the live preview is worth its decode time, and when it is not.
+
+    The preview is never committed, so dropping it cannot change the report —
+    it only decides whether the next second of CPU goes to words that are kept
+    or to words that are about to be replaced anyway.
+    """
+
+    def test_a_machine_that_keeps_up_always_keeps_the_preview(self) -> None:
+        # decode_cost below 1.0 = decodes faster than speech arrives, so there
+        # is slack to spend and no reason to blank the live text.
+        assert should_skip_preview(open_tail_sec=19.0, decode_cost=0.4, max_lag_sec=3.0) is False
+
+    def test_a_slow_machine_drops_the_preview_once_the_tail_is_long(self) -> None:
+        assert should_skip_preview(open_tail_sec=5.0, decode_cost=3.0, max_lag_sec=3.0) is True
+
+    def test_a_slow_machine_keeps_a_short_tail_preview(self) -> None:
+        # Just after a chunk closed: the tail is cheap to decode and the
+        # radiologist would otherwise see nothing at all.
+        assert should_skip_preview(open_tail_sec=1.0, decode_cost=3.0, max_lag_sec=3.0) is False
+
+    def test_the_first_cycles_keep_the_preview(self) -> None:
+        # decode_cost 0.0 means nothing has been timed yet — never guess.
+        assert should_skip_preview(open_tail_sec=19.0, decode_cost=0.0, max_lag_sec=3.0) is False
+
+    def test_zero_turns_the_skip_off(self) -> None:
+        assert should_skip_preview(open_tail_sec=19.0, decode_cost=8.0, max_lag_sec=0.0) is False
+
+    def test_exactly_at_the_threshold_is_not_yet_behind(self) -> None:
+        assert should_skip_preview(open_tail_sec=3.0, decode_cost=3.0, max_lag_sec=3.0) is False
 
 
 class TestVoiceCorrectionCommands:
