@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 from PySide6.QtCore import Qt, QTimer, Slot
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor
 
 from src.dictation.audio import Recorder
 from src.core.settings import Settings
@@ -141,7 +141,14 @@ class MainWindow(QMainWindow):
         self._partial_seq: int = 0
         self._applied_seq: int = 0
         self._last_raw_transcript: str = ""
-        self._dictation_start_pos: int = 0
+        # Sequence number of the one authoritative full-document pass submitted
+        # after recording stops; None while no such pass is outstanding.
+        self._final_seq: Optional[int] = None
+        # Where the dictated region starts. A QTextCursor, not an integer: Qt
+        # moves it along when text is inserted before it, so loading a template
+        # or typing into a form field mid-recording can no longer leave the
+        # boundary pointing into the middle of someone else's text.
+        self._dictation_start: Optional[QTextCursor] = None
         self._last_editor_text: str = ""
         self._corrections_pending: list = []
         self._corrections_seen: set = set()
@@ -375,6 +382,19 @@ class MainWindow(QMainWindow):
     # Template management
     # ------------------------------------------------------------------
 
+    def dictation_active(self) -> bool:
+        """True while a recording session still owns the dictated region.
+
+        Stays true through the post-stop final pass: ``pp_worker`` is only
+        cleared once that pass has landed, and until then the live path is
+        still rewriting the region.
+        """
+        return self.recorder.is_recording or self.pp_worker is not None
+
+    def _dictation_start_position(self) -> int:
+        """Character offset where the dictated region begins."""
+        return self._dictation_start.position() if self._dictation_start else 0
+
     def on_insert_template(self) -> None:
         name = self.template_combo.currentText()
         if not name:
@@ -383,9 +403,19 @@ class MainWindow(QMainWindow):
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 content = fh.read()
-            self.editor.setPlainText(content)
+            if self.dictation_active():
+                # Replacing the document mid-recording would destroy the
+                # dictation the radiologist is in the middle of. Put the
+                # template above it instead; the cursor anchor shifts with it,
+                # so dictation keeps appending underneath.
+                cursor = self.editor.textCursor()
+                cursor.setPosition(0)
+                cursor.insertText(content if content.endswith("\n") else content + "\n")
+                self._show_status(f"Template inserted above dictation: {name}", 2000)
+            else:
+                self.editor.setPlainText(content)
+                self._show_status(f"Template loaded: {name}", 2000)
             self.settings.set("last_template", name)
-            self._show_status(f"Template loaded: {name}", 2000)
             audit_log.log_template_loaded(name)
         except Exception as exc:
             QMessageBox.warning(self, "Template Error", str(exc))
@@ -395,10 +425,18 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _insert_macro(self, text: str) -> None:
-        current = self.editor.toPlainText()
-        if current and not current.endswith(("\n", " ")):
-            self.editor.insertPlainText(" ")
-        self.editor.insertPlainText(text)
+        if self.dictation_active():
+            # Anything dropped inside the dictated region is overwritten by the
+            # next live cycle, so a macro goes in immediately before it.
+            cursor = self.editor.textCursor()
+            cursor.setPosition(self._dictation_start_position())
+            cursor.insertText(f"{text}\n")
+            self._show_status("Macro inserted above dictation", 2000)
+        else:
+            current = self.editor.toPlainText()
+            if current and not current.endswith(("\n", " ")):
+                self.editor.insertPlainText(" ")
+            self.editor.insertPlainText(text)
         self.editor.setFocus()
 
     def on_reload_macros(self) -> None:

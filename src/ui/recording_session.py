@@ -125,11 +125,16 @@ def on_start_recording(window: MainWindow) -> None:
     window._level_timer.start()
     window._show_status("Recording...")
 
-    # Remember where dictation text starts so we can replace it each cycle
+    # Remember where dictation text starts so we can replace it each cycle.
+    # A cursor, not an integer: Qt shifts it when text is inserted before it,
+    # so a template loaded or a form field typed mid-recording no longer leaves
+    # the boundary cutting into text that isn't dictation.
+    anchor = window.editor.textCursor()
+    anchor.movePosition(anchor.MoveOperation.End)
     current_text = window.editor.toPlainText()
     if current_text and not current_text.endswith(("\n", " ")):
-        window.editor.insertPlainText(" ")
-    window._dictation_start_pos = len(window.editor.toPlainText())
+        anchor.insertText(" ")
+    window._dictation_start = anchor
 
     model_size = window.model_combo.currentText()
     language = window.language_input.text().strip() or "en"
@@ -159,6 +164,7 @@ def on_start_recording(window: MainWindow) -> None:
     perf.reset()
     window._partial_seq = 0
     window._applied_seq = 0
+    window._final_seq = None
     window.pp_thread = QThread()
     window.pp_worker = PostprocessWorker()
     window.pp_worker.moveToThread(window.pp_thread)
@@ -182,6 +188,7 @@ def on_start_recording(window: MainWindow) -> None:
         live_beam_size=int(window.settings.get("live_beam_size")),
         final_beam_size=int(window.settings.get("final_beam_size")),
         polish_confidence_ceiling=float(window.settings.get("polish_confidence_ceiling")),
+        preview_max_lag_sec=float(window.settings.get("preview_max_lag_sec")),
     )
     window.live_worker.moveToThread(window.live_thread)
     window.live_thread.started.connect(window.live_worker.run)
@@ -205,7 +212,8 @@ def on_stop_recording(window: MainWindow) -> None:
         window._level_timer.stop()
         window._level_bar.setValue(0)
         set_level_state(window._level_bar, "healthy")
-        window.btn_record.setEnabled(True)
+        # Record stays disabled through the final pass — see
+        # on_transcription_finished — and is re-enabled by _complete_finish.
         window.btn_stop.setEnabled(False)
         window._show_status("Processing final pass...")
     if window.live_worker is not None:
@@ -257,12 +265,30 @@ def on_processed_text(
             seen = window._corrections_seen = set(window._corrections_pending)
         window._corrections_pending.extend(build_changes(seen, changes))
 
-    if not processed:
-        return
+    if processed:
+        with perf.stage("ui.apply_partial"):
+            _replace_dictation_region(window, processed)
+        if seq != window._final_seq:
+            window._show_status("Receiving...", 800)
 
-    with perf.stage("ui.apply_partial"):
-        _replace_dictation_region(window, processed)
-    window._show_status("Receiving...", 800)
+    # The authoritative full-document pass has landed — the text on screen is
+    # now the finished report, so the rest of the shutdown can run.
+    if seq == window._final_seq:
+        _complete_finish(window)
+
+
+def dictation_start_offset(window: MainWindow, doc_len: int) -> int:
+    """Where the dictated region begins, clamped inside the document.
+
+    The anchor is a ``QTextCursor`` that Qt moves along whenever text is
+    inserted before it, so it survives a template load or a form edit made
+    while recording. The clamp is the last line of defence: a document
+    replaced wholesale (Open, New, Clear) leaves an anchor Qt has already
+    reset, and appending after the end of the text is not a valid edit.
+    """
+    anchor = getattr(window, "_dictation_start", None)
+    position = anchor.position() if anchor is not None else 0
+    return max(0, min(position, doc_len))
 
 
 def _replace_dictation_region(window: MainWindow, processed: str) -> None:
@@ -274,7 +300,7 @@ def _replace_dictation_region(window: MainWindow, processed: str) -> None:
     via a cursor selection.
     """
     current = window.editor.toPlainText()
-    start = window._dictation_start_pos
+    start = dictation_start_offset(window, len(current))
     new_text = current[:start] + processed
     if new_text == current:
         return
@@ -328,54 +354,70 @@ def _apply_finished_ai_cleanup(window: MainWindow) -> None:
         window._on_text_changed()
 
 
-def _finalize_postprocess(window: MainWindow) -> None:
-    """Shut down the post-process thread and run one authoritative full pass.
+def on_transcription_finished(window: MainWindow) -> None:
+    """Recording ended: queue the one authoritative full-document pass.
 
     The live path is incremental and latest-only, so at this moment the editor
     may hold the output of a superseded cycle, or a tail-only pass. The final
-    high-beam transcript is re-processed here as a whole document — once — so
-    what the radiologist reviews is never a partially-processed artefact.
+    high-beam transcript is re-processed as a whole document — once — so what
+    the radiologist reviews is never a partially-processed artefact.
+
+    That pass used to run right here, on the UI thread, freezing the window for
+    seconds after Stop. It now goes through the same post-process thread the
+    live path uses, with the highest sequence number of the session, so it is
+    guaranteed to be the last text applied. Everything that must happen *after*
+    the finished report exists — the optional AI cleanup, the edit-tracking
+    snapshot, thread teardown, the corrections banner — waits in
+    :func:`_complete_finish` until that result comes back.
     """
+    # Record stays disabled until the finished report is on screen: starting a
+    # second session on top of an unfinished one would abandon its thread and
+    # let its final pass write into the new recording's document.
+    window.btn_stop.setEnabled(False)
+
+    raw = getattr(window, "_last_raw_transcript", "")
+    if window.pp_worker is None or not raw.strip():
+        _complete_finish(window)
+        return
+
+    window._show_status("Finalising report...")
+    window._partial_seq += 1
+    window._final_seq = window._partial_seq
+    window.pp_worker.submit(
+        raw,
+        0,  # whole document: no prefix is treated as already-processed
+        getattr(window, "_active_accent", "neutral"),
+        getattr(window, "_active_cleanup_level", "medium"),
+        window._final_seq,
+    )
+    window._last_raw_transcript = ""
+
+
+def _complete_finish(window: MainWindow) -> None:
+    """Close the session down, once the finished report is on screen."""
     thread = getattr(window, "pp_thread", None)
     if thread is not None:
         thread.quit()
         thread.wait(5000)
         window.pp_thread = None
     window.pp_worker = None
-
-    raw = getattr(window, "_last_raw_transcript", "")
-    if not raw.strip():
-        return
-    from src.dictation.postprocess import postprocess_transcript_with_changes
-
-    processed, changes = postprocess_transcript_with_changes(
-        raw,
-        accent=getattr(window, "_active_accent", "neutral"),
-        cleanup_level=getattr(window, "_active_cleanup_level", "medium"),
-        live=True,  # the 'hard' AI polish runs separately, below
-    )
-    if changes:
-        seen = getattr(window, "_corrections_seen", None) or set()
-        window._corrections_seen = seen
-        window._corrections_pending.extend(build_changes(seen, changes))
-    if processed:
-        _replace_dictation_region(window, processed)
+    window._final_seq = None
     window._last_raw_transcript = ""
 
-
-def on_transcription_finished(window: MainWindow) -> None:
-    """Handle end of transcription session."""
-    window.btn_record.setEnabled(True)
-    window.btn_stop.setEnabled(False)
-    _finalize_postprocess(window)
     # The 'hard' cleanup level's AI polish runs here, once, on the finished
     # report — kept out of the per-chunk live path (CLAUDE.md invariant).
+    # Record is re-enabled only after it: that call can sit on the network for
+    # seconds, and a recording started underneath it would be overwritten.
     _apply_finished_ai_cleanup(window)
+    window.btn_record.setEnabled(True)
     window._show_status("Ready")
     # Snapshot the dictation output so any later manual edit can be diffed
     # against it (the "was dictation itself wrong?" signal). Flushed to the
     # edit log when the report is committed (export / clear / close).
     window._post_dictation_snapshot = window.editor.toPlainText()
+    # The dictated region no longer exists: a template loaded from here on
+    # replaces the document again, as it does outside a recording.
+    window._dictation_start = None
     # De-identify the session audio while the WAV still exists; the collector
     # session stays open so spelling fixes made during review are captured too.
     _prepare_training_audio()

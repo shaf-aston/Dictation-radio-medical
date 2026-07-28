@@ -142,13 +142,20 @@ dictation used to get slower the longer it ran:
    No safe boundary yet → it falls back to whole-document processing. The final
    pass after recording stops always reprocesses the whole document, so the
    report the radiologist reviews is never a partially-processed artefact.
+   That final pass goes through the same worker thread, submitted with the
+   highest sequence number of the session, so Stop returns immediately and the
+   full-document result is still guaranteed to be the last text applied.
 3. **Each chunk is decoded exactly once.** `dictation/stream/` finds VAD silence
    boundaries in the still-open tail (`vad.py`), turns them into chunk cuts
    (`segmenter.py`), and permanently freezes each closed chunk's decode
    (`ledger.py`) — nothing ever re-decodes committed audio. Only the still-open
    tail (bounded by `ChunkPolicy.force_cut_sec`, default 20s) is re-decoded
    cycle to cycle, purely for a stable live preview via LocalAgreement-2
-   (`tail.py`, `stream.decode_ratio` in `core/perf.py` is the measured proof —
+   (`tail.py`) — and that preview is dropped altogether (`should_skip_preview`,
+   `preview_max_lag_sec`) once the machine is measured to decode slower than
+   speech AND the open tail has grown past the knob, so preview decodes can
+   never starve the committed chunks queued behind them
+   (`stream.decode_ratio` in `core/perf.py` is the measured proof —
    target ≤1.4x versus the old sliding window's ~8x). After recording stops
    there is no full re-transcribe: a confidence-targeted polish
    (`worker._run_confidence_targeted_polish`) re-decodes only the committed
