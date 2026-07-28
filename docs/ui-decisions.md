@@ -9,6 +9,43 @@ is the picture; this file is the record.
 
 ---
 
+## 2026-07-28 — One colour source for both front-ends (built)
+
+**Chosen: one token file, two renderers.** `src/ui/tokens.json` holds 11 named
+colours per theme and is the only place a colour is written down. `src/ui/theme.py`
+is its only reader: it renders `styles/app.qss` for Qt and `:root` custom properties
+for the web page. `styles/dark.qss` and `styles/light.qss` are deleted, and no
+stylesheet contains a hex value.
+
+**The problem it solves.** The two front-ends did not share a single colour value.
+The desktop was a code-editor theme — record green, stop pink, export blue, three
+saturated hues competing for attention, none meaning anything clinically — while the
+web app was blue-grey neutrals with red reserved for recording and severity and cyan
+for the machine's voice. Same product, two visual identities, and nothing stopping
+them drifting further.
+
+**How it is held.** `scripts/verify_theme.py` fails if a hex value reappears in a
+stylesheet, if a theme renders identically to the other, if a token is missing from
+any of the four theme selectors, or if an unknown placeholder renders silently
+instead of raising. It also builds the real Qt widgets off-screen and reads the
+painted pixels back, because Qt reports neither a stylesheet it failed to parse nor a
+property selector it failed to match — it just paints something plausible.
+
+**One defect that check caught immediately.** The microphone level meter had its
+palette baked into Python at import time, so it painted dark-theme colours on the
+light theme. Its three states are a Qt property now, resolved by the stylesheet like
+every other colour. Nothing in the test suite could have caught this: the suite stubs
+PySide6 out entirely, so `verify_theme.py` is currently the desktop UI's only
+automated coverage.
+
+**Still open — the structural half.** Closing the colour gap does not make the two
+front-ends one product. The desktop still builds a permanent 12-control recording bar
+(`views.py:245-366`) while the web app folds everything but the editor away. The
+shell directions proposed for that (One Surface / The Console / Lightbox & Margin)
+are not built, and the colour argument in that proposal is now out of date.
+
+---
+
 ## 2026-07-28 — Five directions for the rest of the app (proposed, not yet built)
 
 **Mockups:** https://claude.ai/code/artifact/3c909d2e-3819-4d13-bffd-10134b215cda
