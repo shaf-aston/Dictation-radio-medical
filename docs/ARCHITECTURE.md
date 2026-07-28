@@ -26,12 +26,18 @@ Open app ─▶ pick template (optional) ─▶ click Record (F5)
    │
    ├─ recorder.start() writes mic audio to a temp WAV          [audio thread]
    ├─ a QThread runs LiveTranscribeWorker                       [worker thread]
-   │     loops: read WAV ▸ window ▸ Whisper ▸ emit partial
+   │     chunk-once: VAD-cut closed chunks decoded once and frozen (ledger),
+   │     only the still-open tail is re-decoded for a live preview
    │
-   ▼ partial(text) every ~0.4–2 s
-on_partial_text ─▶ postprocess (10 stages, live=True) ─▶ editor shows text
+   ▼ partial(full_transcript) every ~0.4–2 s
+on_partial_text (UI thread, cheap) ─▶ PostprocessWorker.submit
+   ▶ [own QThread, latest-only, incremental tail-only] postprocess (10 stages)
+   ▶ on_processed_text ─▶ replaces the dictated region (cursor-anchored at
+     `window._dictation_start`, so a loaded template or an in-progress edit
+     never gets overwritten)
    │
-Stop (F6) ─▶ worker.finalize() (one high-quality pass) ─▶ finished
+Stop (F6) ─▶ worker.finalize() (confidence-targeted re-decode of low-confidence
+   chunks + the open tail) ─▶ finished
    │
 on_transcription_finished ─▶ optional one-shot AI polish ('hard' only)
    ▶ critical-findings scan ▶ corrections banner ▶ snapshot
@@ -39,10 +45,13 @@ on_transcription_finished ─▶ optional one-shot AI polish ('hard' only)
 Save .txt / Export .docx  (report_manager)
 ```
 
-**Threading rule that matters for "feels slow":** Whisper transcription and the
-final pass run on the **worker thread**, never the GUI message loop. The
-per-chunk postprocess runs in `on_partial_text`. Network AI cleanup is **not**
-in the live path (see §3).
+**Threading rule that matters for "feels slow":** Whisper transcription runs on
+the **worker thread**; the 10-stage postprocess pipeline runs on its own
+**`PostprocessWorker` thread** (`src/ui/postprocess_worker.py`), never inline in
+`on_partial_text` and never on the GUI thread — `on_partial_text` only hands the
+transcript off. Only the un-committed tail is reprocessed per cycle
+(`postprocess/incremental.py`), so cost stays flat as the report grows. Network
+AI cleanup is **not** in the live path (see §3).
 
 The **web app** records the whole press-to-talk session in the browser and POSTs
 once at stop, so it post-processes **once per recording**, not on a timer — it
@@ -184,5 +193,5 @@ ruff check src tests
 
 | Change | What | Why | File(s) |
 |--------|------|-----|---------|
-| **Window/commit machine extracted** | The pure sliding-window + commit-frontier logic moved out of the Qt worker into a plain `WindowState` class (no PySide6, no I/O). The worker now delegates every window/commit decision to it. | The crown-jewel live-speed arithmetic is now unit-testable without Qt or a Whisper model — `test_worker_logic.py`'s windowing/commit tests run against `WindowState` directly. Also removes the last core→UI coupling in the hot path. | `dictation/window_state.py` (new), `dictation/worker.py` |
+| **Window/commit machine extracted** *(superseded — see note at top; `window_state.py` was later deleted by the chunk-once rebuild)* | The pure sliding-window + commit-frontier logic moved out of the Qt worker into a plain `WindowState` class (no PySide6, no I/O). The worker now delegates every window/commit decision to it. | The crown-jewel live-speed arithmetic is now unit-testable without Qt or a Whisper model — `test_worker_logic.py`'s windowing/commit tests run against `WindowState` directly. Also removes the last core→UI coupling in the hot path. | `dictation/window_state.py` (deleted), `dictation/worker.py` |
 | **Web front-end de-CDN'd** | The web page pulled Font Awesome from `cdnjs.cloudflare.com`; replaced with a small self-hosted CSS-masked SVG icon set (the same `<i class="fas fa-…">` markup, no network). | The CDN link was a synchronous external request that stalled the page offline and **broke the "nothing leaves the device" invariant** for the web front-end. Now genuinely offline. | `ui/web_app.py` |
