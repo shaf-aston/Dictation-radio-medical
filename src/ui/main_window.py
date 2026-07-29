@@ -31,6 +31,7 @@ from src.core.patient_schema import normalize_patient_info
 from src.features.file_manager import report_filename
 from src.ui.collapsible import Section
 from src.ui.status import StatusTrack
+from src.ui.term_popup import TermPopup
 from src.ui.styles import DARK, LIGHT, set_status_state
 from src.dictation.worker import STATE_CATCHING_UP, STATE_LIVE, STATE_LOADING
 from src.features.report_manager import (
@@ -187,6 +188,10 @@ class MainWindow(QMainWindow):
         self.patient_section.toggled.connect(self._on_patient_section_toggled)
         self.template_section.toggled.connect(self._on_template_section_toggled)
         self.settings_section.toggled.connect(self._on_settings_section_toggled)
+        # Highlight a term in the editor and its neighbourhood appears beside
+        # it. Owned here rather than in build_ui because it needs
+        # dictation_active() — it stays shut while the text is being rewritten.
+        self.term_popup = TermPopup(self.editor, self.dictation_active, self)
         build_menu(self)
         self._setup_shortcuts()
         self._setup_autosave_timer()

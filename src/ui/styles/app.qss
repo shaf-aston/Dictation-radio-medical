@@ -146,6 +146,40 @@ QLabel#state_pill[state="ok"]   { color: {{ok}}; border-color: {{ok}}; }
 
 QLabel#elapsed { font-size: 11px; }
 
+/* Highlight a term, see its neighbourhood (src/ui/term_popup.py). Two tiers:
+   what the word might have been, then what merely travels with it — the second
+   quieter, so the first is what the eye lands on. */
+QFrame#term_popup {
+    background-color: {{room2}};
+    border: 1px solid {{edge}};
+    border-radius: 6px;
+}
+QLabel#tp_key { color: {{textDim}}; font-size: 10px; font-weight: 700; }
+QPushButton#tp_match {
+    background-color: transparent;
+    color: {{text}};
+    border: none;
+    padding: 2px 4px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton#tp_related {
+    background-color: transparent;
+    color: {{textDim}};
+    border: none;
+    padding: 1px 4px;
+    text-align: left;
+    font-size: 11px;
+}
+QPushButton#tp_match:hover, QPushButton#tp_related:hover {
+    background-color: {{room}};
+    color: {{glow}};
+}
+QLabel#tp_why { color: {{textDim}}; font-size: 10px; }
+QFrame#tp_divider { color: {{edge}}; }
+QLabel#tp_foot { color: {{textDim}}; font-size: 10px; }
+
 QScrollArea { background-color: transparent; border: none; }
 QScrollBar:vertical { background-color: {{room}}; width: 8px; }
 QScrollBar::handle:vertical { background-color: {{edge}}; border-radius: 4px; }
