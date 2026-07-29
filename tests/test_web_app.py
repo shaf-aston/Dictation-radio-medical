@@ -11,6 +11,7 @@ from src.core.settings import Settings
 from src.dictation.asr import AsrResult
 import src.features.report_release as report_release
 import src.ui.web_app as web_app
+from src.medical import term_lookup
 
 
 class DummyEngine:
@@ -645,3 +646,47 @@ def test_term_lookup_refuses_an_oversized_selection(monkeypatch) -> None:
         response = client.get("/api/terms/lookup", params={"q": "x" * (limit + 1)})
 
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Marking — which words are worth highlighting
+# ---------------------------------------------------------------------------
+
+def test_suspect_route_returns_spans_into_the_submitted_text(monkeypatch) -> None:
+    text = "There is a small right othorax."
+    monkeypatch.setattr(
+        web_app.term_lookup, "suspect_terms",
+        lambda value: [term_lookup.Span(23, 30, "othorax")],
+    )
+    with _client(monkeypatch) as client:
+        response = client.post("/api/terms/suspect", json={"text": text})
+    assert response.status_code == 200
+    span = response.json()["spans"][0]
+    # The offsets must index the text as submitted, or the browser underlines
+    # the wrong word.
+    assert text[span["start"]:span["end"]] == span["term"] == "othorax"
+
+
+def test_suspect_route_accepts_an_empty_report(monkeypatch) -> None:
+    with _client(monkeypatch) as client:
+        response = client.post("/api/terms/suspect", json={"text": ""})
+    assert response.status_code == 200
+    assert response.json() == {"spans": []}
+
+
+def test_taking_a_suggestion_is_counted_until_the_hint_retires(monkeypatch) -> None:
+    """The count is shared with the desktop, so it lives in settings."""
+    settings = DummySettings({"term_lookup_hint_uses": 2, "term_lookup_uses": 0})
+    monkeypatch.setattr(web_app, "_settings", lambda: settings)
+    with _client(monkeypatch) as client:
+        assert client.post("/api/terms/used").json()["term_lookup_uses"] == 1
+        assert client.post("/api/terms/used").json()["term_lookup_uses"] == 2
+        # Past the ceiling it stops counting rather than growing forever.
+        assert client.post("/api/terms/used").json()["term_lookup_uses"] == 2
+
+
+def test_the_page_ships_the_hint_state(monkeypatch) -> None:
+    with _client(monkeypatch) as client:
+        boot = _bootstrap_from(client.get("/").text)
+    assert "term_lookup_uses" in boot
+    assert boot["term_lookup_hint_uses"] >= 1

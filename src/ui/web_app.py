@@ -39,6 +39,7 @@ from src.features.file_manager import (
 )
 from src.features.report_manager import DOCX_AVAILABLE, export_to_word_bytes, format_plain_text_report
 from src.features.report_release import check_release, record_release, unfilled_fields
+from src.features import run_log
 from src.medical import macros, term_lookup
 from src.medical.macros import reload_macros
 from src.ui.theme import css_variables
@@ -85,6 +86,12 @@ if tuple(PatientInfo.model_fields) != PATIENT_KEYS:
         f"PatientInfo fields {tuple(PatientInfo.model_fields)} do not match the "
         f"shared patient schema {PATIENT_KEYS}"
     )
+
+
+class TextRequest(BaseModel):
+    """Just the report text, for the endpoints that only read it."""
+
+    text: str = ""
 
 
 class ReportRequest(BaseModel):
@@ -172,7 +179,18 @@ _FRONTEND_FILES = {
     "app.css": "text/css; charset=utf-8",
     "app.js": "text/javascript; charset=utf-8",
     "favicon.svg": "image/svg+xml",
+    # The /developer diagnostics page. It reuses app.css for the shared
+    # token-based primitives and adds only what a table needs; it deliberately
+    # does NOT load app.js, which drives the dictation DOM and would run the
+    # whole recording wiring against elements this page does not have.
+    "developer.html": "text/html; charset=utf-8",
+    "developer.css": "text/css; charset=utf-8",
+    "developer.js": "text/javascript; charset=utf-8",
 }
+
+#: Pages, not assets: these are rendered through _render_html (they carry
+#: __THEME_VARS__ placeholders) and would serve unfilled slots over /static/.
+_PAGE_FILES = {"app.html", "developer.html"}
 
 
 def _frontend_file(name: str) -> str:
@@ -229,6 +247,12 @@ def _bootstrap_payload() -> dict:
         ],
         "macros": _macros_payload(),
         "docx_available": DOCX_AVAILABLE,
+        # How many times a marked word's suggestion has actually been taken.
+        # The marks hint stops explaining itself past the ceiling; the count
+        # lives in settings rather than the browser so using the feature on the
+        # desktop also retires the hint here.
+        "term_lookup_uses": int(_settings().get("term_lookup_uses", 0) or 0),
+        "term_lookup_hint_uses": int(_settings().get("term_lookup_hint_uses", 3) or 3),
         # The first-launch clinical disclaimer, shipped with the rest of the
         # first-load state rather than fetched separately — the page must be
         # able to show it before the radiologist can type anything.
@@ -344,9 +368,9 @@ app = FastAPI(title="Radio Dictate Web", lifespan=lifespan)
 
 @app.get("/static/{name}")
 async def static_file(name: str):
-    """Serve the bundled front-end. Only the three known names resolve."""
+    """Serve the bundled front-end. Only the known asset names resolve."""
     media_type = _FRONTEND_FILES.get(name)
-    if media_type is None or name == "app.html":
+    if media_type is None or name in _PAGE_FILES:
         raise HTTPException(status_code=404, detail="Not found")
     return Response(content=_frontend_file(name), media_type=media_type)
 
@@ -570,6 +594,68 @@ async def term_lookup_endpoint(q: str = ""):
     return asdict(result)
 
 
+def _record_web_run(
+    settings, prefs: dict, text: str, elapsed: float,
+    audio_sec: float, stages: dict,
+) -> None:
+    """Write one run record for a browser dictation.
+
+    The browser path is one-shot — upload, decode, return — so the whole
+    request *is* the run: there is no separate "catching up after Stop" to
+    split out, and ``finalise_sec`` stays zero rather than being invented.
+    """
+    record = run_log.start("web", model=str(prefs.get("model_size", "")))
+    record.audio_sec = audio_sec
+    record.duration_sec = round(elapsed, 3)
+    record.word_count = len(text.split())
+    record.stages = {name: {"total_ms": secs * 1000} for name, secs in stages.items()}
+    if audio_sec > 0:
+        record.decode_ratio = round(elapsed / audio_sec, 3)
+    record.text = text if bool(settings.get("run_log_store_text", True)) else ""
+    run_log.write(record, settings)
+
+
+@app.post("/api/terms/suspect")
+async def term_suspect_endpoint(payload: TextRequest):
+    """Which words in the report are worth a second look, with their offsets.
+
+    A POST because the body is the whole report, which does not belong in a
+    query string. Same thinness as the lookup above: every rule about what
+    counts as suspect lives in ``src.medical.term_lookup``, so the marks a
+    radiologist sees in the browser are the marks they see on the desktop.
+    """
+    spans = await anyio.to_thread.run_sync(term_lookup.suspect_terms, payload.text)
+    return {"spans": [asdict(span) for span in spans]}
+
+
+@app.post("/api/terms/used")
+async def term_used_endpoint():
+    """Record that a suggestion was taken, so the marks hint can retire.
+
+    Counted in settings rather than the browser because the desktop window
+    counts the same takes into the same key: learning the feature in one
+    front-end should not leave the other still explaining it.
+    """
+    settings = _settings()
+    ceiling = int(settings.get("term_lookup_hint_uses", 3) or 3)
+    used = int(settings.get("term_lookup_uses", 0) or 0)
+    if used < ceiling:
+        used += 1
+        settings.set("term_lookup_uses", used)
+    return {"term_lookup_uses": used, "term_lookup_hint_uses": ceiling}
+
+
+@app.get("/api/runs")
+async def runs_endpoint(limit: int = 100):
+    """Every recorded dictation run, newest first (see features/run_log).
+
+    Local diagnostics: this reads a file under ``data/`` and sends it to a page
+    served on loopback. Nothing leaves the device.
+    """
+    limit = max(1, min(int(limit), 500))
+    return {"runs": run_log.recent(limit=limit)}
+
+
 @app.get("/api/debug/perf")
 async def perf_endpoint():
     """Rolling stage timings for this process (local only, nothing is sent out).
@@ -611,7 +697,16 @@ async def transcribe_audio(file: UploadFile = File(...)):
         # Whisper transcription and post-processing are synchronous and
         # multi-second/CPU-bound. Run them in a worker thread so a request does
         # not block the event loop and stall every other concurrent request.
+        # Timed per request as well as into perf. perf is never reset on this
+        # path, so its snapshot is cumulative for the process — which is the
+        # right thing for /api/debug/perf and the wrong thing for one run's
+        # record. These are this run's own numbers.
+        run_stages: dict = {}
+        run_audio_sec = 0.0
+
         def _transcribe() -> str:
+            nonlocal run_audio_sec
+            t0 = time.time()
             with perf.stage("web.transcribe"):
                 result = _get_engine().transcribe(
                     file_like,
@@ -624,13 +719,21 @@ async def transcribe_audio(file: UploadFile = File(...)):
                     ),
                 )
                 text = result.text
+            run_stages["transcribe"] = round(time.time() - t0, 3)
+            if result.segments:
+                run_audio_sec = round(float(result.segments[-1].end), 3)
+            t1 = time.time()
             with perf.stage("web.postprocess"):
-                return postprocess_transcript(
+                cleaned = postprocess_transcript(
                     text, accent=prefs["accent"], cleanup_level=prefs["cleanup_level"]
                 )
+            run_stages["postprocess"] = round(time.time() - t1, 3)
+            return cleaned
 
         text = await anyio.to_thread.run_sync(_transcribe)
-        perf.record("web.request", time.time() - t_start)
+        elapsed = time.time() - t_start
+        perf.record("web.request", elapsed)
+        _record_web_run(settings, prefs, text, elapsed, run_audio_sec, run_stages)
         return {"text": text}
     except Exception as e:
         logger.error("Transcription failed: %s", e, exc_info=True)

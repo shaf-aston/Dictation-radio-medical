@@ -311,6 +311,13 @@ def build_editor_panel(window: MainWindow) -> QWidget:
     window._info_words.setStyleSheet("font-size: 11px;")
     info_bar.addWidget(window._info_words)
     info_bar.addStretch()
+    # How the radiologist finds out the lookup exists at all. Hidden until
+    # there is something to point at, and it stops explaining itself once the
+    # feature has been used — see MainWindow._on_marks_changed.
+    window._info_marks = QLabel("")
+    window._info_marks.setObjectName("info_marks")
+    window._info_marks.hide()
+    info_bar.addWidget(window._info_marks)
     layout.addLayout(info_bar)
 
     return panel

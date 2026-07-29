@@ -64,6 +64,20 @@ _DEFAULTS: dict = {
     "macros_panel_visible": True,
     "panel_template_open": True,
     "panel_settings_open": False,
+    # --- The marked-term lookup ---
+    # How many taken suggestions before the marks hint stops explaining itself
+    # and shows only the count, and the running total of takes. Shared by both
+    # front-ends on purpose: learning the feature on the desktop should retire
+    # the hint in the browser too.
+    "term_lookup_hint_uses": 3,
+    "term_lookup_uses": 0,
+    # --- Run log (features/run_log.py, shown at /developer) ---
+    # Local diagnostics: one record per dictation. Capped because each record
+    # can hold a full report, and rolling beats growing without limit.
+    "run_log_max": 200,
+    # The report text alongside the numbers — that output is the point of the
+    # page. Turn off to keep every timing and drop only the body.
+    "run_log_store_text": True,
     "last_template": "",
     "last_macro_region": "Knee",
     "window_width": 1200,

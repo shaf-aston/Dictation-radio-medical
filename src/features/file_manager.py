@@ -216,6 +216,16 @@ def audit_log_path() -> Path:
     """
     return _data_dir() / "audit.log"
 
+def run_log_path() -> Path:
+    """One record per dictation run (JSON lines), for the /developer page.
+
+    Written by ``features/run_log.py``. Unlike the audit log this one is capped
+    and rolls: it is diagnostics, not a retention record, and it may hold report
+    text — so it is bounded on purpose. Local only, like everything under
+    ``data/``.
+    """
+    return _data_dir() / "runs.jsonl"
+
 # ---------------------------------------------------------------------------
 # Cloud training storage (Lightning AI integration)
 # ---------------------------------------------------------------------------

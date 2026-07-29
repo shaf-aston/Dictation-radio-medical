@@ -180,6 +180,11 @@ QLabel#tp_why { color: {{textDim}}; font-size: 10px; }
 QFrame#tp_divider { color: {{edge}}; }
 QLabel#tp_foot { color: {{textDim}}; font-size: 10px; }
 
+/* "3 words to check — highlight one to see alternatives". An affordance, so
+   it reads as quietly as the word count beside it — never {{rec}}, which
+   would make a possible typo look like a clinical finding. */
+QLabel#info_marks { color: {{textDim}}; font-size: 11px; }
+
 QScrollArea { background-color: transparent; border: none; }
 QScrollBar:vertical { background-color: {{room}}; width: 8px; }
 QScrollBar::handle:vertical { background-color: {{edge}}; border-radius: 4px; }
