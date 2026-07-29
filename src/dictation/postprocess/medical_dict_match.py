@@ -27,6 +27,7 @@ import re
 from typing import Optional, Set
 
 from src.medical import medical_dict
+from src.medical.medical_dict import is_english_word
 
 logger = logging.getLogger(__name__)
 
@@ -89,36 +90,12 @@ def _nearest_term(word: str, max_distance: int, sym: Optional[object] = None) ->
 
 # ---------------------------------------------------------------------------
 # English-word guard
-# ---------------------------------------------------------------------------
-# A genuine typo is a *non-word*. We must never "correct" a word that is already
-# valid English ("there", "around", "again") just because a real medical term
-# ("marrow" vs "narrow") sits one edit away. pyspellchecker bundles an OFFLINE
-# frequency dictionary (no network), so it's the guard. If it isn't installed,
-# `_english_known` returns None and the stage drops back to the conservative
-# ratio-only path — a missing dep can never *add* over-correction risk.
-_ENGLISH = None  # None = not yet loaded; False = unavailable; else a SpellChecker
-
-
-def _english_known(word: str) -> Optional[bool]:
-    """Return True/False if *word* is/isn't standard English, or None if no checker."""
-    global _ENGLISH
-    if _ENGLISH is None:
-        try:
-            from spellchecker import SpellChecker
-            _ENGLISH = SpellChecker()
-        except Exception:  # not installed / failed to load — guard unavailable
-            _ENGLISH = False
-            # Loud, once: without this guard the stage drops to the conservative
-            # ratio path and silently leaves the whole class of one-letter medical
-            # misspellings uncorrected. A silent degradation here is exactly how
-            # "the dictation keeps misspelling things" goes undiagnosed.
-            logger.warning(
-                "Spelling corrector degraded: pyspellchecker is not installed, so "
-                "the English-word guard is off and one-letter medical misspellings "
-                "(e.g. 'atelactasis'->'atelectasis', 'vertabra'->'vertebra') will "
-                "NOT be corrected. Install it: pip install pyspellchecker"
-            )
-    return None if _ENGLISH is False else bool(_ENGLISH.known([word]))
+# A genuine typo is a *non-word*, and this stage must never "correct" a word
+# that is already valid English. The guard itself now lives beside the wordlists
+# in :mod:`src.medical.medical_dict`, so this stage and the marking scan cannot
+# disagree about what counts as a real word; the local name is kept because it
+# reads better at the call sites here (and `warmup` imports it by this name).
+_english_known = is_english_word
 
 # Inflectional suffixes the matcher must neither add nor strip. A fuzzy
 # "correction" that only changes a word's grammatical number or tense is

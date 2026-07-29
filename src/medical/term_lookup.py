@@ -38,13 +38,22 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from src.features.file_manager import related_terms_path
-from src.medical.medical_dict import get_correction_targets, get_symspell
+from src.medical.medical_dict import (
+    get_correction_targets,
+    get_medical_terms,
+    get_symspell,
+    is_english_word,
+)
 
 logger = logging.getLogger(__name__)
 
 #: A word as dictated: letters, plus the hyphen that real terms carry
 #: ("ground-glass", "full-thickness").
 _WORD = re.compile(r"[a-z]+(?:-[a-z]+)*")
+
+#: The same shape, but over the report as written — a scan needs the offsets of
+#: "Pneumothorax" as much as of "pneumothorax". Lookups stay lowercase.
+_WORD_IN_TEXT = re.compile(r"[A-Za-z]+(?:-[A-Za-z]+)*")
 
 
 @dataclass(frozen=True)
@@ -58,6 +67,19 @@ class Suggestion:
 
     term: str
     note: str
+
+
+@dataclass(frozen=True)
+class Span:
+    """One word worth a second look, at its place in the report text.
+
+    ``start``/``end`` index the *original* string, so a front-end can mark the
+    word without altering the text it is marking.
+    """
+
+    start: int
+    end: int
+    term: str
 
 
 @dataclass(frozen=True)
@@ -104,6 +126,10 @@ _FALLBACK_TUNING: Dict[str, int] = {
     "min_remainder_chars": 2,
     "min_family_terms": 2,
     "max_family_terms": 12,
+    # Marking (see suspect_terms): short words are noise, and a report with a
+    # hundred marks has told the reader nothing.
+    "min_suspect_chars": 4,
+    "max_marks": 50,
 }
 
 
@@ -364,3 +390,77 @@ def _lookup(text: str) -> TermLookup:
         similar_spelling=similar,
         related=deduped[: index.tuning["max_related"]],
     )
+
+
+# ---------------------------------------------------------------------------
+# Marking — which words are worth highlighting in the first place
+# ---------------------------------------------------------------------------
+
+def suspect_terms(text: str) -> List[Span]:
+    """The words in *text* a reader should look at, with their offsets.
+
+    Highlighting a word already answers it (:func:`lookup`); this answers the
+    question before it — *which* word. Without it the feature is invisible: you
+    have to suspect a word to select it, and the words worth suspecting are
+    exactly the ones that read as plausible.
+
+    A word is marked only when **all three** hold:
+
+    * it is not standard English (:func:`~src.medical.medical_dict.is_english_word`)
+      — the same guard the fuzzy corrector uses, and the reason "There" is not
+      marked merely because "teres" is one edit away;
+    * the membership wordlist does not know it either — the "is this already a
+      real word? leave it alone" test; and
+    * :func:`_similar_spelling` can name at least one curated lexicon term it
+      might have been.
+
+    The last is the point. A mark that opens onto an empty popup is a dead end,
+    and a reader who hits two of those stops trusting the marks — so an
+    unusual-looking word with nothing to offer is left unmarked.
+
+    Never raises: any failure comes back as no marks, because the report must
+    render whether or not this can answer.
+    """
+    try:
+        return _suspect_terms(text)
+    except Exception as exc:
+        logger.warning("Suspect-term scan failed: %s", exc, exc_info=True)
+        return []
+
+
+def _suspect_terms(text: str) -> List[Span]:
+    if not text:
+        return []
+    # Without the English guard every ordinary word ("there", "again") whose
+    # neighbourhood happens to hold a medical term would be marked. A report
+    # speckled with wrong marks is worse than no marks, so the feature switches
+    # itself off rather than degrade — medical_dict warns loudly, once.
+    if is_english_word("the") is None:
+        return []
+
+    index = _index()
+    known = get_medical_terms()
+    floor = index.tuning["min_suspect_chars"]
+    ceiling = index.tuning["max_marks"]
+
+    spans: List[Span] = []
+    # One verdict per distinct word, not per occurrence: a report says
+    # "pneumothorax" many times and the answer cannot change within one scan.
+    verdicts: Dict[str, bool] = {}
+    for match in _WORD_IN_TEXT.finditer(text):
+        if len(spans) >= ceiling:
+            break
+        word = match.group()
+        lowered = word.lower()
+        if len(lowered) < floor or lowered in known:
+            continue
+        verdict = verdicts.get(lowered)
+        if verdict is None:
+            verdict = (
+                not is_english_word(lowered)
+                and bool(_similar_spelling(lowered, index))
+            )
+            verdicts[lowered] = verdict
+        if verdict:
+            spans.append(Span(match.start(), match.end(), word))
+    return spans
