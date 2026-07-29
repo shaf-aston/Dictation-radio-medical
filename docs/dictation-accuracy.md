@@ -113,6 +113,50 @@ The decoder's prompt slot holds 223 tokens and three things want it:
    one-shot and never exercises the polish path, so there is no way to measure which
    setting is better. Changing an accuracy knob that cannot be measured is guessing.
 
+## M3 — the engine bake-off (Parakeet vs Whisper)
+
+Both engines, same 30 `tts` clips, same post-processing, same machine
+(2026-07-29). `own` still has no audio, so this is synthetic voice only.
+
+| | Whisper `small.en` | Parakeet TDT 0.6b v3 |
+|---|---|---|
+| WER | **5.52 %** | 6.50 % |
+| medical-term error rate | **3.44 %** | 7.12 % |
+| false-correction rate | 14.29 % | **5.56 %** |
+| real-time factor | 0.565 | **0.108** |
+| decode time, 10.8 min audio | 358 s | **70 s** |
+
+**Verdict: do not switch. Parakeet is 5.2x faster and gets twice as many
+anatomical words wrong.** Term error rate is the number this project exists to
+protect — a report can post a respectable WER while mangling every anatomical
+word in it — and 3.44 % → 7.12 % is the wrong direction on the only metric that
+is allowed to veto a speed win.
+
+Two things keep it from being a closed case:
+
+* **Parakeet gets no lexicon priming.** Whisper receives the 210-token radiology
+  prompt inside the decoder; the Parakeet engine reports `hotwords: False` and
+  nothing biases it toward radiology vocabulary. Some of that doubled term error
+  is a missing feature, not a worse model. Wiring lexicon biasing into the CTC
+  path is the experiment that would settle it.
+* **Parakeet's false-correction rate is less than half Whisper's** (5.56 % vs
+  14.29 %, and 34 true fixes against 2 bad ones). Its mistakes are evidently more
+  correctable by the pipeline than Whisper's are.
+
+The engine stays available behind `--engine parakeet` and `create_engine`, and
+the default is unchanged.
+
+### A speed claim corrected
+
+Whisper `small.en` decodes at **0.57x real time** on this machine in a single
+pass — it keeps up with speech comfortably. Earlier sessions described it as
+"~3x slower than speech", which was wrong. Live dictation lagged because the old
+design decoded the same audio several times per cycle, not because one pass is
+slow. That is why the preview-skip fix (`should_skip_preview`) recovered the lag
+without touching the model, and it is why a faster engine is a smaller live-speed
+win than it first appears — worth having for the post-Stop polish, not a cure for
+a lag that has already been fixed.
+
 ## What would move the needle next
 
 Ranked by expected value, given everything above:
@@ -120,8 +164,8 @@ Ranked by expected value, given everything above:
 1. **Record the `own` gold set** (~15 min: `python -m scripts.eval.build_sets --set own
    --record`). Every remaining question is blocked on it. It is the only instrument that
    measures real acoustics, and it is the only fair test of the confidence veto.
-2. **A better engine (M3).** WER 4.7 % on clean synthetic audio is close to the useful
-   floor for this model size; real dictation will be worse. An engine change is the only
-   lever left that is worth multiple points.
+2. **Lexicon biasing for Parakeet.** It is the one measured route to a 5x-faster
+   engine that does not cost anatomy: its term error rate is doubled while it decodes
+   with no radiology vocabulary at all, which Whisper does get. See the M3 table above.
 3. **Settle the `condition_on_previous_text` disagreement**, which needs the harness to
    be able to drive the polish path.

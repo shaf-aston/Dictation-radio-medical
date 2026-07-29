@@ -73,6 +73,23 @@ def whisper_cache_dir() -> Path:
     path.mkdir(exist_ok=True)
     return path
 
+def onnx_asr_cache_dir(model_name: str) -> Path:
+    """Download directory for one onnx-asr model (Parakeet), under data/cache/.
+
+    Same reason as :func:`whisper_cache_dir` — keep the several-hundred-MB
+    download visible and deletable with the other caches instead of hidden in
+    the per-user HuggingFace cache.
+
+    The returned directory is deliberately NOT created. onnx-asr treats an
+    existing directory as "already downloaded, work offline", so pre-making it
+    would turn the very first run into a missing-file error instead of a
+    download. It creates the directory on the one download; every later load
+    then resolves locally, which is what keeps the offline invariant.
+    """
+    root = cache_dir() / "onnx_asr"
+    root.mkdir(exist_ok=True)
+    return root / model_name.replace("/", "_")
+
 def imaging_embeddings_dir() -> Path:
     """Cache of imaging embeddings + similarity indices (rebuildable)."""
     path = cache_dir() / "imaging_embeddings"

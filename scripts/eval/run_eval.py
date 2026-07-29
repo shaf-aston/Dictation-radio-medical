@@ -5,6 +5,7 @@
     python -m scripts.eval.run_eval --set tts --label m1-asr-port
     python -m scripts.eval.run_eval --set tts --confidence-ceiling 0.85   # sweep the veto
     python -m scripts.eval.run_eval --set tts --confidence-ceiling none   # veto off
+    python -m scripts.eval.run_eval --set tts --engine parakeet           # engine #2
 
 Transcribes every clip in the chosen sets, runs the post-processing pipeline on
 the result, and scores three things the project could not previously see:
@@ -43,6 +44,7 @@ from scripts.eval.metrics import correction_effect, term_error_rate, word_error_
 from src.core.json_store import write_json
 from src.core.logging_setup import setup_logging
 from src.core.settings import Settings
+from src.dictation.asr.factory import DEFAULT_ENGINE, ENGINE_NAMES
 from src.features.file_manager import eval_reports_dir
 
 logger = logging.getLogger(__name__)
@@ -100,30 +102,40 @@ class SetResult:
 # Transcription seam
 # ---------------------------------------------------------------------------
 
-class WhisperRunner:
+class EngineRunner:
     """Transcribes a clip through the ``AsrEngine`` port (M1).
 
-    Deliberately narrow: ``transcribe(path) -> (text, seconds)``. Routing
-    through :func:`create_engine` rather than ``Transcriber`` directly is what
-    lets this same class evaluate a second engine at M3 by changing only the
-    ``engine_name`` argument.
+    Deliberately narrow: ``transcribe(path) -> (text, confidences, seconds)``.
+    Routing through :func:`create_engine` rather than any concrete wrapper is
+    what lets this one class evaluate a second engine (M3's ``parakeet``) by
+    changing only ``engine_name`` — and :func:`model_kwargs` keeps the
+    engine-specific constructor argument names out of here.
     """
 
-    def __init__(self, model_size: str, beam_size: int, engine_name: str = "faster-whisper") -> None:
+    def __init__(self, model: str, beam_size: int, engine_name: str = "faster-whisper") -> None:
         from src.dictation.asr import TranscribeContext, create_engine
+        from src.dictation.asr.factory import model_kwargs
 
-        self.model_size = model_size
+        self.model = model
         self.beam_size = beam_size
         self.engine_name = engine_name
-        self._engine = create_engine(engine_name, model_size=model_size)
+        self._engine = create_engine(engine_name, **model_kwargs(engine_name, model))
         self._ctx_cls = TranscribeContext
 
     def describe(self) -> Dict[str, Any]:
+        caps = self._engine.capabilities()
         return {
             "engine": self.engine_name,
-            "model_size": self.model_size,
+            # Blank means the engine's own default, which describe() then names
+            # via the quantisation/compute-type line below.
+            "model": self.model or getattr(self._engine, "model_name", ""),
             "beam_size": self.beam_size,
             "compute_type": getattr(self._engine, "compute_type", None),
+            "quantization": getattr(self._engine, "quantization", None),
+            # Recorded per run because a comparison that ignores it would read
+            # "no word confidences" as "an unsure decoder" (see EngineCaps).
+            "word_confidence": caps.word_confidence,
+            "hotwords": caps.hotwords,
         }
 
     def warmup(self) -> None:
@@ -159,7 +171,7 @@ class WhisperRunner:
 # ---------------------------------------------------------------------------
 
 def evaluate_clip(
-    clip: Clip, runner: WhisperRunner, lexicon: Sequence[str], accent: str,
+    clip: Clip, runner: EngineRunner, lexicon: Sequence[str], accent: str,
     cleanup_level: str, confidence_ceiling: Optional[float] = None,
 ) -> ClipResult:
     """Transcribe, post-process, and score one clip."""
@@ -255,7 +267,7 @@ def summarise(results: List[ClipResult]) -> Dict[str, float]:
 
 
 def evaluate_sets(
-    set_names: List[str], runner: WhisperRunner, accent: str, cleanup_level: str,
+    set_names: List[str], runner: EngineRunner, accent: str, cleanup_level: str,
     confidence_ceiling: Optional[float] = None, limit: int = 0,
 ) -> List[SetResult]:
     from src.medical.medical_dict import get_correction_targets
@@ -302,7 +314,7 @@ def evaluate_sets(
 # ---------------------------------------------------------------------------
 
 def build_report(
-    sets: List[SetResult], runner: WhisperRunner, accent: str, cleanup_level: str,
+    sets: List[SetResult], runner: EngineRunner, accent: str, cleanup_level: str,
     label: str, include_text: bool, confidence_ceiling: Optional[float] = None,
 ) -> dict:
     return {
@@ -339,7 +351,11 @@ def print_summary(report: dict, baseline: dict | None) -> None:
     characters, which would take the whole run down after the expensive part had
     already finished.
     """
+    config = report.get("config", {})
     print()
+    print(f"engine: {config.get('engine')} / {config.get('model')}"
+          f"  ({config.get('quantization') or config.get('compute_type')})"
+          f"  word confidence: {config.get('word_confidence')}")
     for set_name, data in report["sets"].items():
         summary = data["summary"]
         base = (baseline or {}).get("sets", {}).get(set_name, {}).get("summary", {})
@@ -399,7 +415,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--label", default="", help="name for this run, e.g. 'm0-baseline'")
     parser.add_argument("--baseline", type=Path, default=None,
                         help="an earlier report JSON to diff against")
-    parser.add_argument("--model", default="", help="override the model size from settings")
+    parser.add_argument("--engine", default=DEFAULT_ENGINE, choices=sorted(ENGINE_NAMES),
+                        help="which ASR engine to score (default: the shipped one)")
+    parser.add_argument("--model", default="",
+                        help="override the model this engine loads; blank uses the "
+                             "settings model_size for faster-whisper, and each "
+                             "other engine's own default")
     parser.add_argument("--beam-size", type=int, default=0, help="override beam width")
     parser.add_argument("--cleanup-level", default="", choices=["", "soft", "medium", "hard"],
                         help="override the post-processing level from settings")
@@ -416,7 +437,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     setup_logging()
     settings = Settings()
-    model = args.model or settings.get("model_size", "base")
+    # ``model_size`` in settings is a Whisper model name, so it can only stand
+    # in for a blank --model on the Whisper engine; any other engine falls back
+    # to its own default rather than being handed a name it cannot load.
+    model = args.model or (
+        settings.get("model_size", "base") if args.engine == DEFAULT_ENGINE else ""
+    )
     beam = args.beam_size or int(settings.get("beam_size", 5))
     accent = settings.get("accent", "neutral")
     cleanup_level = args.cleanup_level or settings.get("cleanup_level", "medium")
@@ -435,10 +461,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
 
-    runner = WhisperRunner(model_size=model, beam_size=beam)
+    runner = EngineRunner(model=model, beam_size=beam, engine_name=args.engine)
     logger.info(
-        "Loading %s (beam=%d, cleanup=%s, confidence veto=%s)...",
-        model, beam, cleanup_level, "off" if ceiling is None else f">={ceiling:.2f}",
+        "Loading %s / %s (beam=%d, cleanup=%s, confidence veto=%s)...",
+        args.engine, model or "engine default", beam, cleanup_level,
+        "off" if ceiling is None else f">={ceiling:.2f}",
     )
     runner.warmup()
 
@@ -450,7 +477,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.error("%s", exc)
         return 1
 
-    label = args.label or f"{model}-beam{beam}"
+    label = args.label or f"{args.engine}-{model or 'default'}-beam{beam}"
     report = build_report(
         sets, runner, accent, cleanup_level, label, not args.no_text, ceiling
     )

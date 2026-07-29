@@ -1,0 +1,13 @@
+# Optional extra: the Parakeet ASR engine (src/dictation/asr/engines/parakeet_engine.py).
+#
+# Not in requirements.txt because the app must run without it — create_engine
+# only imports this when "parakeet" is asked for, exactly like the imaging extra.
+# It pulls no torch: onnxruntime (already a dependency of the imaging path) plus
+# numpy is the whole of it.
+#
+#   pip install -r scripts/lightning/requirements_parakeet.txt
+#
+# The model downloads once into data/cache/ on first use and never again.
+# Measured against Whisper small.en in docs/dictation-accuracy.md — faster, but
+# worse on anatomical terms, so it is NOT the default.
+onnx-asr>=0.12.0
