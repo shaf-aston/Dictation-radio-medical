@@ -19,20 +19,19 @@ where the theme check could not see them; the check now reads `app.js` /
 `app.html` too. Panels remember their fold state. `ARCHITECTURE.md` matches the
 code again.
 
-## Not finished
+| Second engine, measured | Parakeet available via `--engine parakeet`, default unchanged |
 
-**Parakeet engine bake-off** — task #39. Code is written, lint-clean, 35 tests
-pass, but it is **uncommitted** in the working tree:
-`src/dictation/asr/engines/parakeet_engine.py`, `tests/test_parakeet_engine.py`,
-and edits to `asr/factory.py`, `features/file_manager.py`, `scripts/eval/run_eval.py`.
-What remains is the measurement: run both engines over the same gold-set clips
-and record WER, medical-term error rate, false-correction rate and real-time
-factor per engine in `docs/dictation-accuracy.md`. **Do not switch the default
-engine** — the numbers are the deliverable, the choice is the radiologist's.
-This is the real answer to "still slow": Whisper `small.en` decodes ~3x slower
-than speech on this CPU, and no setting changes that.
+**The engine verdict** (full table in `docs/dictation-accuracy.md`): Parakeet is
+5.2x faster and gets **twice as many anatomical words wrong** (term error 3.44 %
+→ 7.12 %), so it is not the default. It also decodes with no radiology
+vocabulary at all, which Whisper does get — wiring that in is the experiment
+that would settle whether the speed is free.
 
-**Not started** — tasks #36–38:
+A speed claim from earlier sessions was wrong and is corrected in that doc:
+Whisper `small.en` decodes at **0.57x real time**, not 3x slower than speech.
+The live lag came from decoding the same audio repeatedly, which is fixed.
+
+## Not started — tasks #36–38
 
 - Run log: record every dictation run locally (audio length, time to final output,
   decode ratio, model, word count, stage timings, the output text).
