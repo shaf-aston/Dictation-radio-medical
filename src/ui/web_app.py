@@ -382,6 +382,18 @@ async def root():
     return HTMLResponse(_render_html(_current_theme()))
 
 
+@app.get("/developer")
+async def developer_page():
+    """Local diagnostics: every dictation run, and how each one behaved.
+
+    Unlisted on purpose — no link from the reporting UI. It is for whoever is
+    asking why dictation felt slow, not part of writing a report.
+    """
+    return HTMLResponse(
+        _frontend_file("developer.html").replace("__THEME_VARS__", css_variables())
+    )
+
+
 @app.get("/favicon.ico")
 async def favicon():
     favicon_path = Path(__file__).parent / "frontends" / "favicon.svg"

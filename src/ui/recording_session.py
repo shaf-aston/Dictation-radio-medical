@@ -461,13 +461,10 @@ def _record_the_run(window: MainWindow) -> None:
         if stopped is not None:
             record.audio_sec = round(stopped - started, 3)
             record.finalise_sec = round(now - stopped, 3)
-    # How many chunks the stream actually froze — the "decode once" count.
     # Read defensively: the worker is torn down around this point, and a
-    # missing number must not cost the whole record.
-    try:
-        record.chunk_count = len(window.live_worker._ledger.committed)
-    except Exception:
-        record.chunk_count = 0
+    # missing chunk count must not cost the whole record.
+    worker = getattr(window, "live_worker", None)
+    record.chunk_count = getattr(worker, "committed_chunks", 0) or 0
     run_log.finish(record, window.editor.toPlainText(), window.settings)
 
 

@@ -1,0 +1,86 @@
+/* The /developer page. Every colour is a token from app.css's :root — this
+   file adds layout only, no new palette. */
+
+.dev {
+    max-width: 78rem;
+    margin: 0 auto;
+    padding: clamp(1rem, 3vw, 2rem);
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+}
+
+.dev-bar { display: flex; align-items: baseline; gap: .9rem; flex-wrap: wrap; }
+.dev-title { margin: 0; font-size: 1.15rem; font-weight: 650; color: var(--text); }
+.dev-sub { margin: 0; color: var(--text-dim); font-size: .82rem; }
+.dev-back { margin-left: auto; color: var(--glow); font-size: .82rem; text-decoration: none; }
+.dev-back:hover { text-decoration: underline; }
+
+.dev-note { margin: 0; color: var(--text-dim); font-size: .78rem; }
+.dev-h2 { margin: 0 0 .5rem; font-size: .9rem; font-weight: 600; color: var(--text); }
+
+.dev-panel {
+    background: var(--room-2);
+    border: 1px solid var(--edge);
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+/* Wide tables scroll inside their own box so the page never scrolls sideways. */
+.dev-scroll { overflow-x: auto; }
+
+.dev-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.dev-table th, .dev-table td {
+    padding: .45rem .6rem;
+    text-align: left;
+    border-bottom: 1px solid var(--edge);
+    white-space: nowrap;
+}
+.dev-table th { color: var(--text-dim); font-weight: 600; }
+.dev-table td { color: var(--text); }
+.dev-table tbody tr:hover { background: var(--hover); }
+.dev-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Above 1.0 the machine is slower than speech — the one cell worth a warning. */
+.dev-table .over { color: var(--warn); font-weight: 600; }
+
+.dev-empty { margin: .8rem 0 0; color: var(--text-dim); font-size: .82rem; }
+
+.dev-link {
+    background: none; border: 0; padding: 0;
+    color: var(--glow); font: inherit; cursor: pointer;
+}
+.dev-link:hover { text-decoration: underline; }
+.dev-link[disabled] { color: var(--text-dim); cursor: default; text-decoration: none; }
+
+.dev-scrim {
+    position: fixed; inset: 0;
+    background: color-mix(in srgb, var(--room) 78%, transparent);
+    display: flex; align-items: center; justify-content: center;
+    padding: 1.5rem; z-index: 20;
+}
+.dev-scrim[hidden] { display: none; }
+
+.dev-modal {
+    background: var(--room-2);
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    width: min(60rem, 100%);
+    max-height: 84vh;
+    display: flex; flex-direction: column;
+}
+.dev-modal-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 1rem; padding: .9rem 1rem; border-bottom: 1px solid var(--edge);
+}
+
+/* The report scrolls inside the dialog: a long one must not stretch the page. */
+.dev-output {
+    margin: 0; padding: 1rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    color: var(--text);
+    background: var(--film);
+    font: 400 .84rem/1.7 var(--ui);
+}

@@ -1,7 +1,8 @@
 # Where things stand
 
-Branch `feat/eval-instrument`, 11 commits ahead of `master`, nothing pushed.
-636 tests pass, lint clean, theme check clean.
+`feat/eval-instrument` is merged into `master` — the two are the same commit.
+Work since then is on `claude/eval-instrument-merge-check-j6apr7`.
+Tests pass, lint clean, theme check clean.
 
 ## Done and committed
 
@@ -31,14 +32,40 @@ A speed claim from earlier sessions was wrong and is corrected in that doc:
 Whisper `small.en` decodes at **0.57x real time**, not 3x slower than speech.
 The live lag came from decoding the same audio repeatedly, which is fixed.
 
-## Not started — tasks #36–38
+## Landed since — marks, run log, /developer
 
-- Run log: record every dictation run locally (audio length, time to final output,
-  decode ratio, model, word count, stage timings, the output text).
-- `/developer` page on the web app: a clean table of those runs, output text
-  behind a click-to-expand popup so a long report cannot break the layout.
-- Long-vs-short verification: the chunk-once design should make cost flat per
-  cycle; the run log is what proves it instead of asserting it.
+| What you asked for | Where it landed |
+|---|---|
+| Show which words can be checked, not just answer one | `medical/term_lookup.py::suspect_terms` + `ui/term_marks.py` + web underlay |
+| Tell the user the feature exists | hint under the editor, retires after a few uses |
+| Run log per dictation | `features/run_log.py` (capped JSONL, both front-ends) |
+| `/developer` diagnostics page | `ui/frontends/developer.*` + `GET /developer`, `GET /api/runs` |
+| Long-vs-short, answered with numbers | run-length bands on that page |
+
+**The marks are cyan, not red.** `tokens.json` reserves `rec` for recording and
+clinical severity; a possible typo underlined in red would read as a finding.
+`glow` is the token for the machine's own suggestions.
+
+**A mark never opens onto an empty popup.** A word is marked only if it is not
+standard English, not in the membership wordlist, *and* the curated lexicon
+holds something it might have been. A dead-end mark teaches the radiologist to
+ignore the next one.
+
+**Nothing is inserted into the report.** Desktop marks are `setExtraSelections`;
+the web draws a transparent copy behind the textarea. Verified by rendering both
+and asserting the document is byte-for-byte unchanged.
+
+The English-word guard moved from `dictation/postprocess/medical_dict_match.py`
+to `medical/medical_dict.py`, so the corrector and the marking scan share one
+answer to "is this a real word?". The old private name is kept as an alias.
+
+### Open on the run log
+
+- `run_log_store_text` defaults **on**, so report text sits in `data/runs.jsonl`
+  (local, gitignored, capped at 200 runs). Set it false to keep every timing and
+  drop only the body — your call.
+- The long-vs-short table needs real runs of both lengths before it says
+  anything. It is currently an empty frame waiting for use.
 
 ## Blocked on you
 

@@ -61,7 +61,13 @@ src/
 │   └── resources/        radiology_prompt.txt (Whisper priming prompt, ~200 terms)
 ├── ui/          main_window.py · views.py · recording_session.py · dialogs.py
 │   ├── postprocess_worker.py  runs the pipeline OFF the UI thread, latest-only
-│   ├── web_app.py        FastAPI single-page app (host/port from settings)
+│   ├── web_app.py        FastAPI single-page app (host/port from settings),
+│   │                       plus /developer — the local diagnostics table of
+│   │                       recorded runs (unlisted; no link from the report UI)
+│   ├── term_popup.py · term_marks.py   highlight a word → suggestions; and the
+│   │                       marks saying which word to highlight. Both are view
+│   │                       overlays (ExtraSelection / an underlay div) — never
+│   │                       text, so no mark can reach an exported report
 │   ├── tokens.json       the ONLY place a UI colour is written down
 │   ├── theme.py          the only reader of tokens.json — renders the Qt sheet
 │   │                       and the web page's CSS custom properties, so the two
@@ -70,11 +76,21 @@ src/
 │   │                       (neither stylesheet contains a hex value;
 │   │                        scripts/verify_theme.py fails the build if one does)
 │   └── __main__.py       enables `python -m src.ui`
-├── medical/     medical_dict.py · critical_findings.py (NegEx) · macros.py ·
-│                  deid.py (DeIdentifier + PrivacyError — PHI de-id, the upload
-│                  safety gate; lives here so dictation/training/cloud all import
-│                  it downward without dictation touching src.cloud.*)
+├── medical/     critical_findings.py (NegEx) · macros.py ·
+│   ├── medical_dict.py   the two wordlists, plus is_english_word — the single
+│   │                       "is this a real word?" answer the fuzzy corrector and
+│   │                       the marking scan both ask, so they cannot disagree
+│   ├── term_lookup.py    highlight a word → what it might have been + what goes
+│   │                       with it (lookup); and which words to highlight at all
+│   │                       (suspect_terms — three gates, the last of which
+│   │                       guarantees every mark has something to offer)
+│   └── deid.py           DeIdentifier + PrivacyError — PHI de-id, the upload
+│                           safety gate; lives here so dictation/training/cloud
+│                           all import it downward without dictation touching
+│                           src.cloud.*
 ├── features/    accent_corrections.py · adaptive_learning.py · audit_log.py
+│   ├── run_log.py        one capped JSONL record per dictation (timings +
+│   │                       optional report text) — the history behind /developer
 │   └── file_manager.py · report_manager.py · report_analyzer.py
 ├── imaging/     OPTIONAL local chest X-ray assistant (offline inference)
 │   ├── classifier.py     TorchXRayVision DenseNet121 wrapper (lazy torch)

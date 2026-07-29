@@ -690,3 +690,56 @@ def test_the_page_ships_the_hint_state(monkeypatch) -> None:
         boot = _bootstrap_from(client.get("/").text)
     assert "term_lookup_uses" in boot
     assert boot["term_lookup_hint_uses"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# The /developer diagnostics page
+# ---------------------------------------------------------------------------
+
+def test_developer_page_renders_with_theme_variables(monkeypatch) -> None:
+    with _client(monkeypatch) as client:
+        response = client.get("/developer")
+    assert response.status_code == 200
+    # The slot must be filled, not served raw — an unfilled page is unstyled.
+    assert "__THEME_VARS__" not in response.text
+    assert "--glow:" in response.text
+
+
+def test_developer_page_does_not_load_the_dictation_script(monkeypatch) -> None:
+    """app.js drives the dictation DOM; on this page it would run against nothing."""
+    with _client(monkeypatch) as client:
+        body = client.get("/developer").text
+    assert "/static/developer.js" in body
+    assert "/static/app.js" not in body
+
+
+def test_page_templates_are_not_served_as_static_assets(monkeypatch) -> None:
+    """A page served raw would leak its unfilled placeholders."""
+    with _client(monkeypatch) as client:
+        assert client.get("/static/developer.html").status_code == 404
+        assert client.get("/static/app.html").status_code == 404
+        assert client.get("/static/developer.css").status_code == 200
+        assert client.get("/static/developer.js").status_code == 200
+
+
+def test_runs_route_returns_the_log_newest_first(monkeypatch) -> None:
+    monkeypatch.setattr(
+        web_app.run_log, "recent",
+        lambda limit=0: [{"started": "2026-07-29T10:00:00+00:00", "text": "b"},
+                         {"started": "2026-07-29T09:00:00+00:00", "text": "a"}],
+    )
+    with _client(monkeypatch) as client:
+        runs = client.get("/api/runs").json()["runs"]
+    assert [row["text"] for row in runs] == ["b", "a"]
+
+
+def test_runs_route_caps_the_limit(monkeypatch) -> None:
+    """An unbounded limit would let one request read an arbitrarily large log."""
+    seen = {}
+    monkeypatch.setattr(
+        web_app.run_log, "recent",
+        lambda limit=0: seen.setdefault("limit", limit) and [] or [],
+    )
+    with _client(monkeypatch) as client:
+        client.get("/api/runs?limit=99999")
+    assert seen["limit"] == 500
