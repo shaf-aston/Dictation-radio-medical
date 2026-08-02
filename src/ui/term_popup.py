@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, List
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -54,6 +54,10 @@ POPUP_OFFSET_PX = 6
 
 class TermPopup(QFrame):
     """A frameless panel of term suggestions for the editor's current selection."""
+
+    #: Emitted when a suggestion is actually taken. The window counts these to
+    #: decide when the "you can highlight a word" hint has done its teaching.
+    applied = Signal()
 
     def __init__(
         self,
@@ -194,4 +198,5 @@ class TermPopup(QFrame):
         cursor = self._editor.textCursor()
         if cursor.hasSelection():
             cursor.insertText(term)
+            self.applied.emit()
         self._editor.setFocus()

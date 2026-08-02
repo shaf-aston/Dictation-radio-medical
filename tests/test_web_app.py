@@ -11,6 +11,7 @@ from src.core.settings import Settings
 from src.dictation.asr import AsrResult
 import src.features.report_release as report_release
 import src.ui.web_app as web_app
+from src.medical import term_lookup
 
 
 class DummyEngine:
@@ -645,3 +646,100 @@ def test_term_lookup_refuses_an_oversized_selection(monkeypatch) -> None:
         response = client.get("/api/terms/lookup", params={"q": "x" * (limit + 1)})
 
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Marking — which words are worth highlighting
+# ---------------------------------------------------------------------------
+
+def test_suspect_route_returns_spans_into_the_submitted_text(monkeypatch) -> None:
+    text = "There is a small right othorax."
+    monkeypatch.setattr(
+        web_app.term_lookup, "suspect_terms",
+        lambda value: [term_lookup.Span(23, 30, "othorax")],
+    )
+    with _client(monkeypatch) as client:
+        response = client.post("/api/terms/suspect", json={"text": text})
+    assert response.status_code == 200
+    span = response.json()["spans"][0]
+    # The offsets must index the text as submitted, or the browser underlines
+    # the wrong word.
+    assert text[span["start"]:span["end"]] == span["term"] == "othorax"
+
+
+def test_suspect_route_accepts_an_empty_report(monkeypatch) -> None:
+    with _client(monkeypatch) as client:
+        response = client.post("/api/terms/suspect", json={"text": ""})
+    assert response.status_code == 200
+    assert response.json() == {"spans": []}
+
+
+def test_taking_a_suggestion_is_counted_until_the_hint_retires(monkeypatch) -> None:
+    """The count is shared with the desktop, so it lives in settings."""
+    settings = DummySettings({"term_lookup_hint_uses": 2, "term_lookup_uses": 0})
+    monkeypatch.setattr(web_app, "_settings", lambda: settings)
+    with _client(monkeypatch) as client:
+        assert client.post("/api/terms/used").json()["term_lookup_uses"] == 1
+        assert client.post("/api/terms/used").json()["term_lookup_uses"] == 2
+        # Past the ceiling it stops counting rather than growing forever.
+        assert client.post("/api/terms/used").json()["term_lookup_uses"] == 2
+
+
+def test_the_page_ships_the_hint_state(monkeypatch) -> None:
+    with _client(monkeypatch) as client:
+        boot = _bootstrap_from(client.get("/").text)
+    assert "term_lookup_uses" in boot
+    assert boot["term_lookup_hint_uses"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# The /developer diagnostics page
+# ---------------------------------------------------------------------------
+
+def test_developer_page_renders_with_theme_variables(monkeypatch) -> None:
+    with _client(monkeypatch) as client:
+        response = client.get("/developer")
+    assert response.status_code == 200
+    # The slot must be filled, not served raw — an unfilled page is unstyled.
+    assert "__THEME_VARS__" not in response.text
+    assert "--glow:" in response.text
+
+
+def test_developer_page_does_not_load_the_dictation_script(monkeypatch) -> None:
+    """app.js drives the dictation DOM; on this page it would run against nothing."""
+    with _client(monkeypatch) as client:
+        body = client.get("/developer").text
+    assert "/static/developer.js" in body
+    assert "/static/app.js" not in body
+
+
+def test_page_templates_are_not_served_as_static_assets(monkeypatch) -> None:
+    """A page served raw would leak its unfilled placeholders."""
+    with _client(monkeypatch) as client:
+        assert client.get("/static/developer.html").status_code == 404
+        assert client.get("/static/app.html").status_code == 404
+        assert client.get("/static/developer.css").status_code == 200
+        assert client.get("/static/developer.js").status_code == 200
+
+
+def test_runs_route_returns_the_log_newest_first(monkeypatch) -> None:
+    monkeypatch.setattr(
+        web_app.run_log, "recent",
+        lambda limit=0: [{"started": "2026-07-29T10:00:00+00:00", "text": "b"},
+                         {"started": "2026-07-29T09:00:00+00:00", "text": "a"}],
+    )
+    with _client(monkeypatch) as client:
+        runs = client.get("/api/runs").json()["runs"]
+    assert [row["text"] for row in runs] == ["b", "a"]
+
+
+def test_runs_route_caps_the_limit(monkeypatch) -> None:
+    """An unbounded limit would let one request read an arbitrarily large log."""
+    seen = {}
+    monkeypatch.setattr(
+        web_app.run_log, "recent",
+        lambda limit=0: seen.setdefault("limit", limit) and [] or [],
+    )
+    with _client(monkeypatch) as client:
+        client.get("/api/runs?limit=99999")
+    assert seen["limit"] == 500
