@@ -8,7 +8,7 @@ from pathlib import Path
 
 from src.features import report_release
 from src.features.report_release import (
-    ReleaseCheck, check_release, record_release, unfilled_fields,
+    OutstandingFindings, ReleaseCheck, check_release, record_release, unfilled_fields,
 )
 from src.medical.critical_findings import CriticalFinding
 
@@ -92,6 +92,92 @@ def test_a_scanner_fault_is_treated_as_clear_and_logged(monkeypatch, caplog) -> 
 
     assert not check.needs_acknowledgement
     assert "scanner exploded" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# OutstandingFindings — acknowledgement as a property of the report
+# ---------------------------------------------------------------------------
+
+def test_a_clear_report_is_calm_not_an_alarm() -> None:
+    findings = OutstandingFindings()
+    findings.update("Findings: No acute cardiopulmonary process.")
+    assert findings.count == 0
+    assert findings.outstanding == ()
+    assert findings.state == "clear"
+
+
+def test_empty_text_has_nothing_outstanding() -> None:
+    findings = OutstandingFindings()
+    findings.update("")
+    assert findings.count == 0 and findings.state == "clear"
+
+
+def test_a_finding_starts_outstanding() -> None:
+    findings = OutstandingFindings()
+    findings.update(_URGENT_TEXT)
+    assert findings.count == 1
+    assert [f.term.lower() for f in findings.outstanding] == ["pneumothorax"]
+    assert findings.state == "outstanding"
+
+
+def test_acknowledging_settles_the_findings_in_the_report() -> None:
+    findings = OutstandingFindings()
+    findings.update(_URGENT_TEXT)
+    findings.acknowledge()
+    assert findings.outstanding == ()
+    assert findings.count == 1
+    assert findings.state == "acknowledged"
+
+
+def test_an_unchanged_report_stays_acknowledged_after_a_rescan() -> None:
+    # The scan runs on every edit; re-finding the same finding must not reopen a
+    # question the radiologist has already answered.
+    findings = OutstandingFindings()
+    findings.update(_URGENT_TEXT)
+    findings.acknowledge()
+    findings.update(_URGENT_TEXT + " Lungs otherwise clear.")
+    assert findings.state == "acknowledged"
+
+
+def test_a_new_finding_typed_after_acknowledging_is_outstanding_again() -> None:
+    # The defect this closes: acknowledgement used to be a one-shot event, so an
+    # impression written after the dialog left the report unwarned at export.
+    findings = OutstandingFindings()
+    findings.update(_URGENT_TEXT)
+    findings.acknowledge()
+    findings.update(_URGENT_TEXT + "\nImpression: Acute appendicitis.")
+
+    assert findings.count == 2
+    assert [f.term.lower() for f in findings.outstanding] == ["acute appendicitis"]
+    assert findings.state == "outstanding"
+
+
+def test_deleting_one_finding_does_not_reopen_the_others() -> None:
+    findings = OutstandingFindings()
+    findings.update(_URGENT_TEXT + "\nImpression: Acute appendicitis.")
+    findings.acknowledge()
+    findings.update(_URGENT_TEXT)
+    assert findings.state == "acknowledged" and findings.count == 1
+
+
+def test_a_scanner_fault_leaves_nothing_outstanding(monkeypatch) -> None:
+    # Fails open exactly as check_release does: a broken scanner must not put a
+    # count on screen it cannot justify, nor block the report.
+    def _boom(_text):
+        raise RuntimeError("scanner exploded")
+
+    monkeypatch.setattr(report_release, "scan_for_critical_findings", _boom)
+    findings = OutstandingFindings()
+    findings.update(_URGENT_TEXT)
+    assert findings.count == 0 and findings.state == "clear"
+
+
+def test_a_finding_carries_where_it_sits_in_the_text() -> None:
+    # The gutter marks point at the finding by offset; searching for the words
+    # again could land on a different occurrence.
+    check = check_release(_URGENT_TEXT)
+    found = check.findings[0]
+    assert _URGENT_TEXT[found.start:found.end].lower() == "pneumothorax"
 
 
 # ---------------------------------------------------------------------------

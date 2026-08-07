@@ -1055,6 +1055,122 @@ function applyTermSuggestion(term) {
     editor.setSelectionRange(caret, caret);
     editor.focus();
     pushUndoState();
+    noteLookupUsed();
+    scheduleMarks();
+}
+
+// ---------------------------------------------------------------------------
+// Which words are worth highlighting in the first place. The lookup above only
+// helps a radiologist who already suspects a word, and the words worth
+// suspecting are exactly the ones that read as plausible — so the app points.
+//
+// Marks are drawn on a transparent copy of the text sitting *behind* the
+// textarea. Nothing is inserted into the report itself, which is why Copy,
+// Save TXT and Export Word all emit exactly what was typed.
+// ---------------------------------------------------------------------------
+
+const MARKS_DELAY_MS = 400;   // longer than the popup's: this reads the whole report
+
+const editorMarks = document.getElementById('editorMarks');
+const marksHint = document.getElementById('marksHint');
+
+let marksTimer = null;
+let marksRequest = 0;
+let lookupUses = BOOTSTRAP.term_lookup_uses || 0;
+const lookupHintUses = BOOTSTRAP.term_lookup_hint_uses || 3;
+
+function clearMarks() {
+    if (marksTimer) {
+        clearTimeout(marksTimer);
+        marksTimer = null;
+    }
+    marksRequest += 1;
+    editorMarks.innerHTML = '';
+    marksHint.hidden = true;
+}
+
+function paintMarks(spans) {
+    const text = editor.value;
+    const out = document.createDocumentFragment();
+    let at = 0;
+    spans.forEach((span) => {
+        if (span.start < at) return;          // overlapping spans cannot happen, but never trust
+        out.append(text.slice(at, span.start));
+        const mark = document.createElement('mark');
+        mark.textContent = text.slice(span.start, span.end);
+        out.append(mark);
+        at = span.end;
+    });
+    // The trailing newline keeps the last line's wrapping identical to the
+    // textarea's, which otherwise reserves a line the underlay does not.
+    out.append(text.slice(at) + '\n');
+    editorMarks.replaceChildren(out);
+    syncMarksScroll();
+
+    if (!spans.length) {
+        marksHint.hidden = true;
+        return;
+    }
+    const noun = spans.length === 1 ? 'word' : 'words';
+    marksHint.textContent = lookupUses < lookupHintUses
+        ? `${spans.length} ${noun} to check — highlight one to see alternatives`
+        : `${spans.length} ${noun} to check`;
+    marksHint.hidden = false;
+}
+
+function syncMarksScroll() {
+    editorMarks.scrollTop = editor.scrollTop;
+    editorMarks.scrollLeft = editor.scrollLeft;
+}
+
+async function rescanMarks() {
+    // Recording rewrites the report every second; marks under moving text are
+    // noise, and the spans would be stale before they were painted.
+    if (isRecording) {
+        clearMarks();
+        return;
+    }
+    marksRequest += 1;
+    const request = marksRequest;
+    try {
+        const response = await fetch('/api/terms/suspect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: editor.value }),
+        });
+        if (request !== marksRequest) return;   // a newer edit won
+        if (!response.ok) {
+            clearMarks();
+            return;
+        }
+        paintMarks((await response.json()).spans || []);
+    } catch (err) {
+        // Marking that cannot answer must never interrupt the report.
+        console.warn('Term marking failed:', err);
+        clearMarks();
+    }
+}
+
+function scheduleMarks() {
+    if (marksTimer) clearTimeout(marksTimer);
+    marksTimer = setTimeout(rescanMarks, MARKS_DELAY_MS);
+}
+
+async function noteLookupUsed() {
+    if (lookupUses >= lookupHintUses) return;
+    lookupUses += 1;
+    try {
+        await fetch('/api/terms/used', { method: 'POST' });
+    } catch (err) {
+        console.warn('Could not record lookup use:', err);
+    }
+}
+
+function initTermMarks() {
+    editor.addEventListener('input', scheduleMarks);
+    editor.addEventListener('scroll', syncMarksScroll);
+    window.addEventListener('resize', scheduleMarks);
+    scheduleMarks();
 }
 
 function renderTermTier(host, items) {
@@ -1176,3 +1292,4 @@ initPanels();
 initOverflowMenu();
 initDisclaimer();
 initTermPop();
+initTermMarks();

@@ -248,12 +248,14 @@ body {
     flex: 1 1 auto;
 }
 
-/* The film on the lightbox: the one surface that emits rather than reflects. */
-.editor {
+/* The film on the lightbox: the one surface that emits rather than reflects.
+   The wrapper carries the surface so the textarea itself can be transparent —
+   that is what lets the marks underlay show through from behind it. */
+.editor-wrap {
+    position: relative;
+    display: flex;
     flex: 1;
-    width: 100%;
     min-height: 12rem;
-    padding: clamp(1rem, 2.4vw, 1.6rem);
     border: 1px solid var(--edge);
     border-radius: 8px;
     background: var(--film);
@@ -261,12 +263,56 @@ body {
         inset 0 1px 0 color-mix(in srgb, var(--glow) 14%, transparent),
         0 0 0 1px color-mix(in srgb, var(--glow) 7%, transparent),
         0 14px 40px rgb(0 0 0 / .28);
-    color: var(--text);
+}
+.editor-wrap:focus-within { border-color: color-mix(in srgb, var(--glow) 55%, var(--edge)); }
+
+/* These two must lay text out identically or the marks drift off their words.
+   Every property that affects wrapping is set on both, in one place. */
+.editor, .editor-marks {
+    padding: clamp(1rem, 2.4vw, 1.6rem);
     font: 400 clamp(15px, 1.35vw, 17px)/1.75 var(--ui);
+    letter-spacing: normal;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    border: 0;
+}
+.editor {
+    position: relative;
+    z-index: 1;
+    flex: 1;
+    width: 100%;
+    background: transparent;
+    color: var(--text);
     resize: none;
 }
 .editor::placeholder { color: var(--text-dim); }
-.editor:focus { outline: none; border-color: color-mix(in srgb, var(--glow) 55%, var(--edge)); }
+.editor:focus { outline: none; }
+
+/* Transparent text, visible underline: the copy exists only to position the
+   marks under the real words. It never receives the pointer. */
+.editor-marks {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    color: transparent;
+    pointer-events: none;
+    user-select: none;
+}
+.editor-marks mark {
+    background: none;
+    color: transparent;
+    border-bottom: 2px dotted var(--glow);
+}
+
+/* "3 words to check — highlight one to see alternatives". Assistive, so it is
+   dim and never --rec, which this app keeps for recording and severity. */
+.marks-hint {
+    margin: 0;
+    color: var(--text-dim);
+    font-size: .78rem;
+    text-align: right;
+}
 
 .stage-foot { display: flex; flex-direction: column; align-items: center; gap: .45rem; }
 

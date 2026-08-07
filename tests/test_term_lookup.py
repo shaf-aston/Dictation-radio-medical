@@ -183,3 +183,78 @@ def test_results_are_capped():
     result = tl.lookup("pneumothorax")
     assert len(result.similar_spelling) <= limits["max_similar"]
     assert len(result.related) <= limits["max_related"]
+
+
+# ---------------------------------------------------------------------------
+# Marking — which words are worth highlighting in the first place
+# ---------------------------------------------------------------------------
+# The marks are an invitation to look. A wrong one costs more than a missing
+# one: it sends the radiologist to a word that was always fine, and a reader
+# who is sent twice stops believing the third. So most of these assert what is
+# *not* marked.
+
+@pytest.fixture
+def no_membership(monkeypatch: pytest.MonkeyPatch):
+    """Membership answers "unknown" for everything, so the other two gates show."""
+    monkeypatch.setattr(tl, "get_medical_terms", set)
+
+
+def test_a_misspelled_term_is_marked_at_its_offsets(no_membership):
+    text = "There is a small right othorax."
+    spans = tl.suspect_terms(text)
+    assert [s.term for s in spans] == ["othorax"]
+    # The offsets must index the original string — a front-end marks the word
+    # without touching the text it is marking.
+    assert text[spans[0].start:spans[0].end] == "othorax"
+
+
+def test_a_correctly_spelled_term_is_not_marked(lexicon):
+    assert tl.suspect_terms("Small right pneumothorax.") == []
+
+
+def test_standard_english_is_never_marked(no_membership):
+    """"There" sits one edit from "teres"; it is still an ordinary word.
+
+    This is the whole reason the English guard exists — without it a report is
+    speckled with marks on words nobody mistyped.
+    """
+    for word in ("There", "again", "around", "with", "normal"):
+        assert tl.suspect_terms(word) == [], word
+
+
+def test_a_word_with_nothing_to_offer_is_not_marked(no_membership):
+    """No suggestion means no mark: a mark onto an empty popup is a dead end."""
+    assert tl.suspect_terms("Zzqxwv brtnkgf.") == []
+
+
+def test_short_words_are_skipped(no_membership):
+    assert tl.suspect_terms("a an of rib") == []
+
+
+def test_marks_are_capped(no_membership, monkeypatch: pytest.MonkeyPatch):
+    index = tl._index()
+    monkeypatch.setitem(index.tuning, "max_marks", 3)
+    assert len(tl.suspect_terms("othorax " * 40)) == 3
+
+
+def test_every_mark_can_be_answered(no_membership):
+    """The contract the marks make: select one and the popup has something."""
+    text = "Small othorax with efusion and atelactasis."
+    for span in tl.suspect_terms(text):
+        assert tl.lookup(span.term).similar_spelling, span.term
+
+
+@pytest.mark.parametrize("junk", ["", "   ", "123 456", "!!!"])
+def test_junk_text_marks_nothing(junk):
+    assert tl.suspect_terms(junk) == []
+
+
+def test_an_internal_failure_marks_nothing(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(tl, "_index", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert tl.suspect_terms("othorax") == []
+
+
+def test_without_the_english_guard_nothing_is_marked(no_membership, monkeypatch):
+    """Degrade to off, not to noise: unguarded marks would land on real words."""
+    monkeypatch.setattr(tl, "is_english_word", lambda word: None)
+    assert tl.suspect_terms("There is a small right othorax.") == []

@@ -176,6 +176,49 @@ def get_medical_terms() -> Set[str]:
         return _TERMS if _TERMS is not None else _load_and_cache_terms()
 
 
+# ---------------------------------------------------------------------------
+# The English-word guard
+# ---------------------------------------------------------------------------
+# A genuine typo is a *non-word*. Nothing may treat a word that is already valid
+# English ("there", "around", "again") as a mistake just because a real medical
+# term ("marrow" vs "narrow") sits one edit away. pyspellchecker bundles an
+# OFFLINE frequency dictionary (no network), so it is the guard.
+#
+# It lives here, beside the two wordlists, because "is this a real word?" is one
+# question with one answer: the fuzzy corrector
+# (``dictation/postprocess/medical_dict_match.py``) and the marking scan
+# (``medical/term_lookup.py``) must never disagree about it. ``medical/`` is also
+# the layer both of those can import from without inverting the module map.
+_ENGLISH = None  # None = not yet loaded; False = unavailable; else a SpellChecker
+
+
+def is_english_word(word: str) -> Optional[bool]:
+    """True/False if *word* is/isn't standard English, or None if no checker.
+
+    ``None`` is a third answer, not a failure: callers must decide what to do
+    without the guard, and the safe choice is always the conservative one.
+    """
+    global _ENGLISH
+    if _ENGLISH is None:
+        try:
+            from spellchecker import SpellChecker  # noqa: PLC0415 — optional dep, lazy
+            _ENGLISH = SpellChecker()
+        except Exception:  # not installed / failed to load — guard unavailable
+            _ENGLISH = False
+            # Loud, once: without this guard the corrector drops to the
+            # conservative ratio path and silently leaves the whole class of
+            # one-letter medical misspellings uncorrected. A silent degradation
+            # here is exactly how "the dictation keeps misspelling things" goes
+            # undiagnosed.
+            logger.warning(
+                "Spelling corrector degraded: pyspellchecker is not installed, so "
+                "the English-word guard is off and one-letter medical misspellings "
+                "(e.g. 'atelactasis'->'atelectasis', 'vertabra'->'vertebra') will "
+                "NOT be corrected. Install it: pip install pyspellchecker"
+            )
+    return None if _ENGLISH is False else bool(_ENGLISH.known([word]))
+
+
 def get_correction_targets() -> List[str]:
     """Curated radiology lexicon used as the fuzzy corrector's snap targets.
 

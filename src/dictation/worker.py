@@ -182,6 +182,14 @@ class LiveTranscribeWorker(QObject):
         self._last_stable: str = ""
         self._progress_state: str = ""
 
+    @property
+    def committed_chunks(self) -> int:
+        """How many chunks the stream froze — the "decode once" count.
+
+        Exposed for the run log, so it does not have to reach into the ledger.
+        """
+        return len(self._ledger.committed)
+
     # ------------------------------------------------------------------
     # Public control
     # ------------------------------------------------------------------

@@ -20,7 +20,8 @@ from src.features.accent_corrections import ACCENT_LABELS
 from src.medical import macros
 from src.features.file_manager import templates_dir
 from src.ui.collapsible import Section
-from src.ui.styles import set_level_state, set_status_state
+from src.ui.finding_marks import FindingGutter
+from src.ui.styles import set_findings_state, set_level_state, set_status_state
 from src.features.report_manager import DOCX_AVAILABLE
 from src.ui.recording_session import on_start_recording, on_stop_recording
 from src.ui.dialogs import (
@@ -303,7 +304,18 @@ def build_editor_panel(window: MainWindow) -> QWidget:
     font = QFont("Consolas", window.settings.get("font_size", 13))
     window.editor.setFont(font)
     window.editor.textChanged.connect(window._on_text_changed)
-    layout.addWidget(window.editor, stretch=1)
+
+    # The editor with its findings gutter beside it. The marks go in a strip of
+    # their own so nothing is ever painted on the radiologist's characters
+    # (src/ui/finding_marks.py).
+    text_row = QHBoxLayout()
+    text_row.setSpacing(2)
+    window.finding_gutter = FindingGutter(
+        window.editor, window.dictation_active, window.findings
+    )
+    text_row.addWidget(window.finding_gutter)
+    text_row.addWidget(window.editor, stretch=1)
+    layout.addLayout(text_row, stretch=1)
 
     # Info bar beneath editor
     info_bar = QHBoxLayout()
@@ -311,6 +323,13 @@ def build_editor_panel(window: MainWindow) -> QWidget:
     window._info_words.setStyleSheet("font-size: 11px;")
     info_bar.addWidget(window._info_words)
     info_bar.addStretch()
+    # How the radiologist finds out the lookup exists at all. Hidden until
+    # there is something to point at, and it stops explaining itself once the
+    # feature has been used — see MainWindow._on_marks_changed.
+    window._info_marks = QLabel("")
+    window._info_marks.setObjectName("info_marks")
+    window._info_marks.hide()
+    info_bar.addWidget(window._info_marks)
     layout.addLayout(info_bar)
 
     return panel
@@ -349,6 +368,16 @@ def build_top_bar(window: MainWindow) -> QFrame:
     window._state_pill.setMaximumWidth(280)
     window._state_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
     set_status_state(window._state_pill, "idle")
+
+    # Whether anything in this report still has to be communicated. Beside the
+    # state pill because it must be visible without opening or scrolling
+    # anything — a finding nobody can see is the failure mode. A clean report
+    # says so quietly; only an outstanding finding is coloured.
+    window._findings_pill = QLabel("No findings")
+    window._findings_pill.setObjectName("findings_pill")
+    window._findings_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    window._findings_pill.setToolTip("Critical or urgent findings in this report")
+    set_findings_state(window._findings_pill, "clear")
 
     # How long this dictation has been running (blank when not recording).
     window._elapsed_label = QLabel("")
@@ -395,6 +424,7 @@ def build_top_bar(window: MainWindow) -> QFrame:
     layout.addWidget(window.btn_record)
     layout.addWidget(window.btn_stop)
     layout.addWidget(window._state_pill)
+    layout.addWidget(window._findings_pill)
     layout.addWidget(QLabel("Mic:"))
     layout.addWidget(window._level_bar)
     layout.addWidget(window._elapsed_label)

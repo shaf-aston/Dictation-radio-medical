@@ -67,8 +67,17 @@
              other control is the dim room around it. -->
         <section class="stage" aria-label="Dictation">
             <label for="editor" class="sr-only">Dictation content</label>
-            <textarea id="editor" class="editor" spellcheck="true"
-                      placeholder="Press the microphone and start speaking."></textarea>
+
+            <!-- The marks sit *behind* the textarea, never inside it: an
+                 underlay holding a transparent copy of the text, with the
+                 suspect words underlined. Nothing is inserted into what the
+                 radiologist typed, so every export is byte-for-byte unmarked. -->
+            <div class="editor-wrap">
+                <div id="editorMarks" class="editor-marks" aria-hidden="true"></div>
+                <textarea id="editor" class="editor" spellcheck="true"
+                          placeholder="Press the microphone and start speaking."></textarea>
+            </div>
+            <p id="marksHint" class="marks-hint" hidden></p>
 
             <!-- Highlight a word and its neighbourhood appears here: terms that
                  look like it above, terms that go with it below. Nothing is

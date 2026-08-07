@@ -93,6 +93,58 @@ def check_release(text: str) -> ReleaseCheck:
         return _CLEAR
 
 
+def _finding_key(finding: CriticalFinding) -> str:
+    """What "the same finding" means when deciding if an answer still holds."""
+    return finding.term.lower()
+
+
+@dataclass
+class OutstandingFindings:
+    """Which findings this report has, and which have been answered for.
+
+    Acknowledgement is a property of the report, not a dialog that fired once:
+    the question "is anything still outstanding?" has to be answerable at export
+    time, however long ago the radiologist was asked. Both front-ends read this
+    rather than each remembering their own answer.
+
+    Answers are kept per finding, so an edit that introduces a *new* finding
+    leaves that one outstanding while the ones already communicated stay
+    answered — and deleting a finding never un-answers the rest.
+    """
+
+    #: What the last :meth:`update` found. Empty until the first scan.
+    check: ReleaseCheck = _CLEAR
+    #: Keys of the findings the radiologist has answered for.
+    answered: frozenset = frozenset()
+
+    def update(self, text: str) -> None:
+        """Re-scan *text*. Answers already given survive; new findings do not."""
+        self.check = check_release(text)
+
+    def acknowledge(self) -> None:
+        """Record that every finding currently in the report was communicated."""
+        self.answered = self.answered | {_finding_key(f) for f in self.check.findings}
+
+    @property
+    def outstanding(self) -> Tuple[CriticalFinding, ...]:
+        """The findings still waiting for an answer."""
+        return tuple(
+            f for f in self.check.findings if _finding_key(f) not in self.answered
+        )
+
+    @property
+    def count(self) -> int:
+        """How many findings the report contains, answered or not."""
+        return len(self.check.findings)
+
+    @property
+    def state(self) -> str:
+        """One word for the count display: clear, outstanding, or acknowledged."""
+        if not self.check.findings:
+            return "clear"
+        return "outstanding" if self.outstanding else "acknowledged"
+
+
 def record_release(check: ReleaseCheck, patient_id: str, acknowledged: bool) -> None:
     """Write the radiologist's answer to the audit log.
 

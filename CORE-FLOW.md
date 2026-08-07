@@ -49,3 +49,95 @@ python -m src.ui.web_app             # web app on http://127.0.0.1:8005 — veri
 - `docs/ARCHITECTURE.md` — deeper flow + performance notes; `CLAUDE.md` — full per-module map.
 - `dictation_settings.json` — the one settings file, read at project root.
 - `tests/` — pytest suite. `python scripts/verify_theme.py` is separate on purpose: it needs real Qt, which the suite stubs out, so it is the only thing that checks the desktop UI actually paints.
+
+```
+
+                         WEB DICTATION
+
+┌──────────────────────────────────────────────────────────────┐
+│ 1. Record in browser                                         │
+├──────────────────────────────────────────────────────────────┤
+│ Purpose                                                      │
+│ • Capture the entire dictation before any processing begins. │
+│                                                              │
+│ How                                                          │
+│ • Browser accesses the microphone.                           │
+│ • Audio is buffered locally in the browser.                  │
+│ • Nothing is transcribed while recording.                    │
+│ • Recording continues until Stop is pressed.                 │
+│                                                              │
+│ Tools                                                        │
+│ • Browser MediaRecorder API                                 │
+└──────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 2. Upload recording                                          │
+├──────────────────────────────────────────────────────────────┤
+│ Purpose                                                      │
+│ • Send one complete recording to the server for processing.  │
+│                                                              │
+│ How                                                          │
+│ • Browser packages the finished audio.                       │
+│ • A single HTTP POST sends the recording to the server.      │
+│ • Upload happens once, after recording ends.                 │
+│                                                              │
+│ Tools                                                        │
+│ • HTTP POST                                                  │
+│ • Python web server (`web_app.py`)                           │
+└──────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 3. Transcribe                                                │
+├──────────────────────────────────────────────────────────────┤
+│ Purpose                                                      │
+│ • Convert speech into raw text.                              │
+│                                                              │
+│ How                                                          │
+│ • Whisper processes the entire recording once.               │
+│ • Audio is decoded from beginning to end.                    │
+│ • No live updates or repeated decoding are needed.           │
+│                                                              │
+│ Tools                                                        │
+│ • Whisper (offline ASR)                                      │
+└──────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 4. Clean and correct                                         │
+├──────────────────────────────────────────────────────────────┤
+│ Purpose                                                      │
+│ • Turn raw transcription into a clinical report.             │
+│                                                              │
+│ How                                                          │
+│ • Run the shared 10-stage post-processing pipeline.          │
+│ • Remove transcription artefacts.                            │
+│ • Correct medical terms.                                     │
+│ • Expand macros.                                             │
+│ • Apply formatting and punctuation.                          │
+│                                                              │
+│ Tools                                                        │
+│ • Post-processing pipeline                                   │
+│ • Medical dictionary (fuzzy matching)                        │
+│ • Macro engine                                               │
+└──────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 5. Return report                                             │
+├──────────────────────────────────────────────────────────────┤
+│ Purpose                                                      │
+│ • Present the completed report to the user.                  │
+│                                                              │
+│ How                                                          │
+│ • Server returns the processed text.                         │
+│ • Browser displays the finished report.                      │
+│ • Report can then be copied or exported.                     │
+│                                                              │
+│ Tools                                                        │
+│ • Python web server                                          │
+│ • Browser UI                                                 │
+└──────────────────────────────────────────────────────────────┘
+
+```

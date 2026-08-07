@@ -171,6 +171,10 @@ class CriticalFinding:
     negated: bool
     uncertain: bool
     context: str      # surrounding text snippet for display
+    # Where the term sits in the scanned text, so a front-end can point at it
+    # without searching for the words again and finding a different occurrence.
+    start: int = 0
+    end: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -197,11 +201,19 @@ def scan_for_critical_findings(text: str) -> List[CriticalFinding]:
     """
     findings: List[CriticalFinding] = []
     seen_terms: set = set()
+    #: Where an accepted finding already sits. Terms are matched longest first,
+    #: so "acute appendicitis" claims the words before plain "appendicitis" can
+    #: report the same phrase a second time — one clinical problem, one finding.
+    claimed: List[Tuple[int, int]] = []
 
     for pattern, level in _TERM_PATTERNS:
         for m in pattern.finditer(text):
             term_key = m.group(0).lower()
             if term_key in seen_terms:
+                continue
+            # Checked before the term is marked seen, so a phrase inside a
+            # longer finding here can still be reported where it stands alone.
+            if any(m.start() < end and start < m.end() for start, end in claimed):
                 continue
             seen_terms.add(term_key)
 
@@ -225,7 +237,10 @@ def scan_for_critical_findings(text: str) -> List[CriticalFinding]:
                 negated=negated,
                 uncertain=uncertain,
                 context=context,
+                start=m.start(),
+                end=m.end(),
             ))
+            claimed.append((m.start(), m.end()))
 
     # Sort: Level 1 first, then certain before uncertain
     findings.sort(key=lambda f: (f.level, f.uncertain))

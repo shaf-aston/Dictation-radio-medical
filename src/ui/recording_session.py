@@ -14,9 +14,10 @@ from src.core import perf
 from src.dictation.stream.segmenter import ChunkPolicy
 from src.dictation.worker import LiveTranscribeWorker
 from src.features.file_manager import create_temp_wav
+from src.features import run_log
 from src.ui.postprocess_worker import PostprocessWorker, build_changes
 from src.features.accent_corrections import ACCENT_LABELS, suggest_accent
-from src.features.report_release import check_release, record_release
+from src.features.report_release import record_release
 from src.ui.dialogs import confirm_unfilled_fields
 from src.ui.styles import set_level_state
 
@@ -165,6 +166,12 @@ def on_start_recording(window: MainWindow) -> None:
     # block the UI (see postprocess_worker). Fresh per recording: no stale
     # incremental cache can survive into the next report.
     perf.reset()
+    # Open the run record beside perf.reset(): both mark "a new dictation starts
+    # here", and the record is what survives the next reset (see run_log).
+    window._run_record = run_log.start(
+        "desktop", model=model_size, engine=str(window.settings.get("asr_engine", "")),
+    )
+    window._audio_stopped_at = None
     window._partial_seq = 0
     window._applied_seq = 0
     window._final_seq = None
@@ -212,6 +219,9 @@ def on_stop_recording(window: MainWindow) -> None:
     try:
         window.recorder.stop()
     finally:
+        # The audio ends here; everything after it is the app catching up.
+        # Splitting the two is what makes "how long after Stop?" answerable.
+        window._audio_stopped_at = time.monotonic()
         window._level_timer.stop()
         window._level_bar.setValue(0)
         set_level_state(window._level_bar, "healthy")
@@ -426,9 +436,36 @@ def _complete_finish(window: MainWindow) -> None:
     # De-identify the session audio while the WAV still exists; the collector
     # session stays open so spelling fixes made during review are captured too.
     _prepare_training_audio()
+    _record_the_run(window)
     cleanup_temp_audio(window)
     check_accent_suggestion(window)
     show_corrections_banner(window)
+
+
+def _record_the_run(window: MainWindow) -> None:
+    """Close the run record now the finished report is on screen.
+
+    Here rather than in ``on_transcription_finished`` because this is the first
+    moment the *final* text exists — and it must be before the next recording's
+    ``perf.reset()`` wipes the stage timings the record is made of.
+    """
+    record = getattr(window, "_run_record", None)
+    if record is None:
+        return
+    window._run_record = None
+    started = getattr(window, "_record_started", None)
+    stopped = getattr(window, "_audio_stopped_at", None)
+    now = time.monotonic()
+    if started is not None:
+        record.duration_sec = round(now - started, 3)
+        if stopped is not None:
+            record.audio_sec = round(stopped - started, 3)
+            record.finalise_sec = round(now - stopped, 3)
+    # Read defensively: the worker is torn down around this point, and a
+    # missing chunk count must not cost the whole record.
+    worker = getattr(window, "live_worker", None)
+    record.chunk_count = getattr(worker, "committed_chunks", 0) or 0
+    run_log.finish(record, window.editor.toPlainText(), window.settings)
 
 
 def cleanup_temp_audio(window: MainWindow) -> None:
@@ -485,12 +522,20 @@ def confirm_release(window: MainWindow) -> bool:
     audit log for a report that then did not leave. The findings answer itself
     never withholds the report — both answers proceed and only the audit entry
     differs — so False here always means "the radiologist cancelled".
+
+    The scan runs through ``window.findings`` so the answer given here is the
+    same state the gutter marks and the count pill show: acknowledging settles
+    the pill, and a finding typed in afterwards puts it back to outstanding.
+    The dialog itself still appears at every exit, answered or not — asking
+    twice costs a click, and not asking could cost a phone call.
     """
     if not confirm_unfilled_fields(window):
         return False
 
-    check = check_release(window.editor.toPlainText())
+    window.findings.update(window.editor.toPlainText())
+    check = window.findings.check
     if not check.needs_acknowledgement:
+        window.finding_gutter.show_state()
         return True
 
     msg = QMessageBox(window)
@@ -508,11 +553,11 @@ def confirm_release(window: MainWindow) -> bool:
     msg.setDefaultButton(btn_ack)
     msg.exec()
 
-    record_release(
-        check,
-        window._get_patient_info().get("id", ""),
-        msg.clickedButton() == btn_ack,
-    )
+    acknowledged = msg.clickedButton() == btn_ack
+    record_release(check, window._get_patient_info().get("id", ""), acknowledged)
+    if acknowledged:
+        window.findings.acknowledge()
+    window.finding_gutter.show_state()
     return True
 
 

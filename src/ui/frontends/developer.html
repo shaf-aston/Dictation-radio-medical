@@ -1,0 +1,77 @@
+<!-- One row per dictation, so "did that long run behave differently from this
+     short one" is a number, not an assertion. Reuses app.css; never loads
+     app.js, which drives a dictation DOM this page does not have. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radio Dictate — developer</title>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/developer.css">
+<style>__THEME_VARS__</style>
+
+<div class="dev">
+    <header class="dev-bar">
+        <h1 class="dev-title">Dictation runs</h1>
+        <p class="dev-sub" id="devSummary">Loading…</p>
+        <a class="dev-back" href="/">Back to dictation</a>
+    </header>
+    <p class="dev-note">Recorded on this machine, read from disk. Nothing is uploaded.</p>
+
+    <section class="dev-panel">
+        <div class="dev-scroll">
+            <table class="dev-table">
+                <thead>
+                    <tr>
+                        <th scope="col">When</th>
+                        <th scope="col">Where</th>
+                        <th scope="col">Model</th>
+                        <th scope="col" class="num">Audio</th>
+                        <th scope="col" class="num">Total</th>
+                        <th scope="col" class="num">After stop</th>
+                        <th scope="col" class="num" title="Decoded seconds per second of audio. Above 1.0 it cannot keep up with speech.">Decode&nbsp;&times;</th>
+                        <th scope="col" class="num">Words</th>
+                        <th scope="col" class="num">Chunks</th>
+                        <th scope="col">Output</th>
+                    </tr>
+                </thead>
+                <tbody id="runRows"></tbody>
+            </table>
+        </div>
+        <p class="dev-empty" id="runsEmpty" hidden>No runs yet. Dictate something and reload.</p>
+    </section>
+
+    <section class="dev-panel">
+        <h2 class="dev-h2">Long runs versus short</h2>
+        <p class="dev-note">
+            Chunk-once predicts a flat cost per second of audio. If the decode
+            ratio climbs with length, that prediction is wrong.
+        </p>
+        <div class="dev-scroll">
+            <table class="dev-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Run length</th>
+                        <th scope="col" class="num">Runs</th>
+                        <th scope="col" class="num">Median decode&nbsp;&times;</th>
+                        <th scope="col" class="num">Median after stop</th>
+                    </tr>
+                </thead>
+                <tbody id="lengthRows"></tbody>
+            </table>
+        </div>
+    </section>
+</div>
+
+<!-- A report can be thousands of words, so it never renders inline in the
+     table — it opens here and scrolls inside itself. -->
+<div id="outputScrim" class="dev-scrim" hidden>
+    <div class="dev-modal" role="dialog" aria-modal="true" aria-labelledby="outputTitle">
+        <header class="dev-modal-bar">
+            <h2 id="outputTitle" class="dev-h2">Output</h2>
+            <button id="outputClose" class="btn" type="button">Close</button>
+        </header>
+        <pre id="outputBody" class="dev-output"></pre>
+    </div>
+</div>
+
+<script src="/static/developer.js"></script>

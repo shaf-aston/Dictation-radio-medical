@@ -32,7 +32,8 @@ def check(condition: bool, message: str) -> None:
 
 
 # 1. No stylesheet carries its own colour.
-for sheet in (UI / "frontends" / "app.css", UI / "styles" / "app.qss"):
+for sheet in (UI / "frontends" / "app.css", UI / "frontends" / "developer.css",
+              UI / "styles" / "app.qss"):
     found = HEX.findall(sheet.read_text(encoding="utf-8"))
     check(not found, f"{sheet.name} hardcodes {found} — move it into tokens.json")
 
@@ -41,7 +42,8 @@ for sheet in (UI / "frontends" / "app.css", UI / "styles" / "app.qss"):
 #     file could not see, so it survived a theme overhaul the stylesheets did
 #     not. JS/HTML set state *classes*; the stylesheet maps classes to tokens.
 COLOUR_FN = re.compile(r"\b(?:rgba?|hsla?)\s*\(")
-for page in (UI / "frontends" / "app.js", UI / "frontends" / "app.html"):
+for page in (UI / "frontends" / "app.js", UI / "frontends" / "app.html",
+             UI / "frontends" / "developer.js", UI / "frontends" / "developer.html"):
     text = page.read_text(encoding="utf-8")
     found = HEX.findall(text) + COLOUR_FN.findall(text)
     check(not found, f"{page.name} hardcodes colour {found} — set a state class, "
@@ -62,8 +64,9 @@ for key in theme.tokens("dark"):
     check(css.count(f"--{name}:") == 4, f"--{name} is missing from a theme selector")
 
 # 4. The page still has a slot for them, and something still fills it.
-check("__THEME_VARS__" in (UI / "frontends" / "app.html").read_text(encoding="utf-8"),
-      "app.html lost its __THEME_VARS__ slot")
+for page in ("app.html", "developer.html"):
+    check("__THEME_VARS__" in (UI / "frontends" / page).read_text(encoding="utf-8"),
+          f"{page} lost its __THEME_VARS__ slot")
 check("__THEME_VARS__" in (UI / "web_app.py").read_text(encoding="utf-8"),
       "web_app.py no longer fills __THEME_VARS__")
 

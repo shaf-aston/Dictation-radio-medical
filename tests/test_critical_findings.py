@@ -28,6 +28,14 @@ class TestPositiveDetection:
         assert findings[0].level == 1
 
 
+    def test_a_phrase_inside_a_longer_finding_is_reported_once(self) -> None:
+        # "acute appendicitis" also contains "appendicitis"; two findings for one
+        # clinical problem would double the count the radiologist is shown and
+        # stack two gutter marks on the same words.
+        findings = scan_for_critical_findings("Impression: Acute appendicitis.")
+        assert [f.term.lower() for f in findings] == ["acute appendicitis"]
+
+
 class TestNegationParsing:
     """Cleanly negated findings should be suppressed; uncertainty should be kept."""
 
