@@ -68,6 +68,11 @@ src/
 │   │                       marks saying which word to highlight. Both are view
 │   │                       overlays (ExtraSelection / an underlay div) — never
 │   │                       text, so no mark can reach an exported report
+│   ├── finding_marks.py  the critical-findings gutter: a strip beside the
+│   │                       editor, one mark per finding, click to jump to it.
+│   │                       Never draws on the radiologist's characters — a
+│   │                       finding is a statement about the report, not about
+│   │                       a word (contrast term_marks.py, which underlines)
 │   ├── tokens.json       the ONLY place a UI colour is written down
 │   ├── theme.py          the only reader of tokens.json — renders the Qt sheet
 │   │                       and the web page's CSS custom properties, so the two

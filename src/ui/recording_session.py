@@ -17,7 +17,7 @@ from src.features.file_manager import create_temp_wav
 from src.features import run_log
 from src.ui.postprocess_worker import PostprocessWorker, build_changes
 from src.features.accent_corrections import ACCENT_LABELS, suggest_accent
-from src.features.report_release import check_release, record_release
+from src.features.report_release import record_release
 from src.ui.dialogs import confirm_unfilled_fields
 from src.ui.styles import set_level_state
 
@@ -522,12 +522,20 @@ def confirm_release(window: MainWindow) -> bool:
     audit log for a report that then did not leave. The findings answer itself
     never withholds the report — both answers proceed and only the audit entry
     differs — so False here always means "the radiologist cancelled".
+
+    The scan runs through ``window.findings`` so the answer given here is the
+    same state the gutter marks and the count pill show: acknowledging settles
+    the pill, and a finding typed in afterwards puts it back to outstanding.
+    The dialog itself still appears at every exit, answered or not — asking
+    twice costs a click, and not asking could cost a phone call.
     """
     if not confirm_unfilled_fields(window):
         return False
 
-    check = check_release(window.editor.toPlainText())
+    window.findings.update(window.editor.toPlainText())
+    check = window.findings.check
     if not check.needs_acknowledgement:
+        window.finding_gutter.show_state()
         return True
 
     msg = QMessageBox(window)
@@ -545,11 +553,11 @@ def confirm_release(window: MainWindow) -> bool:
     msg.setDefaultButton(btn_ack)
     msg.exec()
 
-    record_release(
-        check,
-        window._get_patient_info().get("id", ""),
-        msg.clickedButton() == btn_ack,
-    )
+    acknowledged = msg.clickedButton() == btn_ack
+    record_release(check, window._get_patient_info().get("id", ""), acknowledged)
+    if acknowledged:
+        window.findings.acknowledge()
+    window.finding_gutter.show_state()
     return True
 
 

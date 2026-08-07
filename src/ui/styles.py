@@ -14,6 +14,7 @@ LIGHT = render_qss("light")
 
 LEVEL_STATES = ("healthy", "low", "clipping")
 STATUS_STATES = ("idle", "busy", "rec", "warn", "ok")
+FINDINGS_STATES = ("clear", "outstanding", "acknowledged")
 
 
 def _set_state(widget, name: str, state: str, allowed: tuple[str, ...]) -> None:
@@ -44,3 +45,8 @@ def set_level_state(bar, state: str) -> None:
 def set_status_state(label, state: str) -> None:
     """Show what the dictation is doing: idle, busy, recording, behind, done."""
     _set_state(label, "state", state, STATUS_STATES)
+
+
+def set_findings_state(label, state: str) -> None:
+    """Show whether the report's critical findings are outstanding or settled."""
+    _set_state(label, "findings", state, FINDINGS_STATES)
