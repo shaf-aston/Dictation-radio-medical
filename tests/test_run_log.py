@@ -114,6 +114,62 @@ def test_trimming_drops_the_oldest_not_the_newest(log_in_tmp):
     assert numbers == list(range(numbers[0], numbers[0] + len(numbers)))
 
 
+def test_concurrent_trims_leave_a_whole_log_and_no_scratch_files(log_in_tmp):
+    """Concurrent trims must leave one writer's complete payload, never a mixture.
+
+    Honest about its reach: this exercises *threads*, and the case the unique
+    scratch name defends against is two *processes* (the desktop app and the web
+    app both write this file). Within one process the writes here are short
+    enough that a shared ``<name>.tmp`` never actually tore in testing — so this
+    passes against both implementations and is **not** a regression guard for
+    that bug. What it does pin is the property that matters and can be checked:
+    whatever ends up in the log is a whole payload, and no scratch file is left
+    behind.
+    """
+    import threading
+
+    # Each writer's payload must be *distinguishable*, and they must differ in
+    # length. Identical payloads hide the bug completely: a torn write of the
+    # same bytes still reads back as those bytes, so the test would pass against
+    # the very implementation it exists to reject.
+    payloads = {
+        writer: [
+            {"started": f"w{writer}-row-{i}", "front_end": "web", "text": "x" * 4000}
+            for i in range(10 + writer * 7)
+        ]
+        for writer in range(8)
+    }
+
+    errors: list = []
+
+    def trim(writer: int) -> None:
+        try:
+            for _ in range(12):
+                run_log._rewrite(payloads[writer])
+        except Exception as exc:            # pragma: no cover - the failure path
+            errors.append(exc)
+
+    threads = [threading.Thread(target=trim, args=(w,)) for w in payloads]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # A trim that loses the rename race is retried, and abandoning one would be
+    # harmless anyway — what must never happen is a half-written log.
+    assert all(isinstance(exc, PermissionError) for exc in errors), errors
+
+    # The log must be exactly one writer's complete payload — never a mixture,
+    # never a truncated tail.
+    written = _rows(log_in_tmp)
+    assert written in payloads.values(), (
+        f"log holds {len(written)} rows, matching no writer's payload "
+        f"(sizes {sorted(len(v) for v in payloads.values())})"
+    )
+    # No leftover scratch files beside the log.
+    assert [p.name for p in log_in_tmp.parent.iterdir()] == [log_in_tmp.name]
+
+
 def test_recent_returns_newest_first(log_in_tmp, settings):
     for i in range(3):
         run_log.finish(run_log.start("web"), f"report {i}", settings)

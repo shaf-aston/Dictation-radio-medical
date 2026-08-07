@@ -28,6 +28,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -127,19 +129,59 @@ def write(record: RunRecord, settings: Any) -> None:
         logger.warning("Could not record the dictation run: %s", exc)
 
 
+#: How many times a rename may lose a race before the trim is abandoned, and
+#: how long to wait between attempts. Windows refuses a rename onto a path
+#: another process has open, so two front-ends trimming at the same moment make
+#: one of them fail — briefly, and for no reason that will still be true a
+#: moment later. Abandoning a trim is harmless (the log is merely trimmed on
+#: the next run), so this stays small.
+_REPLACE_ATTEMPTS = 5
+_REPLACE_BACKOFF_SEC = 0.02
+
+
+def _replace_with_retry(tmp: str, path: Any) -> None:
+    """``os.replace`` with a short retry, for the Windows rename race above."""
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(_REPLACE_BACKOFF_SEC)
+
+
 def _rewrite(rows: List[Dict[str, Any]]) -> None:
     """Replace the log with *rows*, atomically.
 
     Written to a sibling and renamed over the original, so a crash mid-trim
     leaves the old complete log rather than a half-written one.
+
+    The sibling's name is unique to this writer. Both front-ends are separate
+    processes writing this same file, and a fixed ``<name>.tmp`` would hand two
+    simultaneous trims the same scratch file — one truncating what the other is
+    still writing, then renaming the fragment over the log. Matches
+    ``core/json_store.write_json``, which had the same shape.
+
+    Stated honestly: unlike the ``json_store`` case, this one was **not**
+    reproduced — a threaded test could not tear the shared temp file, and the
+    two-process case is not something the suite can drive. This is consistency
+    and cheap defence, not a fix for a demonstrated failure.
     """
     path = run_log_path()
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(
-        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
-        encoding="utf-8",
-    )
-    os.replace(tmp, path)
+    tmp: Optional[str] = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.writelines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+        _replace_with_retry(tmp, path)
+        tmp = None  # renamed, so there is nothing left to clean up
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def recent(limit: int = 0) -> List[Dict[str, Any]]:
