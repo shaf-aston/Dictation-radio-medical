@@ -11,8 +11,6 @@ Two interfaces:
 ```bash
 python -m src.ui                   # desktop GUI
 python -m src.ui.web_app           # web app
-python scripts/verify_setup.py    # verify installation
-python -m pytest tests/ -q        # run tests
 ruff check src tests               # lint
 ```
 
@@ -78,8 +76,7 @@ src/
 
 data/                    temp WAVs · autosave/ · macros.json · audit.log · training/ · medical_reference/
 dictation_settings.json  app settings
-scripts/                 verify_setup.py · lightning/ (cloud training) · download_medical_references.py
-tests/                   pytest suite
+scripts/                 lightning/ (cloud training) · download_medical_references.py · eval/
 ```
 
 See [CLAUDE.md](CLAUDE.md) for architecture details and [CODING_STANDARDS.md](CODING_STANDARDS.md) for style rules.

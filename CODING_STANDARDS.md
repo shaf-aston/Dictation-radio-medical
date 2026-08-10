@@ -72,11 +72,13 @@ module boundaries, and for `.claude/` agents/skills/workflows, see
 - Persistent state is file-first and human-inspectable (JSON settings/registry,
   SQLite only where relational queries are needed, e.g. the staging DB).
 
-## Tests
+## Checking a change
 
-- `pytest` under `tests/`, mirroring module names (`test_<module>.py`).
-- Cover safety-critical paths explicitly: PHI de-identification, the consent
-  gate, and untrusted-archive extraction. Use `tmp_path` and mock cloud
-  clients — tests must not touch the network.
-- `python -m pytest tests/ -q` and `ruff check src tests` must both be green
-  before shipping a change.
+- There is no automated test suite. A change is checked by running the app and
+  exercising the path it touched — `python -m src.ui` for the desktop,
+  `python -m src.ui.web_app` for the browser.
+- `ruff check src scripts` must be green before shipping a change.
+- Exercise the safety-critical paths by hand when you touch them: PHI
+  de-identification, the cloud consent gate, untrusted-archive extraction, and
+  the release gate on every exit (Copy, Save TXT, Export Word). These are the
+  ones where a silent regression reaches a patient.

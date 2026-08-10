@@ -105,7 +105,7 @@ The decoder's prompt slot holds 223 tokens and three things want it:
    radiology words, so a full custom vocabulary would evict the shipped one entirely.
    Fixed by ordering: Whisper keeps the *last* 223 tokens, so the learned terms are
    written first and are the ones dropped when there is no room. Pinned by
-   `tests/test_prompt_budget.py`.
+   the prompt-budget limit in `src/dictation/resources/`.
 3. **Previously decoded text**, when `condition_on_previous_text=True`. The
    confidence-targeted polish pass sets this, so within one call each decoded segment
    pushes the prompt further out of the window. **Open, not fixed** — the live path

@@ -79,7 +79,7 @@ src/
 │   │                       front-ends cannot drift apart
 │   ├── styles.py · styles/app.qss · frontends/   desktop + web assets
 │   │                       (neither stylesheet contains a hex value;
-│   │                        scripts/verify_theme.py fails the build if one does)
+│   │                        keep it that way — colour has one home)
 │   └── __main__.py       enables `python -m src.ui`
 ├── medical/     critical_findings.py (NegEx) · macros.py ·
 │   ├── medical_dict.py   the two wordlists, plus is_english_word — the single
@@ -337,8 +337,6 @@ report is a real change to the radiologist's text.
 ```bash
 python -m src.ui            # desktop GUI
 python -m src.ui.web_app    # web app on 127.0.0.1:8005
-python scripts/verify_setup.py
-python -m pytest tests/ -q
 ruff check src tests
 npx pyright src              # type check (optional-dep import warnings expected)
 

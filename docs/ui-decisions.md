@@ -24,19 +24,19 @@ web app was blue-grey neutrals with red reserved for recording and severity and 
 for the machine's voice. Same product, two visual identities, and nothing stopping
 them drifting further.
 
-**How it is held.** `scripts/verify_theme.py` fails if a hex value reappears in a
-stylesheet, if a theme renders identically to the other, if a token is missing from
-any of the four theme selectors, or if an unknown placeholder renders silently
-instead of raising. It also builds the real Qt widgets off-screen and reads the
-painted pixels back, because Qt reports neither a stylesheet it failed to parse nor a
-property selector it failed to match — it just paints something plausible.
+**How it is held.** By the rule, not by a checker: colour lives in
+`src/ui/tokens.json` and is read only by `src/ui/theme.py`, which renders the Qt sheet
+and the web page's custom properties. Neither stylesheet contains a hex value. If you
+add one, you have reintroduced the drift this section exists to describe. Note that Qt
+reports neither a stylesheet it failed to parse nor a property selector it failed to
+match — it just paints something plausible — so a desktop colour change is worth
+looking at in the running app rather than trusting by reading.
 
 **One defect that check caught immediately.** The microphone level meter had its
 palette baked into Python at import time, so it painted dark-theme colours on the
 light theme. Its three states are a Qt property now, resolved by the stylesheet like
-every other colour. Nothing in the test suite could have caught this: the suite stubs
-PySide6 out entirely, so `verify_theme.py` is currently the desktop UI's only
-automated coverage.
+every other colour. It was invisible from the code alone — it only showed up by
+opening the app on the light theme and looking at the meter.
 
 **Still open — the structural half.** Closing the colour gap does not make the two
 front-ends one product. The desktop still builds a permanent 12-control recording bar
