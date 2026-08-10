@@ -304,6 +304,17 @@ function pushUndoState() {
     }
 }
 
+/* Say that the report changed, for the overlays that read it.
+ *
+ * Setting `editor.value` from script fires no `input` event, so anything
+ * listening for typing never sees a dictated report, a loaded template or an
+ * undo — which is exactly the text the findings strip exists to check. Every
+ * programmatic write calls this; the `input` listeners cover the typing. */
+function announceReportChanged() {
+    scheduleMarks();
+    scheduleFindings();
+}
+
 function setEditorValue(value, { moveCaretToEnd = true } = {}) {
     editor.value = value;
     if (moveCaretToEnd && typeof editor.setSelectionRange === 'function') {
@@ -311,6 +322,7 @@ function setEditorValue(value, { moveCaretToEnd = true } = {}) {
         editor.setSelectionRange(end, end);
     }
     pushUndoState();
+    announceReportChanged();
 }
 
 function insertTextAtCursor(text) {
@@ -322,6 +334,7 @@ function insertTextAtCursor(text) {
     const needsSpacer = before.length > 0 && !/[\s\n]$/.test(before) && !/^[\s\n]/.test(text);
     const insertion = `${needsSpacer ? ' ' : ''}${text}`;
     editor.value = before + insertion + after;
+    announceReportChanged();
     if (typeof editor.setSelectionRange === 'function') {
         const pos = before.length + insertion.length;
         editor.setSelectionRange(pos, pos);
@@ -654,6 +667,7 @@ async function loadSelectedTemplate() {
         }
 
         editor.value = result.content || '';
+        announceReportChanged();
         if (typeof editor.setSelectionRange === 'function') {
             const end = editor.value.length;
             editor.setSelectionRange(end, end);
@@ -688,6 +702,8 @@ newReportBtn.addEventListener('click', () => {
     editor.focus();
     resetPatientInfo();
     hideStatus();
+    announceReportChanged();
+    resetFindings();
 });
 
 // Clear with confirmation
@@ -696,6 +712,7 @@ clearBtn.addEventListener('click', () => {
     if (confirm('Are you sure you want to clear all text? This cannot be undone.')) {
         setEditorValue('');
         hideStatus();
+        resetFindings();
     }
 });
 
@@ -777,6 +794,7 @@ function undo() {
     if (undoIndex > 0) {
         undoIndex--;
         editor.value = undoStack[undoIndex];
+        announceReportChanged();
         editor.focus();
     }
 }
@@ -785,6 +803,7 @@ function redo() {
     if (undoIndex < undoStack.length - 1) {
         undoIndex++;
         editor.value = undoStack[undoIndex];
+        announceReportChanged();
         editor.focus();
     }
 }
@@ -1173,6 +1192,111 @@ function initTermMarks() {
     scheduleMarks();
 }
 
+// ---------------------------------------------------------------------------
+// Critical findings: a tick in the strip beside the report for each one, and a
+// count that is on show whether or not there is anything to show.
+//
+// Every rule lives on the server, in the same OutstandingFindings object the
+// desktop window reads (features/report_release.py) — what counts as a finding,
+// whether a negation clears it, and whether an acknowledgement still holds. The
+// browser only draws the answer, which is why the two front-ends cannot come to
+// different conclusions about the same report.
+// ---------------------------------------------------------------------------
+
+const FINDINGS_DELAY_MS = 400;   // matches the term marks: one scan per settle
+
+const findingGutter = document.getElementById('findingGutter');
+const findingsPill = document.getElementById('findingsPill');
+
+let findingsTimer = null;
+let findingsRequest = 0;
+
+function paintFindings(data) {
+    const findings = data.findings || [];
+    findingGutter.replaceChildren();
+
+    // Placed by where the finding sits in the document rather than by where the
+    // text is scrolled to, so a finding further down the report still has a
+    // tick — and reaching one you cannot already see is the whole interaction.
+    const last = Math.max(1, editor.value.length);
+    findings.forEach((f) => {
+        const mark = document.createElement('button');
+        mark.type = 'button';
+        mark.className = 'finding-mark';
+        mark.dataset.outstanding = String(Boolean(f.outstanding));
+        mark.style.top = `${(Math.min(f.start, last) / last) * 100}%`;
+        mark.title = `${f.level === 1 ? 'Critical' : 'Urgent'}: ${f.term}`;
+        mark.setAttribute('aria-label', `Jump to ${f.term}`);
+        mark.addEventListener('click', () => {
+            // Selecting scrolls the textarea to it; focus last so the caret lands.
+            editor.focus();
+            editor.setSelectionRange(f.start, f.end);
+        });
+        findingGutter.append(mark);
+    });
+
+    findingsPill.dataset.findings = data.state || 'clear';
+    const count = data.count || 0;
+    if (!count) {
+        // "No findings", never a red zero: a warning shown on every clear
+        // report is one that stops being read on the report that has one.
+        findingsPill.textContent = 'No findings';
+        return;
+    }
+    const outstanding = findings.filter((f) => f.outstanding).length;
+    const shown = outstanding || count;
+    const noun = shown === 1 ? 'finding' : 'findings';
+    findingsPill.textContent = outstanding
+        ? `${shown} ${noun} to communicate`
+        : `${shown} ${noun} acknowledged`;
+}
+
+async function rescanFindings() {
+    // Recording rewrites the report every second, so offsets taken now would be
+    // stale before they were drawn. Stand down — and leave the last answer on
+    // screen rather than replacing it with "No findings", which would claim a
+    // report is clear at the exact moment nothing is re-checking it.
+    if (isRecording) return;
+    findingsRequest += 1;
+    const request = findingsRequest;
+    try {
+        const response = await fetch('/api/report/findings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: editor.value }),
+        });
+        if (request !== findingsRequest) return;   // a newer edit won
+        if (!response.ok) return;
+        paintFindings(await response.json());
+    } catch (err) {
+        // A strip that cannot answer must never interrupt the report, and must
+        // never quietly claim the report is clear either — leave what is shown.
+        console.warn('Findings scan failed:', err);
+    }
+}
+
+function scheduleFindings() {
+    if (findingsTimer) clearTimeout(findingsTimer);
+    findingsTimer = setTimeout(rescanFindings, FINDINGS_DELAY_MS);
+}
+
+async function resetFindings() {
+    // A new report: the previous patient's acknowledgements must not answer for
+    // this one's identical finding.
+    findingsRequest += 1;
+    try {
+        const response = await fetch('/api/report/findings/reset', { method: 'POST' });
+        if (response.ok) paintFindings(await response.json());
+    } catch (err) {
+        console.warn('Could not reset findings:', err);
+    }
+}
+
+function initFindingMarks() {
+    editor.addEventListener('input', scheduleFindings);
+    scheduleFindings();
+}
+
 function renderTermTier(host, items) {
     host.innerHTML = '';
     items.forEach((item) => {
@@ -1293,3 +1417,4 @@ initOverflowMenu();
 initDisclaimer();
 initTermPop();
 initTermMarks();
+initFindingMarks();

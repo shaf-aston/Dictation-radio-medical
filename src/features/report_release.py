@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 from src.features import audit_log
 from src.medical.critical_findings import (
@@ -104,12 +104,21 @@ class OutstandingFindings:
 
     Acknowledgement is a property of the report, not a dialog that fired once:
     the question "is anything still outstanding?" has to be answerable at export
-    time, however long ago the radiologist was asked. Both front-ends read this
-    rather than each remembering their own answer.
+    time, however long ago the radiologist was asked.
 
     Answers are kept per finding, so an edit that introduces a *new* finding
     leaves that one outstanding while the ones already communicated stay
     answered — and deleting a finding never un-answers the rest.
+
+    Answers belong to **one report**. Whoever owns an instance must call
+    :meth:`reset` when the editor moves to a different report, or an
+    acknowledgement given for one patient silently answers the identical
+    finding for the next one.
+
+    Currently read by the desktop front-end only
+    (:mod:`src.ui.finding_marks`, :mod:`src.ui.main_window`); the web app
+    gates exports through :func:`check_release` per request and has no
+    equivalent of the always-visible count.
     """
 
     #: What the last :meth:`update` found. Empty until the first scan.
@@ -121,9 +130,24 @@ class OutstandingFindings:
         """Re-scan *text*. Answers already given survive; new findings do not."""
         self.check = check_release(text)
 
-    def acknowledge(self) -> None:
-        """Record that every finding currently in the report was communicated."""
-        self.answered = self.answered | {_finding_key(f) for f in self.check.findings}
+    def reset(self) -> None:
+        """Forget this report entirely — a different report is being loaded."""
+        self.check = _CLEAR
+        self.answered = frozenset()
+
+    def acknowledge(self, check: Optional[ReleaseCheck] = None) -> None:
+        """Record that the findings in *check* were communicated.
+
+        *check* defaults to the current scan, but the caller should pass the
+        exact scan it showed the radiologist: a dialog runs a nested event
+        loop, during which a debounced re-scan can replace :attr:`check`, and
+        answering for findings nobody was shown is how an acknowledgement goes
+        missing.
+        """
+        answered_now = check if check is not None else self.check
+        self.answered = self.answered | {
+            _finding_key(f) for f in answered_now.findings
+        }
 
     @property
     def outstanding(self) -> Tuple[CriticalFinding, ...]:
@@ -145,18 +169,26 @@ class OutstandingFindings:
         return "outstanding" if self.outstanding else "acknowledged"
 
 
-def record_release(check: ReleaseCheck, patient_id: str, acknowledged: bool) -> None:
+def record_release(
+    findings: Tuple[CriticalFinding, ...], patient_id: str, acknowledged: bool
+) -> None:
     """Write the radiologist's answer to the audit log.
 
     ``acknowledged`` True means verbal communication was confirmed — logged per
     finding. False means they proceeded anyway — logged once, as an override.
+
+    Takes the findings actually being answered for, not the whole scan: an audit
+    entry claims a phone call happened, so exporting the same report twice must
+    not write the same call twice. A caller holding acknowledgement state passes
+    :attr:`OutstandingFindings.outstanding`; a stateless one passes
+    ``check.findings``.
     """
-    if not check.needs_acknowledgement:
+    if not findings:
         return
     if acknowledged:
-        for f in check.findings:
+        for f in findings:
             audit_log.log_critical_finding_acknowledged(f.term, patient_id, f.level)
     else:
         audit_log.log_critical_finding_overridden(
-            "; ".join(f.term for f in check.findings), patient_id
+            "; ".join(f.term for f in findings), patient_id
         )

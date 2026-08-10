@@ -17,8 +17,11 @@ and selected in the editor.
 
 Like the term marks, it never runs during dictation (the region is being
 rewritten every second) and it decides nothing — which findings exist is
-:class:`src.features.report_release.OutstandingFindings`, the shared service
-both front-ends read, so the desktop cannot count differently from the browser.
+:class:`src.features.report_release.OutstandingFindings`. That service is
+written to be front-end agnostic, but today only this desktop window reads it;
+the web app gates its exports per request through ``check_release`` and shows
+no always-visible count, so the two front-ends do not yet display the same
+thing.
 
 The colour is read from the theme tokens because a painted widget is one of the
 few surfaces a stylesheet cannot reach: ``rec`` for a finding still outstanding
@@ -31,7 +34,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, List, Tuple
 
-from PySide6.QtCore import QPoint, QTimer, Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QTextCursor
 from PySide6.QtWidgets import QTextEdit, QWidget
 
@@ -84,9 +87,14 @@ class FindingGutter(QWidget):
         self._timer.setInterval(SCAN_DELAY_MS)
         self._timer.timeout.connect(self.refresh)
 
-        editor.textChanged.connect(self._timer.start)
-        # A mark maps a document position to a y, so scrolling moves every mark.
-        editor.verticalScrollBar().valueChanged.connect(self.update)
+        # Driven by MainWindow._on_text_changed, NOT by editor.textChanged
+        # directly: every path that writes dictated text into the editor blocks
+        # the editor's signals and calls _on_text_changed by hand, so a widget
+        # listening to textChanged never sees a dictated report at all — which
+        # is the one report this strip exists to mark.
+        #
+        # Nothing listens to scrolling either: a mark's position comes from the
+        # finding's place in the document, so scrolling does not move it.
 
     # -- state ---------------------------------------------------------------
 
@@ -94,15 +102,21 @@ class FindingGutter(QWidget):
         self._theme = theme
         self.update()
 
+    def schedule_refresh(self) -> None:
+        """Queue a re-scan once typing settles. Safe to call on every change."""
+        self._timer.start()
+
     def refresh(self) -> None:
         """Re-scan the report now and show what it found."""
         if self._is_dictating():
-            # The dictated region is rewritten every cycle; marks that jump
-            # under moving words are noise, and the release gate re-scans at
-            # export anyway. Marking is for reviewing.
-            self._findings.update("")
-        else:
-            self._findings.update(self._editor.toPlainText())
+            # The dictated region is rewritten every cycle, so offsets taken now
+            # would be stale before they were painted. Stand down — but leave
+            # the state alone: scanning "" here would overwrite the shared
+            # OutstandingFindings the count pill reads, flipping it to "No
+            # findings" for a report that has them, and nothing would restore it
+            # because dictated writes never reach a scan.
+            return
+        self._findings.update(self._editor.toPlainText())
         self.show_state()
 
     def show_state(self) -> None:
@@ -117,21 +131,48 @@ class FindingGutter(QWidget):
 
     # -- drawing -------------------------------------------------------------
 
-    def _mark_y(self, finding: CriticalFinding) -> int | None:
-        """Where in this widget the finding's first line sits, or None if scrolled away."""
+    def _mark_y(self, finding: CriticalFinding) -> int:
+        """Where in this widget the finding's mark belongs.
+
+        Marks are placed by position **in the document**, not by where the text
+        currently sits on screen, so the strip always shows every finding the
+        report has. Placing them by screen position instead meant a finding
+        three pages down had no mark and therefore nothing to click — and
+        reaching a finding you cannot already see is the entire interaction.
+
+        A mark for text scrolled off the top or bottom is pinned to the nearest
+        edge rather than dropped, so the count on the strip always matches the
+        count on the pill.
+        """
         document = self._editor.document()
+        last = max(1, document.characterCount() - 1)
+        usable = max(1, self.height() - MARK_HEIGHT)
+        y = MARK_HEIGHT // 2 + int(usable * min(finding.start, last) / last)
+        return max(MARK_HEIGHT // 2, min(y, self.height() - MARK_HEIGHT // 2))
+
+    def _span_still_matches(self, finding: CriticalFinding) -> bool:
+        """Whether *finding*'s recorded offsets still cover its own words.
+
+        Offsets are captured by a debounced scan, so for up to ``SCAN_DELAY_MS``
+        after an edit they describe the previous text. Painting or jumping to
+        them then points at whatever now occupies those characters. Reading back
+        just the span (not the whole document) keeps this cheap enough to run per
+        mark; a mark that fails simply waits for the next scan.
+        """
+        document = self._editor.document()
+        if finding.end > document.characterCount() - 1:
+            return False
         cursor = QTextCursor(document)
-        cursor.setPosition(min(finding.start, max(0, document.characterCount() - 1)))
-        rect = self._editor.cursorRect(cursor)
-        # Through global coordinates rather than by assuming the gutter and the
-        # editor's viewport share a top edge: they are separated by the editor's
-        # frame and padding, and that offset is the stylesheet's business.
-        viewport = self._editor.viewport()
-        y = self.mapFromGlobal(viewport.mapToGlobal(QPoint(0, rect.center().y()))).y()
-        return None if y < 0 or y > self.height() else y
+        cursor.setPosition(finding.start)
+        cursor.setPosition(finding.end, QTextCursor.MoveMode.KeepAnchor)
+        return cursor.selectedText().lower() == finding.term.lower()
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt name)
         self._hit_boxes = []
+        if self._is_dictating():
+            # Same reason refresh() stands down: the offsets belong to text that
+            # is being rewritten underneath them.
+            return
         findings = self._findings.check.findings
         if not findings:
             return
@@ -140,9 +181,9 @@ class FindingGutter(QWidget):
         painter = QPainter(self)
         x = (self.width() - MARK_WIDTH) // 2
         for finding in findings:
-            y = self._mark_y(finding)
-            if y is None:
+            if not self._span_still_matches(finding):
                 continue
+            y = self._mark_y(finding)
             colour = palette["rec"] if id(finding) in outstanding else palette["textDim"]
             painter.fillRect(
                 x, y - MARK_HEIGHT // 2, MARK_WIDTH, MARK_HEIGHT, QColor(colour)
@@ -165,6 +206,10 @@ class FindingGutter(QWidget):
 
     def _select(self, finding: CriticalFinding) -> None:
         """Scroll to the finding and select its words — the whole interaction."""
+        if not self._span_still_matches(finding):
+            # The document moved under the debounced offsets; selecting anyway
+            # would highlight unrelated text and present it as the finding.
+            return
         document = self._editor.document()
         last = max(0, document.characterCount() - 1)
         cursor = QTextCursor(document)

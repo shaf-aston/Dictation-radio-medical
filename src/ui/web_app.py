@@ -38,7 +38,11 @@ from src.features.file_manager import (
     templates_dir,
 )
 from src.features.report_manager import DOCX_AVAILABLE, export_to_word_bytes, format_plain_text_report
-from src.features.report_release import check_release, record_release, unfilled_fields
+from src.features.report_release import (
+    OutstandingFindings,
+    record_release,
+    unfilled_fields,
+)
 from src.features import run_log
 from src.medical import macros, term_lookup
 from src.medical.macros import reload_macros
@@ -507,6 +511,54 @@ async def load_template(template_name: str):
     return {"name": path.name, "content": content}
 
 
+#: The report currently open in the browser, and which of its findings have
+#: been answered for. One instance, because this server is a loopback,
+#: single-radiologist workstation with one report open at a time — the same
+#: shape as the one desktop window. It is the *same* class the desktop reads
+#: (``features/report_release.OutstandingFindings``), so the count, the marks
+#: and the meaning of "acknowledged" cannot drift between the two front-ends.
+#: Reset by ``/api/report/findings/reset`` when a new report starts.
+_findings = OutstandingFindings()
+
+
+@app.post("/api/report/findings")
+async def report_findings_endpoint(payload: TextRequest):
+    """Re-scan the open report and return what the gutter strip should show.
+
+    Positions come back with the findings so the browser can place a mark
+    without knowing any of the scanning rules — exactly what the desktop gutter
+    reads off the same object.
+    """
+    _findings.update(payload.text)
+    outstanding = {id(f) for f in _findings.outstanding}
+    return {
+        "count": _findings.count,
+        "state": _findings.state,
+        "findings": [
+            {
+                "term": f.term,
+                "level": f.level,
+                "start": f.start,
+                "end": f.end,
+                "outstanding": id(f) in outstanding,
+            }
+            for f in _findings.check.findings
+        ],
+    }
+
+
+@app.post("/api/report/findings/reset")
+async def reset_findings_endpoint():
+    """Forget this report's findings and its acknowledgements — a new report.
+
+    Acknowledgement answers "has this been phoned through for *this* patient",
+    so carrying it into the next report would show the next patient's identical
+    finding as already communicated.
+    """
+    _findings.reset()
+    return {"count": 0, "state": "clear", "findings": []}
+
+
 def _confirm_release(payload: ReportRequest) -> None:
     """Refuse to emit a report the radiologist has not answered for yet.
 
@@ -530,7 +582,13 @@ def _confirm_release(payload: ReportRequest) -> None:
             detail={"reason": "unfilled_fields", "fields": list(fields)},
         )
 
-    check = check_release(payload.text)
+    # Scanned through the shared state object, so this answer settles the same
+    # count the strip in the browser is showing — and a finding typed in after
+    # an acknowledgement puts it back to outstanding, rather than riding out on
+    # an answer given before it existed.
+    _findings.update(payload.text)
+    check = _findings.check
+    outstanding = _findings.outstanding
     if not check.needs_acknowledgement:
         return
     if payload.acknowledged is None:
@@ -542,9 +600,15 @@ def _confirm_release(payload: ReportRequest) -> None:
                 "worst_level": check.worst_level,
             },
         )
+    # Only what was still outstanding is audited: an audit entry claims a phone
+    # call happened, so exporting the same report twice must not record two.
     record_release(
-        check, _model_to_dict(payload.patient).get("id", ""), payload.acknowledged
+        outstanding,
+        _model_to_dict(payload.patient).get("id", ""),
+        payload.acknowledged,
     )
+    if payload.acknowledged:
+        _findings.acknowledge(check)
 
 
 @app.post("/api/report/check")

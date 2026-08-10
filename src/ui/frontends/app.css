@@ -252,6 +252,10 @@ body {
    The wrapper carries the surface so the textarea itself can be transparent —
    that is what lets the marks underlay show through from behind it. */
 .editor-wrap {
+    /* One width for the findings strip, used by the strip and by the marks
+       underlay that has to start where the strip ends. Two numbers here would
+       drift and slide every underline off its word. */
+    --gutter-w: 14px;
     position: relative;
     display: flex;
     flex: 1;
@@ -292,7 +296,7 @@ body {
    marks under the real words. It never receives the pointer. */
 .editor-marks {
     position: absolute;
-    inset: 0;
+    inset: 0 0 0 var(--gutter-w);
     z-index: 0;
     overflow: hidden;
     color: transparent;
@@ -303,6 +307,58 @@ body {
     background: none;
     color: transparent;
     border-bottom: 2px dotted var(--glow);
+}
+
+/* --------------------------------------------------------------------------
+   Critical findings: a strip of ticks beside the report, and a count that is
+   always on show. Nothing here touches the radiologist's characters.
+   -------------------------------------------------------------------------- */
+
+.finding-gutter {
+    position: relative;
+    flex: none;
+    width: var(--gutter-w);
+    z-index: 2;                       /* above the marks underlay, below nothing */
+}
+
+/* Placed by position in the *document*, not by where the text happens to be
+   scrolled — so a finding three pages down still has a tick to click. Only
+   `top` is set from script; the colour belongs to the theme. */
+.finding-mark {
+    position: absolute;
+    left: 50%;
+    width: 4px;
+    height: 14px;
+    margin: -7px 0 0 -2px;
+    border-radius: 2px;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    background: var(--text-dim);      /* answered for */
+}
+.finding-mark[data-outstanding="true"] { background: var(--rec); }
+.finding-mark:focus-visible { outline: 2px solid var(--glow); outline-offset: 2px; }
+
+.findings-pill {
+    margin-left: .2rem;
+    padding: .2rem .6rem;
+    border-radius: 999px;
+    font-size: .8rem;
+    white-space: nowrap;
+    flex: none;
+    background: color-mix(in srgb, var(--text-dim) 12%, transparent);
+    color: var(--text-dim);
+}
+/* Red only while something is genuinely waiting on a phone call. A clear
+   report and an answered one stay quiet — a badge that shouts every time
+   stops being read. */
+.findings-pill[data-findings="outstanding"] {
+    background: color-mix(in srgb, var(--rec) 18%, transparent);
+    color: var(--rec);
+}
+.findings-pill[data-findings="acknowledged"] {
+    background: color-mix(in srgb, var(--ok) 16%, transparent);
+    color: var(--ok);
 }
 
 /* "3 words to check — highlight one to see alternatives". Assistive, so it is

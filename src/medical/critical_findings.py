@@ -215,7 +215,6 @@ def scan_for_critical_findings(text: str) -> List[CriticalFinding]:
             # longer finding here can still be reported where it stands alone.
             if any(m.start() < end and start < m.end() for start, end in claimed):
                 continue
-            seen_terms.add(term_key)
 
             negated, uncertain = _check_negation(text, m.start(), m.end())
 
@@ -226,6 +225,14 @@ def scan_for_critical_findings(text: str) -> List[CriticalFinding]:
             if negated and not uncertain and level == 1:
                 # Only report if the negation itself is uncertain
                 continue
+
+            # Marked seen only once the mention is ACCEPTED. Marking it above —
+            # before the negation checks — meant a denial silenced every later
+            # real mention of the same term, and "no pneumothorax on the prior
+            # film ... large right pneumothorax" is ordinary report prose, so the
+            # whole report scanned clear and no acknowledgement was ever asked
+            # for. A rejected mention must leave no trace.
+            seen_terms.add(term_key)
 
             ctx_start = max(0, m.start() - 45)
             ctx_end   = min(len(text), m.end() + 45)

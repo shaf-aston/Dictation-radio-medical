@@ -87,23 +87,34 @@ def should_skip_preview(
 ) -> bool:
     """Whether to drop this cycle's live preview decode.
 
-    Two conditions, both required:
+    Compares what the preview would actually cost — ``open_tail_sec *
+    decode_cost`` wall seconds, since the whole open tail is re-decoded — with
+    *max_lag_sec*, the delay the radiologist is willing to accept before the
+    words they just said appear. Costing more than that budget means the
+    preview is showing stale words *and* holding up the committed chunks queued
+    behind it, so it is dropped.
 
-    * ``decode_cost`` — measured wall seconds spent decoding per second of
-      audio decoded — is above 1.0, i.e. this machine decodes slower than
-      speech arrives. A machine that keeps up has slack to spend on a preview
-      and always keeps it.
-    * the still-open tail is longer than *max_lag_sec*, so the preview
-      re-decode of it is expensive and the words it shows are already stale.
+    A fast machine keeps its preview: at ``decode_cost`` 0.05 a 20-second tail
+    costs 1 second, well inside a 3-second budget. A slow one loses it exactly
+    when the tail has grown too expensive to be worth re-decoding.
 
-    Requiring both is why a fast machine never loses the preview and a slow one
-    only loses it once it is genuinely behind. ``max_lag_sec <= 0`` turns the
-    skip off entirely; ``decode_cost`` of 0.0 means "not measured yet", which
-    keeps the preview for the first cycles of a recording.
+    ``max_lag_sec <= 0`` turns the skip off entirely; ``decode_cost`` of 0.0
+    means "not measured yet", which keeps the preview for the first cycles.
+
+    The superseded test was ``decode_cost > 1.0 and open_tail_sec >
+    max_lag_sec`` — "does this machine decode slower than speech?". It could
+    not do the job for two reasons. This machine measures RTF 0.47-0.57
+    (docs/dictation-accuracy.md), so the first clause was false and the preview
+    was never skipped however far behind the loop fell. And ``decode_cost`` is
+    total-wall-over-total-audio, which a fixed ~3.6s per-``transcribe()`` call
+    cost (Whisper pads every clip to 30s) makes a function of *call count*
+    rather than of throughput — so it rose above 1.0 only when the decoded
+    clips were short, i.e. exactly when the preview was cheapest. What matters
+    is this preview's own price, which is what this now asks.
     """
     if max_lag_sec <= 0:
         return False
-    return decode_cost > 1.0 and open_tail_sec > max_lag_sec
+    return open_tail_sec * decode_cost > max_lag_sec
 
 
 class LiveTranscribeWorker(QObject):

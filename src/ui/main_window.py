@@ -597,6 +597,7 @@ class MainWindow(QMainWindow):
                 return
         self.flush_dictation_edits()
         self.editor.clear()
+        self._start_new_report_findings()
         self.patient_name.clear()
         self.patient_id.clear()
         self.patient_dob.clear()
@@ -608,7 +609,18 @@ class MainWindow(QMainWindow):
     def _load_report_from_path(self, path: str) -> None:
         with open(path, "r", encoding="utf-8") as fh:
             self.editor.setPlainText(fh.read())
+        self._start_new_report_findings()
         self._show_status(f"Opened: {os.path.basename(path)}", 2000, state="ok")
+
+    def _start_new_report_findings(self) -> None:
+        """Forget the previous report's findings and its acknowledgements.
+
+        Acknowledgement answers "has this been phoned through for *this*
+        patient". Carrying them into the next report would show the next
+        patient's identical finding as already communicated.
+        """
+        self.findings.reset()
+        self.finding_gutter.refresh()
 
     def on_open_report(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -688,6 +700,7 @@ class MainWindow(QMainWindow):
         if self.editor.toPlainText().strip():
             audit_log.log_report_cleared(self._get_patient_info().get("id", ""))
         self.editor.clear()
+        self._start_new_report_findings()
 
     # ------------------------------------------------------------------
     # Recent reports menu
@@ -793,6 +806,13 @@ class MainWindow(QMainWindow):
         line_count = text.count("\n") + 1 if text else 0
         self._info_words.setText(f"Words: {word_count}  |  Lines: {line_count}")
         self._wordcount_label.setText(f"Words: {word_count}")
+
+        # The single "the report changed" funnel: editor.textChanged reaches
+        # here, and so do the dictation writes that block that signal and call
+        # this method by hand. Both overlays hang off it rather than off
+        # textChanged, so neither can miss a dictated report.
+        self.finding_gutter.schedule_refresh()
+        self.term_marks.schedule_rescan()
 
         # Passive learning: track user edits (debounced — fires 500 ms after
         # the last keystroke rather than on every character).

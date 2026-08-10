@@ -534,6 +534,11 @@ def confirm_release(window: MainWindow) -> bool:
 
     window.findings.update(window.editor.toPlainText())
     check = window.findings.check
+    # Captured before the dialog: msg.exec() runs a nested event loop, and the
+    # gutter's debounced re-scan can fire inside it and replace window.findings
+    # .check. Answering and auditing from these locals means the radiologist's
+    # answer always applies to exactly what they were shown.
+    outstanding = window.findings.outstanding
     if not check.needs_acknowledgement:
         window.finding_gutter.show_state()
         return True
@@ -554,9 +559,11 @@ def confirm_release(window: MainWindow) -> bool:
     msg.exec()
 
     acknowledged = msg.clickedButton() == btn_ack
-    record_release(check, window._get_patient_info().get("id", ""), acknowledged)
+    # Only what was still outstanding is audited — re-exporting a report whose
+    # findings were already communicated must not log a second phone call.
+    record_release(outstanding, window._get_patient_info().get("id", ""), acknowledged)
     if acknowledged:
-        window.findings.acknowledge()
+        window.findings.acknowledge(check)
     window.finding_gutter.show_state()
     return True
 
