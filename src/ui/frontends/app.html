@@ -103,10 +103,26 @@
             </div>
 
             <div class="stage-foot">
-                <button id="dictateBtn" class="rec" type="button"
-                        aria-label="Start or stop recording" aria-pressed="false">
-                    <i id="micIcon" class="fas fa-microphone" aria-hidden="true"></i>
-                </button>
+                <div class="rec-row">
+                    <!-- Left of the button and right of it, so the controls sit
+                         where the eye already is instead of in the far header. -->
+                    <button id="cancelBtn" class="btn btn-quiet" type="button" hidden>
+                        Discard
+                    </button>
+
+                    <button id="dictateBtn" class="rec" type="button"
+                            aria-label="Start recording" aria-pressed="false">
+                        <i id="micIcon" class="fas fa-microphone" aria-hidden="true"></i>
+                    </button>
+
+                    <!-- Elapsed time and the microphone's real level. Without
+                         these you cannot tell a working microphone from a dead
+                         one until the whole dictation is over. -->
+                    <div id="recMeter" class="rec-meter" hidden>
+                        <span id="recTimer" class="rec-timer">00:00</span>
+                        <span class="rec-level" aria-hidden="true"><i></i></span>
+                    </div>
+                </div>
                 <p class="hint"><kbd>Space</kbd> to record · <kbd>Ctrl</kbd>+<kbd>Z</kbd> to undo</p>
             </div>
         </section>
