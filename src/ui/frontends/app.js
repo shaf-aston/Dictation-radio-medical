@@ -1,8 +1,6 @@
 const THEME_STORAGE_KEY = window.__THEME_STORAGE_KEY__;
 const BOOTSTRAP = window.__BOOTSTRAP__;
 const PATIENT_STORAGE_KEY = "radio-dictate-web-patient";
-let mediaRecorder;
-let audioChunks = [];
 let isRecording = false;
 let undoStack = [''];
 let undoIndex = 0;
@@ -16,6 +14,9 @@ let reportRequestInFlight = false;
 
 const dictateBtn = document.getElementById('dictateBtn');
 const micIcon = document.getElementById('micIcon');
+const cancelBtn = document.getElementById('cancelBtn');
+const recMeter = document.getElementById('recMeter');
+const recTimer = document.getElementById('recTimer');
 const editor = document.getElementById('editor');
 const newReportBtn = document.getElementById('newReportBtn');
 const saveTxtBtn = document.getElementById('saveTxtBtn');
@@ -304,6 +305,17 @@ function pushUndoState() {
     }
 }
 
+/* Say that the report changed, for the overlays that read it.
+ *
+ * Setting `editor.value` from script fires no `input` event, so anything
+ * listening for typing never sees a dictated report, a loaded template or an
+ * undo — which is exactly the text the findings strip exists to check. Every
+ * programmatic write calls this; the `input` listeners cover the typing. */
+function announceReportChanged() {
+    scheduleMarks();
+    scheduleFindings();
+}
+
 function setEditorValue(value, { moveCaretToEnd = true } = {}) {
     editor.value = value;
     if (moveCaretToEnd && typeof editor.setSelectionRange === 'function') {
@@ -311,6 +323,7 @@ function setEditorValue(value, { moveCaretToEnd = true } = {}) {
         editor.setSelectionRange(end, end);
     }
     pushUndoState();
+    announceReportChanged();
 }
 
 function insertTextAtCursor(text) {
@@ -322,6 +335,7 @@ function insertTextAtCursor(text) {
     const needsSpacer = before.length > 0 && !/[\s\n]$/.test(before) && !/^[\s\n]/.test(text);
     const insertion = `${needsSpacer ? ' ' : ''}${text}`;
     editor.value = before + insertion + after;
+    announceReportChanged();
     if (typeof editor.setSelectionRange === 'function') {
         const pos = before.length + insertion.length;
         editor.setSelectionRange(pos, pos);
@@ -654,6 +668,7 @@ async function loadSelectedTemplate() {
         }
 
         editor.value = result.content || '';
+        announceReportChanged();
         if (typeof editor.setSelectionRange === 'function') {
             const end = editor.value.length;
             editor.setSelectionRange(end, end);
@@ -688,6 +703,8 @@ newReportBtn.addEventListener('click', () => {
     editor.focus();
     resetPatientInfo();
     hideStatus();
+    announceReportChanged();
+    resetFindings();
 });
 
 // Clear with confirmation
@@ -696,6 +713,7 @@ clearBtn.addEventListener('click', () => {
     if (confirm('Are you sure you want to clear all text? This cannot be undone.')) {
         setEditorValue('');
         hideStatus();
+        resetFindings();
     }
 });
 
@@ -777,6 +795,7 @@ function undo() {
     if (undoIndex > 0) {
         undoIndex--;
         editor.value = undoStack[undoIndex];
+        announceReportChanged();
         editor.focus();
     }
 }
@@ -785,87 +804,296 @@ function redo() {
     if (undoIndex < undoStack.length - 1) {
         undoIndex++;
         editor.value = undoStack[undoIndex];
+        announceReportChanged();
         editor.focus();
     }
 }
 
-async function startRecording() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
+// ---------------------------------------------------------------------------
+// Live dictation.
+//
+// The microphone streams raw 16-bit PCM at 16 kHz straight to /ws/dictate, and
+// text comes back while you are still speaking. It is raw PCM rather than the
+// browser's own MediaRecorder output because a webm/opus blob cannot be decoded
+// a piece at a time — waiting for the container to close is exactly the pause
+// this replaces.
+//
+// Two kinds of text arrive. `committed` is decoded once, corrected, and final.
+// `preview` is a guess about the words still being spoken; it is shown dimmed
+// and never enters the undo history, because presenting a guess as settled text
+// is the one thing a report editor must not do.
+// ---------------------------------------------------------------------------
 
-        mediaRecorder.ondataavailable = event => {
-            if (event.data.size > 0) audioChunks.push(event.data);
-        };
+// From the server, so the capture rate and the decoder's rate are one fact.
+const LIVE_SAMPLE_RATE = BOOTSTRAP.live_sample_rate;
 
-        mediaRecorder.onstop = sendAudio;
+let liveSocket = null;
+let audioContext = null;
+let micStream = null;
+let micNode = null;
+let committedText = '';       // what the server has frozen this session
+let previewText = '';         // the provisional tail, dimmed on screen
+let baseText = '';            // whatever was in the editor before recording
+let recordStartedAt = 0;
+let timerHandle = null;
+let handedOverText = null;  // what Stop handed back, to detect edits since
 
-        audioChunks = [];
-        mediaRecorder.start();
-        isRecording = true;
-        dictateBtn.setAttribute('aria-pressed', 'true');
-        dictateBtn.classList.add('is-recording');
-        micIcon.className = 'fas fa-stop';
+// The worklet only forwards frames. Every decision stays on the main thread, so
+// UI work can never block the audio thread.
+const PCM_WORKLET = [
+    'class PcmTap extends AudioWorkletProcessor {',
+    '    process(inputs) {',
+    '        const ch = inputs[0] && inputs[0][0];',
+    '        if (ch) this.port.postMessage(ch.slice(0));',
+    '        return true;',
+    '    }',
+    '}',
+    'registerProcessor("pcm-tap", PcmTap);',
+].join('\n');
 
-        showStatus('Recording...', 'is-rec');
-    } catch (err) {
-        console.error('Microphone access denied:', err);
-        showError('Microphone access denied. Please allow microphone permissions in your browser settings and try again.');
+function floatToPcm16(frame) {
+    const out = new Int16Array(frame.length);
+    for (let i = 0; i < frame.length; i++) {
+        const clamped = Math.max(-1, Math.min(1, frame[i]));
+        out[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+    }
+    return out;
+}
+
+function peakLevel(frame) {
+    let peak = 0;
+    for (let i = 0; i < frame.length; i++) {
+        const v = Math.abs(frame[i]);
+        if (v > peak) peak = v;
+    }
+    return peak;
+}
+
+// -- what the radiologist sees ---------------------------------------------
+
+function renderLiveText() {
+    const gap = baseText && !baseText.endsWith('\n') ? ' ' : '';
+    const settled = baseText + (committedText ? gap + committedText : '');
+    editor.value = settled;
+    editor.scrollTop = editor.scrollHeight;
+    paintPreview(settled);
+}
+
+// The dimmed tail is painted by the existing marks underlay rather than a
+// second overlay mechanism, and nothing is inserted into the textarea, so an
+// export can never contain a provisional word.
+function paintPreview(settled) {
+    if (!editorMarks) return;
+    if (!previewText) { editorMarks.replaceChildren(); return; }
+    // The settled half is copied in transparently only to push the preview to
+    // the right place on the line; the textarea above paints those same
+    // characters for real.
+    const out = document.createDocumentFragment();
+    out.append(settled + (settled ? ' ' : ''));
+    const tail = document.createElement('span');
+    tail.className = 'preview';
+    tail.textContent = previewText;
+    out.append(tail);
+    editorMarks.replaceChildren(out);
+    syncMarksScroll();
+}
+
+function setRecordingUi(on) {
+    dictateBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    dictateBtn.classList.toggle('is-recording', on);
+    micIcon.className = on ? 'fas fa-stop' : 'fas fa-microphone';
+    dictateBtn.setAttribute('aria-label', on ? 'Stop recording' : 'Start recording');
+    recMeter.hidden = !on;
+    cancelBtn.hidden = !on;
+    if (!on) setLevel(0);
+}
+
+// The real peak of the last frame — a meter that only ever shows "something"
+// is a meter that cannot tell you the microphone is dead.
+function setLevel(peak) {
+    recMeter.style.setProperty('--level', Math.min(1, peak * 2.2).toFixed(3));
+}
+
+function startTimer() {
+    recordStartedAt = Date.now();
+    const tick = () => {
+        const secs = Math.floor((Date.now() - recordStartedAt) / 1000);
+        const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+        const ss = String(secs % 60).padStart(2, '0');
+        recTimer.textContent = `${mm}:${ss}`;
+    };
+    tick();
+    timerHandle = setInterval(tick, 500);
+}
+
+function stopTimer() {
+    if (timerHandle) clearInterval(timerHandle);
+    timerHandle = null;
+}
+
+// -- the socket -------------------------------------------------------------
+
+function openSocket() {
+    const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+    const socket = new WebSocket(`${scheme}://${location.host}/ws/dictate`);
+    socket.binaryType = 'arraybuffer';
+
+    socket.onmessage = (event) => {
+        const msg = safeParseJson(event.data, null);
+        if (!msg) return;
+        if (msg.type === 'partial') {
+            committedText = msg.committed || '';
+            previewText = msg.preview || '';
+            renderLiveText();
+            showStatus(
+                msg.state === 'catching_up'
+                    ? 'Catching up with you…'
+                    : 'Listening — text appears as you speak',
+                'is-rec',
+            );
+        } else if (msg.type === 'stopped') {
+            // The report is yours now. The accurate re-decode is still running,
+            // but you can read and edit while it does.
+            previewText = '';
+            committedText = msg.text || '';
+            renderLiveText();
+            handedOverText = editor.value;
+            finishSession(null);
+            showStatus('Ready to edit · improving accuracy in the background', 'is-busy');
+        } else if (msg.type === 'final') {
+            const improved = msg.text || '';
+            if (editor.value !== handedOverText) {
+                // You edited while it was working. Your words win — silently
+                // replacing them with the machine's would be the worst possible
+                // outcome for a clinical report.
+                showStatus('Kept your edits — the improved version was discarded', 'is-ok', 4000);
+            } else {
+                committedText = improved;
+                renderLiveText();
+                pushUndoState();
+                announceReportChanged();
+                showStatus('Accuracy pass complete', 'is-ok', 2500);
+            }
+            handedOverText = null;
+        } else if (msg.type === 'error') {
+            showError(msg.message || 'Dictation failed.');
+            finishSession(null);
+        }
+    };
+
+    socket.onerror = () => showError('Lost the connection to the dictation service.');
+    socket.onclose = () => { if (isRecording) teardownMic(); };
+    return socket;
+}
+
+// One undo entry per dictation and one scan of the finished report — not one of
+// each per partial, which would both blow the 50-entry history in seconds and
+// spend the whole machine re-scanning half-sentences.
+function finishSession(okMessage) {
+    stopTimer();
+    setRecordingUi(false);
+    previewText = '';
+    paintPreview('');
+    pushUndoState();
+    announceReportChanged();
+    syncReportButtons();
+    if (okMessage) showStatus(okMessage, 'is-ok', 2500);
+}
+
+async function teardownMic() {
+    isRecording = false;
+    if (micNode) { micNode.disconnect(); micNode = null; }
+    if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+    if (audioContext) {
+        await audioContext.close().catch(() => {});
+        audioContext = null;
     }
 }
 
-function stopRecording() {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop();
-        mediaRecorder.stream.getTracks().forEach(track => track.stop());
-        isRecording = false;
-        dictateBtn.setAttribute('aria-pressed', 'false');
-        dictateBtn.classList.remove('is-recording');
-        micIcon.className = 'fas fa-microphone';
+// -- start / stop / cancel --------------------------------------------------
 
-        showStatus('Transcribing...', 'is-busy');
+async function startRecording() {
+    try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+        });
+    } catch (err) {
+        console.error('Microphone access denied:', err);
+        showError('Microphone access denied. Allow microphone permissions in your browser settings, then try again.');
+        return;
     }
+
+    try {
+        // Asking the context for 16 kHz makes the browser resample for us, so
+        // there is no hand-written downsampler to get wrong.
+        audioContext = new AudioContext({ sampleRate: LIVE_SAMPLE_RATE });
+        const workletUrl = URL.createObjectURL(new Blob([PCM_WORKLET], { type: 'application/javascript' }));
+        await audioContext.audioWorklet.addModule(workletUrl);
+        URL.revokeObjectURL(workletUrl);
+
+        liveSocket = openSocket();
+        await new Promise((resolve, reject) => {
+            liveSocket.addEventListener('open', resolve, { once: true });
+            liveSocket.addEventListener('error', reject, { once: true });
+        });
+
+        micNode = new AudioWorkletNode(audioContext, 'pcm-tap');
+        micNode.port.onmessage = (event) => {
+            const frame = event.data;
+            setLevel(peakLevel(frame));
+            if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
+                liveSocket.send(floatToPcm16(frame).buffer);
+            }
+        };
+        audioContext.createMediaStreamSource(micStream).connect(micNode);
+    } catch (err) {
+        console.error('Could not start live dictation:', err);
+        await teardownMic();
+        showError('Could not start dictation: ' + err.message);
+        return;
+    }
+
+    baseText = editor.value.trim();
+    committedText = '';
+    previewText = '';
+    isRecording = true;
+    setRecordingUi(true);
+    startTimer();
+    showStatus('Listening — text appears as you speak', 'is-rec');
+}
+
+async function stopRecording() {
+    if (!isRecording) return;
+    await teardownMic();
+    setRecordingUi(false);
+    stopTimer();
+    showStatus('Improving the transcript…', 'is-busy');
+    if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
+        liveSocket.send(JSON.stringify({ command: 'stop' }));
+    } else {
+        finishSession(null);
+    }
+}
+
+// Cancel means cancel: the report goes back to exactly what it was.
+async function cancelRecording() {
+    if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
+        liveSocket.send(JSON.stringify({ command: 'cancel' }));
+    }
+    await teardownMic();
+    committedText = '';
+    previewText = '';
+    editor.value = baseText;
+    paintPreview('');
+    stopTimer();
+    setRecordingUi(false);
+    hideStatus();
 }
 
 dictateBtn.addEventListener('click', () => {
-    if (isRecording) {
-        stopRecording();
-    } else {
-        startRecording();
-    }
+    if (isRecording) stopRecording(); else startRecording();
 });
-
-async function sendAudio() {
-    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-    const formData = new FormData();
-    formData.append("file", audioBlob, "dictation.webm");
-
-    try {
-        const response = await fetch('/transcribe', {
-            method: 'POST',
-            body: formData
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Transcription failed');
-        }
-
-        const result = await response.json();
-
-        if (result.text) {
-            const nextValue = editor.value.trim() !== '' ? `${editor.value} ${result.text}` : result.text;
-            setEditorValue(nextValue);
-            editor.scrollTop = editor.scrollHeight;
-            showStatus('Transcription complete', 'is-ok', 2000);
-        } else {
-            hideStatus();
-        }
-    } catch (err) {
-        console.error('Transcription error:', err);
-        showError('Transcription failed: ' + err.message + '. Try again.');
-    }
-}
+cancelBtn.addEventListener('click', cancelRecording);
 
 dictateBtn.setAttribute('aria-pressed', 'false');
 dictateBtn.setAttribute('role', 'button');
@@ -1173,6 +1401,111 @@ function initTermMarks() {
     scheduleMarks();
 }
 
+// ---------------------------------------------------------------------------
+// Critical findings: a tick in the strip beside the report for each one, and a
+// count that is on show whether or not there is anything to show.
+//
+// Every rule lives on the server, in the same OutstandingFindings object the
+// desktop window reads (features/report_release.py) — what counts as a finding,
+// whether a negation clears it, and whether an acknowledgement still holds. The
+// browser only draws the answer, which is why the two front-ends cannot come to
+// different conclusions about the same report.
+// ---------------------------------------------------------------------------
+
+const FINDINGS_DELAY_MS = 400;   // matches the term marks: one scan per settle
+
+const findingGutter = document.getElementById('findingGutter');
+const findingsPill = document.getElementById('findingsPill');
+
+let findingsTimer = null;
+let findingsRequest = 0;
+
+function paintFindings(data) {
+    const findings = data.findings || [];
+    findingGutter.replaceChildren();
+
+    // Placed by where the finding sits in the document rather than by where the
+    // text is scrolled to, so a finding further down the report still has a
+    // tick — and reaching one you cannot already see is the whole interaction.
+    const last = Math.max(1, editor.value.length);
+    findings.forEach((f) => {
+        const mark = document.createElement('button');
+        mark.type = 'button';
+        mark.className = 'finding-mark';
+        mark.dataset.outstanding = String(Boolean(f.outstanding));
+        mark.style.top = `${(Math.min(f.start, last) / last) * 100}%`;
+        mark.title = `${f.level === 1 ? 'Critical' : 'Urgent'}: ${f.term}`;
+        mark.setAttribute('aria-label', `Jump to ${f.term}`);
+        mark.addEventListener('click', () => {
+            // Selecting scrolls the textarea to it; focus last so the caret lands.
+            editor.focus();
+            editor.setSelectionRange(f.start, f.end);
+        });
+        findingGutter.append(mark);
+    });
+
+    findingsPill.dataset.findings = data.state || 'clear';
+    const count = data.count || 0;
+    if (!count) {
+        // "No findings", never a red zero: a warning shown on every clear
+        // report is one that stops being read on the report that has one.
+        findingsPill.textContent = 'No findings';
+        return;
+    }
+    const outstanding = findings.filter((f) => f.outstanding).length;
+    const shown = outstanding || count;
+    const noun = shown === 1 ? 'finding' : 'findings';
+    findingsPill.textContent = outstanding
+        ? `${shown} ${noun} to communicate`
+        : `${shown} ${noun} acknowledged`;
+}
+
+async function rescanFindings() {
+    // Recording rewrites the report every second, so offsets taken now would be
+    // stale before they were drawn. Stand down — and leave the last answer on
+    // screen rather than replacing it with "No findings", which would claim a
+    // report is clear at the exact moment nothing is re-checking it.
+    if (isRecording) return;
+    findingsRequest += 1;
+    const request = findingsRequest;
+    try {
+        const response = await fetch('/api/report/findings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: editor.value }),
+        });
+        if (request !== findingsRequest) return;   // a newer edit won
+        if (!response.ok) return;
+        paintFindings(await response.json());
+    } catch (err) {
+        // A strip that cannot answer must never interrupt the report, and must
+        // never quietly claim the report is clear either — leave what is shown.
+        console.warn('Findings scan failed:', err);
+    }
+}
+
+function scheduleFindings() {
+    if (findingsTimer) clearTimeout(findingsTimer);
+    findingsTimer = setTimeout(rescanFindings, FINDINGS_DELAY_MS);
+}
+
+async function resetFindings() {
+    // A new report: the previous patient's acknowledgements must not answer for
+    // this one's identical finding.
+    findingsRequest += 1;
+    try {
+        const response = await fetch('/api/report/findings/reset', { method: 'POST' });
+        if (response.ok) paintFindings(await response.json());
+    } catch (err) {
+        console.warn('Could not reset findings:', err);
+    }
+}
+
+function initFindingMarks() {
+    editor.addEventListener('input', scheduleFindings);
+    scheduleFindings();
+}
+
 function renderTermTier(host, items) {
     host.innerHTML = '';
     items.forEach((item) => {
@@ -1293,3 +1626,4 @@ initOverflowMenu();
 initDisclaimer();
 initTermPop();
 initTermMarks();
+initFindingMarks();

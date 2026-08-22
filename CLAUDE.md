@@ -48,7 +48,12 @@ src/
 │   │                       name→engine mapping) · engines/faster_whisper_engine.py
 │   ├── stream/             chunk-once streaming — vad.py (Silero VAD, bundled
 │   │                       with faster-whisper, no new dep) · segmenter.py
-│   │                       (pure VAD-marks→chunk-cuts policy) · ledger.py
+│   │                       (pure VAD-marks→chunk-cuts policy) · live_session.py
+│   │                       (the Qt-free live loop: a push-fed audio buffer
+│   │                        instead of the desktop's growing WAV, so the web
+│   │                        app streams over a WebSocket using these same
+│   │                        chunk rules. Owns the shared build_context_prompt /
+│   │                        mean_confidence / should_skip_preview) · ledger.py
 │   │                       (freezes each closed chunk's decode permanently,
 │   │                       the "decode once" guarantee) · tail.py
 │   │                       (LocalAgreement-2 stable preview of the open tail)
@@ -68,13 +73,24 @@ src/
 │   │                       marks saying which word to highlight. Both are view
 │   │                       overlays (ExtraSelection / an underlay div) — never
 │   │                       text, so no mark can reach an exported report
+│   ├── finding_marks.py  the critical-findings gutter: a strip beside the
+│   │                       editor, one mark per finding, click to jump to it.
+│   │                       Never draws on the radiologist's characters — a
+│   │                       finding is a statement about the report, not about
+│   │                       a word (contrast term_marks.py, which underlines).
+│   │                       Marks sit by position in the DOCUMENT, not by where
+│   │                       the text is scrolled, so a finding further down the
+│   │                       report still has a mark to click. The web app draws
+│   │                       the same strip and count from the same
+│   │                       features/report_release.OutstandingFindings — the
+│   │                       rules live there, both front-ends only draw
 │   ├── tokens.json       the ONLY place a UI colour is written down
 │   ├── theme.py          the only reader of tokens.json — renders the Qt sheet
 │   │                       and the web page's CSS custom properties, so the two
 │   │                       front-ends cannot drift apart
 │   ├── styles.py · styles/app.qss · frontends/   desktop + web assets
 │   │                       (neither stylesheet contains a hex value;
-│   │                        scripts/verify_theme.py fails the build if one does)
+│   │                        keep it that way — colour has one home)
 │   └── __main__.py       enables `python -m src.ui`
 ├── medical/     critical_findings.py (NegEx) · macros.py ·
 │   ├── medical_dict.py   the two wordlists, plus is_english_word — the single
@@ -133,10 +149,20 @@ Other optional, off-by-default add-ons:
 ## Dictation data-flow (always local)
 
 ```
-microphone → audio.py → worker.py (QThread, chunk-once)
-           → asr/ (AsrEngine port → transcriber.py/Whisper) → postprocess/ (10 stages)
-           → UI (views.py / web_app.py) → report_manager.py (.docx / .txt export)
+desktop:  microphone → audio.py → worker.py (QThread, chunk-once, growing WAV)
+web:      microphone → AudioWorklet → /ws/dictate (16-bit PCM @16k)
+                     → stream/live_session.py (chunk-once, in-memory buffer)
+both:     → asr/ (AsrEngine port → transcriber.py/Whisper) → postprocess/ (10 stages)
+          → UI (views.py / web_app.py) → report_manager.py (.docx / .txt export)
 ```
+
+The web path uses two models: `web_live_model_size` (fast) decodes what appears
+while you speak, and `model_size` re-decodes the low-confidence chunks after
+Stop. Stop hands the live text back immediately and the accuracy pass upgrades
+it in the background, so pressing Stop never makes the radiologist wait.
+
+Front-end files are cached in memory on first read (`web_app._frontend_cache`),
+so an edit to app.js/app.css/app.html needs a server restart to show up.
 
 ## Live-speed design (why dictation keeps up)
 
@@ -332,8 +358,6 @@ report is a real change to the radiologist's text.
 ```bash
 python -m src.ui            # desktop GUI
 python -m src.ui.web_app    # web app on 127.0.0.1:8005
-python scripts/verify_setup.py
-python -m pytest tests/ -q
 ruff check src tests
 npx pyright src              # type check (optional-dep import warnings expected)
 

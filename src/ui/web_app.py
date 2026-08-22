@@ -1,3 +1,4 @@
+import contextlib
 import io
 import json
 
@@ -10,8 +11,9 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal, Optional
 
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.core import perf
@@ -23,6 +25,9 @@ from src.dictation.postprocess.pipeline import (
     postprocess_transcript,
 )
 from src.dictation.asr import AsrEngine, TranscribeContext, create_engine
+from src.dictation.stream.live_session import LiveSession
+from src.dictation.stream.rules import build_context_prompt
+from src.dictation.stream.segmenter import ChunkPolicy
 from src.dictation.transcriber import SUPPORTED_MODELS, resolve_model
 from src.features.accent_corrections import ACCENT_LABELS
 from src.features.clinical_disclaimer import (
@@ -38,7 +43,11 @@ from src.features.file_manager import (
     templates_dir,
 )
 from src.features.report_manager import DOCX_AVAILABLE, export_to_word_bytes, format_plain_text_report
-from src.features.report_release import check_release, record_release, unfilled_fields
+from src.features.report_release import (
+    OutstandingFindings,
+    record_release,
+    unfilled_fields,
+)
 from src.features import run_log
 from src.medical import macros, term_lookup
 from src.medical.macros import reload_macros
@@ -46,9 +55,13 @@ from src.ui.theme import css_variables
 
 logger = logging.getLogger(__name__)
 
-asr_engine: Optional[AsrEngine] = None
-asr_engine_model_size: Optional[str] = None
+#: What the browser records at and what Whisper expects. One number,
+#: handed to the page in the bootstrap payload so the two cannot drift.
+LIVE_SAMPLE_RATE = 16000
+
 transcriber_lock = Lock()
+# One engine per model name — the live model and the final model coexist.
+asr_engines: dict = {}
 
 THEME_STORAGE_KEY = "radio-dictate-theme"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -232,6 +245,9 @@ def _bootstrap_payload() -> dict:
     if selected_template not in templates:
         selected_template = templates[0] if templates else ""
     return {
+        # The browser must capture at exactly the rate the decoder expects, so
+        # the page is told the number rather than hardcoding its own copy of it.
+        "live_sample_rate": LIVE_SAMPLE_RATE,
         "templates": templates,
         "selected_template": selected_template,
         "preferences": _current_preferences(),
@@ -313,16 +329,20 @@ def _render_html(theme: str) -> str:
     )
 
 
-def _get_engine() -> AsrEngine:
-    """Return an ASR engine configured for the current saved model setting."""
-    global asr_engine, asr_engine_model_size
-    model_size = resolve_model(_settings().get("model_size"))
+def _get_engine(model_size: Optional[str] = None) -> AsrEngine:
+    """Return an ASR engine for *model_size* (default: the saved setting).
 
+    Engines are cached per model name, so the live dictation loop's fast model
+    and the accurate one that re-decodes after Stop are each built once and
+    then reused for the life of the process. Whisper's own weights cache holds
+    two (``transcriber._MODEL_CACHE_MAX``), which is what makes holding exactly
+    this pair free.
+    """
+    name = resolve_model(model_size or _settings().get("model_size"))
     with transcriber_lock:
-        if asr_engine is None or asr_engine_model_size != model_size:
-            asr_engine = create_engine(model_size=model_size)
-            asr_engine_model_size = model_size
-        return asr_engine
+        if name not in asr_engines:
+            asr_engines[name] = create_engine(model_size=name)
+        return asr_engines[name]
 
 
 def _download_filename(patient: dict, ext: str) -> str:
@@ -335,10 +355,8 @@ def _download_filename(patient: dict, ext: str) -> str:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Prepare the app state on startup."""
-    global asr_engine, asr_engine_model_size
     logger.info("Preparing web app state...")
-    asr_engine = None
-    asr_engine_model_size = None
+    asr_engines.clear()
     # Same startup housekeeping as the desktop GUI (temp files, old
     # autosaves, legacy cache locations) — a web-only user must not miss it.
     startup_cleanup(_settings().get("autosave_retention_days", 30))
@@ -456,12 +474,9 @@ async def set_preferences(payload: PreferencesUpdate):
         "last_macro_region": macro_region,
     })
 
-    # Drop any cached engine so the next request picks up the new model.
-    global asr_engine, asr_engine_model_size
+    # Drop the cached engine so the next request builds the newly chosen model.
     with transcriber_lock:
-        if asr_engine_model_size != model_size:
-            asr_engine = None
-            asr_engine_model_size = None
+        asr_engines.pop(resolve_model(model_size), None)
 
     return {
         "preferences": _current_preferences(),
@@ -507,6 +522,54 @@ async def load_template(template_name: str):
     return {"name": path.name, "content": content}
 
 
+#: The report currently open in the browser, and which of its findings have
+#: been answered for. One instance, because this server is a loopback,
+#: single-radiologist workstation with one report open at a time — the same
+#: shape as the one desktop window. It is the *same* class the desktop reads
+#: (``features/report_release.OutstandingFindings``), so the count, the marks
+#: and the meaning of "acknowledged" cannot drift between the two front-ends.
+#: Reset by ``/api/report/findings/reset`` when a new report starts.
+_findings = OutstandingFindings()
+
+
+@app.post("/api/report/findings")
+async def report_findings_endpoint(payload: TextRequest):
+    """Re-scan the open report and return what the gutter strip should show.
+
+    Positions come back with the findings so the browser can place a mark
+    without knowing any of the scanning rules — exactly what the desktop gutter
+    reads off the same object.
+    """
+    _findings.update(payload.text)
+    outstanding = {id(f) for f in _findings.outstanding}
+    return {
+        "count": _findings.count,
+        "state": _findings.state,
+        "findings": [
+            {
+                "term": f.term,
+                "level": f.level,
+                "start": f.start,
+                "end": f.end,
+                "outstanding": id(f) in outstanding,
+            }
+            for f in _findings.check.findings
+        ],
+    }
+
+
+@app.post("/api/report/findings/reset")
+async def reset_findings_endpoint():
+    """Forget this report's findings and its acknowledgements — a new report.
+
+    Acknowledgement answers "has this been phoned through for *this* patient",
+    so carrying it into the next report would show the next patient's identical
+    finding as already communicated.
+    """
+    _findings.reset()
+    return {"count": 0, "state": "clear", "findings": []}
+
+
 def _confirm_release(payload: ReportRequest) -> None:
     """Refuse to emit a report the radiologist has not answered for yet.
 
@@ -530,7 +593,13 @@ def _confirm_release(payload: ReportRequest) -> None:
             detail={"reason": "unfilled_fields", "fields": list(fields)},
         )
 
-    check = check_release(payload.text)
+    # Scanned through the shared state object, so this answer settles the same
+    # count the strip in the browser is showing — and a finding typed in after
+    # an acknowledgement puts it back to outstanding, rather than riding out on
+    # an answer given before it existed.
+    _findings.update(payload.text)
+    check = _findings.check
+    outstanding = _findings.outstanding
     if not check.needs_acknowledgement:
         return
     if payload.acknowledged is None:
@@ -542,9 +611,15 @@ def _confirm_release(payload: ReportRequest) -> None:
                 "worst_level": check.worst_level,
             },
         )
+    # Only what was still outstanding is audited: an audit entry claims a phone
+    # call happened, so exporting the same report twice must not record two.
     record_release(
-        check, _model_to_dict(payload.patient).get("id", ""), payload.acknowledged
+        outstanding,
+        _model_to_dict(payload.patient).get("id", ""),
+        payload.acknowledged,
     )
+    if payload.acknowledged:
+        _findings.acknowledge(check)
 
 
 @app.post("/api/report/check")
@@ -607,20 +682,23 @@ async def term_lookup_endpoint(q: str = ""):
 
 
 def _record_web_run(
-    settings, prefs: dict, text: str, elapsed: float,
-    audio_sec: float, stages: dict,
+    settings, prefs: dict, text: str, *, elapsed: float, audio_sec: float,
+    stages: Optional[dict] = None, finalise_sec: float = 0.0, chunk_count: int = 0,
 ) -> None:
     """Write one run record for a browser dictation.
 
-    The browser path is one-shot — upload, decode, return — so the whole
-    request *is* the run: there is no separate "catching up after Stop" to
-    split out, and ``finalise_sec`` stays zero rather than being invented.
+    Both browser paths land here. The one-shot upload has no separate "catching
+    up after Stop", so it leaves *finalise_sec* at zero rather than inventing
+    one; the live socket fills it in, because for streaming that number — how
+    long after the last word the final text arrived — is the whole point.
     """
     record = run_log.start("web", model=str(prefs.get("model_size", "")))
     record.audio_sec = audio_sec
     record.duration_sec = round(elapsed, 3)
+    record.finalise_sec = round(finalise_sec, 3)
+    record.chunk_count = chunk_count
     record.word_count = len(text.split())
-    record.stages = {name: {"total_ms": secs * 1000} for name, secs in stages.items()}
+    record.stages = {n: {"total_ms": secs * 1000} for n, secs in (stages or {}).items()}
     if audio_sec > 0:
         record.decode_ratio = round(elapsed / audio_sec, 3)
     record.text = text if bool(settings.get("run_log_store_text", True)) else ""
@@ -745,7 +823,8 @@ async def transcribe_audio(file: UploadFile = File(...)):
         text = await anyio.to_thread.run_sync(_transcribe)
         elapsed = time.time() - t_start
         perf.record("web.request", elapsed)
-        _record_web_run(settings, prefs, text, elapsed, run_audio_sec, run_stages)
+        _record_web_run(settings, prefs, text, elapsed=elapsed,
+                        audio_sec=run_audio_sec, stages=run_stages)
         return {"text": text}
     except Exception as e:
         logger.error("Transcription failed: %s", e, exc_info=True)
@@ -753,6 +832,128 @@ async def transcribe_audio(file: UploadFile = File(...)):
             status_code=500, detail="Failed to transcribe audio"
         ) from e
 
+
+# ---------------------------------------------------------------------------
+# Live dictation over a WebSocket.
+#
+# The browser sends raw 16-bit PCM at 16 kHz — no container, no codec. That is
+# the whole reason this can stream: webm/opus blobs from MediaRecorder are not
+# independently decodable, so a live loop would have to re-decode the container
+# from the start every cycle. Raw frames just append to a buffer.
+#
+# Down the wire: {"type": "partial"} while speaking, {"type": "final"} after
+# Stop. Committed and preview text stay separate so the page can show a guess
+# as a guess.
+# ---------------------------------------------------------------------------
+
+
+
+def _live_session(settings, prefs: dict) -> LiveSession:
+    """Build a session from saved settings — the only place the knobs are read."""
+    live_model = resolve_model(settings.get("web_live_model_size", get_default("web_live_model_size")))
+    final_model = resolve_model(prefs.get("model_size") or settings.get("model_size"))
+    return LiveSession(
+        _get_engine(live_model),
+        _get_engine(final_model),
+        language=prefs["language"],
+        accent=prefs["accent"],
+        cleanup_level=prefs["cleanup_level"],
+        policy=ChunkPolicy(
+            min_sec=float(settings.get("chunk_min_sec")),
+            soft_max_sec=float(settings.get("chunk_soft_max_sec")),
+            force_cut_sec=float(settings.get("chunk_force_cut_sec")),
+        ),
+        pause_threshold=float(settings.get("pause_threshold", 2.5)),
+        live_beam_size=int(settings.get("live_beam_size")),
+        final_beam_size=int(settings.get("final_beam_size")),
+        silence_rms_floor=float(settings.get("silence_rms_floor")),
+        preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
+        polish_confidence_ceiling=float(settings.get("polish_confidence_ceiling")),
+        initial_prompt=build_context_prompt(),
+        sr=LIVE_SAMPLE_RATE,
+    )
+
+
+@app.websocket("/ws/dictate")
+async def dictate_socket(ws: WebSocket) -> None:
+    await ws.accept()
+    settings = _settings()
+    prefs = _current_preferences()
+    session = _live_session(settings, prefs)
+    cycle_sec = float(settings.get("live_cycle_sec", get_default("live_cycle_sec")))
+    max_sec = int(settings.get("max_upload_mb", get_default("max_upload_mb"))) * 1024 * 1024 / (2 * LIVE_SAMPLE_RATE)
+
+    started = time.time()
+    last_cycle = 0.0
+
+    async def send(payload: dict) -> None:
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            pass  # the page navigated away mid-send; the finally block cleans up
+
+    try:
+        while True:
+            message = await ws.receive()
+
+            if message.get("type") == "websocket.disconnect":
+                return
+
+            if (raw := message.get("bytes")) is not None:
+                # Reject an over-long recording at the same ceiling the upload
+                # path uses, rather than letting one connection grow unbounded.
+                if session.audio_sec > max_sec:
+                    await send({"type": "error", "message": "Recording too long. Please stop and start a new one."})
+                    return
+                session.feed(np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0)
+
+                if time.time() - last_cycle >= cycle_sec:
+                    update = await anyio.to_thread.run_sync(session.cycle)
+                    last_cycle = time.time()
+                    if update is not None:
+                        await send({
+                            "type": "partial",
+                            "committed": update.committed,
+                            "preview": update.preview,
+                            "state": update.state,
+                            "audioSec": round(update.audio_sec, 1),
+                        })
+                continue
+
+            if (text := message.get("text")) is None:
+                continue
+
+            try:
+                command = json.loads(text).get("command")
+            except (ValueError, AttributeError):
+                continue
+            if command == "stop":
+                # Hand back what is already decoded first. The radiologist has
+                # been reading this text as they spoke it, so it is theirs to
+                # edit now — the accurate re-decode below is an upgrade, not a
+                # gate, and blocking on it would put the old wait straight back.
+                await send({"type": "stopped", "text": session.committed_text()})
+                audio_ended = time.time()
+                text_out = await anyio.to_thread.run_sync(session.finalize)
+                await send({"type": "final", "text": text_out})
+                _record_web_run(
+                    settings, prefs, text_out,
+                    elapsed=time.time() - started,
+                    audio_sec=session.audio_sec,
+                    finalise_sec=time.time() - audio_ended,
+                    chunk_count=session.chunks_decoded,
+                )
+                return
+            if command == "cancel":
+                return
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        logger.error("Live dictation failed: %s", exc, exc_info=True)
+        await send({"type": "error", "message": "Dictation failed. Your audio is still in the browser — press Retry."})
+    finally:
+        with contextlib.suppress(Exception):
+            await ws.close()
 
 if __name__ == "__main__":
     import uvicorn

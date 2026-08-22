@@ -70,11 +70,14 @@ class TermMarks(QObject):
         self._timer.setInterval(SCAN_DELAY_MS)
         self._timer.timeout.connect(self._rescan)
 
-        editor.textChanged.connect(self._schedule)
+        # Driven by MainWindow._on_text_changed, NOT by editor.textChanged
+        # directly: dictation writes block the editor's signals and call that
+        # method by hand, so a listener on textChanged never sees dictated text.
 
     # -- what triggers a rescan ---------------------------------------------
 
-    def _schedule(self) -> None:
+    def schedule_rescan(self) -> None:
+        """Queue a re-scan once typing settles. Safe to call on every change."""
         self._timer.start()
 
     def set_theme(self, theme: str) -> None:

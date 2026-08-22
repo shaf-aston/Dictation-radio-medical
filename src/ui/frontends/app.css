@@ -13,6 +13,8 @@
 /* Self-hosted icons (offline-safe: no external CDN). Each .fa-* class masks
    an inline SVG so currentColor still applies and the existing markup +
    JS class-swaps keep working unchanged. */
+[hidden] { display: none !important; }
+
 .fas { display: inline-block; width: 1em; height: 1em; vertical-align: -0.125em;
     background-color: currentColor;
     -webkit-mask: var(--fa) no-repeat center / contain;
@@ -95,6 +97,11 @@ body {
     height: 100%;
     display: grid;
     grid-template-rows: var(--bar-h) minmax(0, 1fr);
+    /* The column needs the same minmax(0,…) the rows already have. An implicit
+       `auto` column is sized to its items' MAX-content, so one long status
+       message widened the whole page and made a phone scroll sideways instead
+       of the message being truncated. */
+    grid-template-columns: minmax(0, 1fr);
 }
 
 /* --------------------------------------------------------------------------
@@ -137,7 +144,15 @@ body {
     color: var(--text-dim);
     min-width: 0;
 }
-.status span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* min-width:0 is what makes the ellipsis actually work. Without it this span's
+   automatic minimum size is the whole un-wrapped message, so it refuses to
+   shrink, the pill cannot shrink either, and a long status widens the entire
+   page instead of being truncated — 390px of phone became 501px of sideways
+   scrolling. */
+.status span:last-child {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0;
+}
 
 .dot {
     width: 7px; height: 7px; border-radius: 50%;
@@ -211,7 +226,6 @@ body {
     border-radius: var(--r);
     box-shadow: 0 10px 30px rgb(0 0 0 / .35);
 }
-.menu[hidden] { display: none; }
 
 .menu button {
     display: flex; align-items: center; gap: .6rem;
@@ -252,6 +266,10 @@ body {
    The wrapper carries the surface so the textarea itself can be transparent —
    that is what lets the marks underlay show through from behind it. */
 .editor-wrap {
+    /* One width for the findings strip, used by the strip and by the marks
+       underlay that has to start where the strip ends. Two numbers here would
+       drift and slide every underline off its word. */
+    --gutter-w: 14px;
     position: relative;
     display: flex;
     flex: 1;
@@ -292,7 +310,7 @@ body {
    marks under the real words. It never receives the pointer. */
 .editor-marks {
     position: absolute;
-    inset: 0;
+    inset: 0 0 0 var(--gutter-w);
     z-index: 0;
     overflow: hidden;
     color: transparent;
@@ -303,6 +321,58 @@ body {
     background: none;
     color: transparent;
     border-bottom: 2px dotted var(--glow);
+}
+
+/* --------------------------------------------------------------------------
+   Critical findings: a strip of ticks beside the report, and a count that is
+   always on show. Nothing here touches the radiologist's characters.
+   -------------------------------------------------------------------------- */
+
+.finding-gutter {
+    position: relative;
+    flex: none;
+    width: var(--gutter-w);
+    z-index: 2;                       /* above the marks underlay, below nothing */
+}
+
+/* Placed by position in the *document*, not by where the text happens to be
+   scrolled — so a finding three pages down still has a tick to click. Only
+   `top` is set from script; the colour belongs to the theme. */
+.finding-mark {
+    position: absolute;
+    left: 50%;
+    width: 4px;
+    height: 14px;
+    margin: -7px 0 0 -2px;
+    border-radius: 2px;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    background: var(--text-dim);      /* answered for */
+}
+.finding-mark[data-outstanding="true"] { background: var(--rec); }
+.finding-mark:focus-visible { outline: 2px solid var(--glow); outline-offset: 2px; }
+
+.findings-pill {
+    margin-left: .2rem;
+    padding: .2rem .6rem;
+    border-radius: 999px;
+    font-size: .8rem;
+    white-space: nowrap;
+    flex: none;
+    background: color-mix(in srgb, var(--text-dim) 12%, transparent);
+    color: var(--text-dim);
+}
+/* Red only while something is genuinely waiting on a phone call. A clear
+   report and an answered one stay quiet — a badge that shouts every time
+   stops being read. */
+.findings-pill[data-findings="outstanding"] {
+    background: color-mix(in srgb, var(--rec) 18%, transparent);
+    color: var(--rec);
+}
+.findings-pill[data-findings="acknowledged"] {
+    background: color-mix(in srgb, var(--ok) 16%, transparent);
+    color: var(--ok);
 }
 
 /* "3 words to check — highlight one to see alternatives". Assistive, so it is
@@ -337,6 +407,34 @@ body {
     70%  { box-shadow: 0 0 0 14px color-mix(in srgb, var(--rec) 0%, transparent); }
     100% { box-shadow: 0 0 0 0    color-mix(in srgb, var(--rec) 0%, transparent); }
 }
+
+/* The recording row: discard on one side, elapsed time and level on the other,
+   both flanking the button so the state is read where the click happened. The
+   slots hold their width whether or not they are filled, so starting a
+   recording does not shove the microphone button sideways. */
+.rec-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: .9rem; }
+.rec-row > #cancelBtn { justify-self: end; }
+.rec-row > .rec-meter { justify-self: start; }
+
+.rec-meter { display: flex; align-items: center; gap: .5rem; }
+.rec-timer { font: 600 .8rem var(--mono); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+/* --level is the last frame's true peak, written by app.js. */
+.rec-level {
+    width: 3rem; height: .3rem; border-radius: 999px;
+    background: color-mix(in srgb, var(--edge) 80%, transparent);
+    overflow: hidden;
+}
+.rec-level i {
+    display: block; height: 100%; width: calc(var(--level, 0) * 100%);
+    background: var(--rec); border-radius: 999px;
+    transition: width .08s linear;
+}
+
+/* The provisional tail: still being decoded, so it is dimmed rather than shown
+   as settled text. It lives in the marks underlay, never in the textarea, so it
+   cannot reach an export. */
+.editor-marks .preview { color: var(--text-dim); opacity: .72; }
 
 .hint { margin: 0; font-size: .76rem; color: var(--text-dim); }
 
@@ -477,7 +575,6 @@ select:disabled, input:disabled { opacity: .5; }
     border-radius: var(--r);
     box-shadow: 0 10px 30px rgb(0 0 0 / .35);
 }
-.termpop[hidden] { display: none; }
 
 .tp-head {
     margin: 0 0 .35rem;
@@ -533,7 +630,6 @@ select:disabled, input:disabled { opacity: .5; }
     background: color-mix(in srgb, var(--room) 82%, transparent);
     backdrop-filter: blur(2px);
 }
-.scrim[hidden] { display: none; }
 
 .modal {
     width: min(34rem, 100%);

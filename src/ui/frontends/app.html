@@ -23,6 +23,11 @@
             <span id="statusText">Ready</span>
         </div>
 
+        <!-- Always visible, including when the report is clear: a warning that
+             only ever appears is one the radiologist cannot tell apart from a
+             warning that failed to appear. -->
+        <span id="findingsPill" class="findings-pill" data-findings="clear"></span>
+
         <div class="bar-actions">
             <button id="copyBtn" class="btn btn-primary" type="button" title="Copy the report to the clipboard">
                 <i id="copyIcon" class="fas fa-copy" aria-hidden="true"></i>
@@ -73,6 +78,13 @@
                  suspect words underlined. Nothing is inserted into what the
                  radiologist typed, so every export is byte-for-byte unmarked. -->
             <div class="editor-wrap">
+                <!-- One tick per critical or urgent finding, in a strip of its
+                     own beside the text. A finding is a statement about the
+                     report, not about a word, so nothing is ever drawn on the
+                     radiologist's characters — contrast the underlay above,
+                     which does underline the word it points at. -->
+                <div id="findingGutter" class="finding-gutter"
+                     title="Critical and urgent findings — click a mark to jump to it"></div>
                 <div id="editorMarks" class="editor-marks" aria-hidden="true"></div>
                 <textarea id="editor" class="editor" spellcheck="true"
                           placeholder="Press the microphone and start speaking."></textarea>
@@ -91,10 +103,26 @@
             </div>
 
             <div class="stage-foot">
-                <button id="dictateBtn" class="rec" type="button"
-                        aria-label="Start or stop recording" aria-pressed="false">
-                    <i id="micIcon" class="fas fa-microphone" aria-hidden="true"></i>
-                </button>
+                <div class="rec-row">
+                    <!-- Left of the button and right of it, so the controls sit
+                         where the eye already is instead of in the far header. -->
+                    <button id="cancelBtn" class="btn btn-quiet" type="button" hidden>
+                        Discard
+                    </button>
+
+                    <button id="dictateBtn" class="rec" type="button"
+                            aria-label="Start recording" aria-pressed="false">
+                        <i id="micIcon" class="fas fa-microphone" aria-hidden="true"></i>
+                    </button>
+
+                    <!-- Elapsed time and the microphone's real level. Without
+                         these you cannot tell a working microphone from a dead
+                         one until the whole dictation is over. -->
+                    <div id="recMeter" class="rec-meter" hidden>
+                        <span id="recTimer" class="rec-timer">00:00</span>
+                        <span class="rec-level" aria-hidden="true"><i></i></span>
+                    </div>
+                </div>
                 <p class="hint"><kbd>Space</kbd> to record · <kbd>Ctrl</kbd>+<kbd>Z</kbd> to undo</p>
             </div>
         </section>

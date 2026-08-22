@@ -55,17 +55,21 @@ from PySide6.QtCore import QObject, Signal
 
 from src.core import perf
 from src.dictation.asr import (
-    RADIOLOGY_PROMPT,
     AsrEngine,
     AsrResult,
     TranscribeContext,
     create_engine,
 )
 from src.dictation.stream.ledger import ChunkLedger
+from src.dictation.stream.rules import (
+    build_context_prompt,
+    mean_confidence,
+    rms,
+    should_skip_preview,
+)
 from src.dictation.stream.segmenter import Chunk, ChunkPolicy
 from src.dictation.stream.tail import LocalAgreement2
 from src.dictation.stream.vad import detect_speech
-from src.features.adaptive_learning import get_custom_prompt_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -81,29 +85,6 @@ STATE_LOADING = "Loading model..."
 STATE_LIVE = "Live transcribing..."
 STATE_CATCHING_UP = "Catching up..."
 
-
-def should_skip_preview(
-    open_tail_sec: float, decode_cost: float, max_lag_sec: float
-) -> bool:
-    """Whether to drop this cycle's live preview decode.
-
-    Two conditions, both required:
-
-    * ``decode_cost`` — measured wall seconds spent decoding per second of
-      audio decoded — is above 1.0, i.e. this machine decodes slower than
-      speech arrives. A machine that keeps up has slack to spend on a preview
-      and always keeps it.
-    * the still-open tail is longer than *max_lag_sec*, so the preview
-      re-decode of it is expensive and the words it shows are already stale.
-
-    Requiring both is why a fast machine never loses the preview and a slow one
-    only loses it once it is genuinely behind. ``max_lag_sec <= 0`` turns the
-    skip off entirely; ``decode_cost`` of 0.0 means "not measured yet", which
-    keeps the preview for the first cycles of a recording.
-    """
-    if max_lag_sec <= 0:
-        return False
-    return decode_cost > 1.0 and open_tail_sec > max_lag_sec
 
 
 class LiveTranscribeWorker(QObject):
@@ -290,7 +271,7 @@ class LiveTranscribeWorker(QObject):
                 continue
             local = slice(chunk.start_sample - tail_start, chunk.end_sample - tail_start)
             chunk_audio = tail_audio[local]
-            if self._rms(chunk_audio) < self.silence_rms_floor:
+            if rms(chunk_audio) < self.silence_rms_floor:
                 # Genuinely silent (e.g. a long unspoken pause force-cut by
                 # the segmenter) — nothing to decode, nothing to hallucinate.
                 self._ledger.commit(chunk, "", None)
@@ -307,7 +288,7 @@ class LiveTranscribeWorker(QObject):
                             beam_size=self.live_beam_size,
                             pause_threshold=self.pause_threshold,
                             condition_on_previous_text=False,
-                            initial_prompt=self._build_context_prompt(),
+                            initial_prompt=build_context_prompt(),
                             want_word_confidence=True,
                             temperature=0.0,
                         ),
@@ -318,7 +299,7 @@ class LiveTranscribeWorker(QObject):
             self._decode_wall_total += time.time() - decode_started
             self._decode_sec_total += len(chunk_audio) / sr
             self._emit_absolute_segments(result, chunk.start_sample, sr)
-            self._ledger.commit(chunk, result.text, _mean_confidence(result))
+            self._ledger.commit(chunk, result.text, mean_confidence(result))
             committed_any = True
 
         if committed_any:
@@ -385,7 +366,7 @@ class LiveTranscribeWorker(QObject):
 
         local = slice(open_chunk.start_sample - tail_start, open_chunk.end_sample - tail_start)
         open_audio = tail_audio[local]
-        if self._rms(open_audio) < self.silence_rms_floor:
+        if rms(open_audio) < self.silence_rms_floor:
             return self._agreement.update("")
 
         decode_started = time.time()
@@ -399,7 +380,7 @@ class LiveTranscribeWorker(QObject):
                         beam_size=self.live_beam_size,
                         pause_threshold=self.pause_threshold,
                         condition_on_previous_text=False,
-                        initial_prompt=self._build_context_prompt(),
+                        initial_prompt=build_context_prompt(),
                         temperature=0.0,
                     ),
                 )
@@ -424,7 +405,7 @@ class LiveTranscribeWorker(QObject):
         audio never made it into a closed chunk before recording stopped.
         """
         t0 = time.time()
-        prompt = self._build_context_prompt()
+        prompt = build_context_prompt()
 
         # This pass can take several seconds per chunk, and it runs after the
         # radiologist has already pressed Stop — say what it is doing rather
@@ -453,12 +434,12 @@ class LiveTranscribeWorker(QObject):
                 logger.warning("Confidence-targeted polish failed for chunk %d: %s", i, exc)
                 continue
             self._decode_sec_total += len(clip) / sr
-            self._ledger.replace(i, result.text, _mean_confidence(result))
+            self._ledger.replace(i, result.text, mean_confidence(result))
 
         # Whatever never closed before the recording stopped gets its only
         # decode here, at final quality.
         tail = audio[self._ledger.open_start_sample:]
-        if len(tail) and self._rms(tail) >= self.silence_rms_floor:
+        if len(tail) and rms(tail) >= self.silence_rms_floor:
             self.progress.emit("Polishing final section...")
             try:
                 result = engine.transcribe(
@@ -482,7 +463,7 @@ class LiveTranscribeWorker(QObject):
                 if text:
                     self._emit_absolute_segments(result, self._ledger.open_start_sample, sr)
                     closing = Chunk(self._ledger.open_start_sample, len(audio), closed=True)
-                    self._ledger.commit(closing, text, _mean_confidence(result))
+                    self._ledger.commit(closing, text, mean_confidence(result))
 
         full_text = self._ledger.committed_text
         logger.info(
@@ -498,12 +479,6 @@ class LiveTranscribeWorker(QObject):
     # ------------------------------------------------------------------
     # Audio I/O
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _rms(chunk: np.ndarray) -> float:
-        if chunk.size == 0:
-            return 0.0
-        return float(np.sqrt(np.mean(np.square(chunk, dtype=np.float64))))
 
     def _emit_absolute_segments(self, result: AsrResult, chunk_start_sample: int, sr: int) -> None:
         if not result.segments:
@@ -579,35 +554,3 @@ class LiveTranscribeWorker(QObject):
     # Context prompt for Whisper
     # ------------------------------------------------------------------
 
-    def _build_context_prompt(self) -> str:
-        """Return the initial prompt: base radiology vocab + learned terms.
-
-        Committed text is intentionally NOT appended — doing so caused
-        Whisper to echo prior words back into the current chunk under the
-        small live beam. Chunks never overlap in this design, so there is no
-        boundary-dedup step to lean on instead; the prompt just stays fixed.
-
-        **Order is priority.** Whisper's prompt slot holds 223 tokens and it keeps
-        the LAST 223, discarding the front without a word. The curated radiology
-        vocabulary is sized to fit that slot on its own, so it goes last and
-        always survives. The learned terms go in front, where they fill whatever
-        room is left and are the ones dropped when there is none. Putting them
-        last instead — as this did — let a full custom vocabulary (capped at 80
-        terms, about 216 tokens) push almost the entire shipped dictionary out of
-        the decoder, which is invisible from the outside.
-        """
-        if custom_terms := get_custom_prompt_suffix():
-            return f"{custom_terms} {RADIOLOGY_PROMPT}"
-        else:
-            return RADIOLOGY_PROMPT
-
-
-def _mean_confidence(result: AsrResult) -> Optional[float]:
-    """Mean word confidence across every segment that reported one.
-
-    ``None`` when the engine gave no word timestamps for this call — distinct
-    from 0.0 so the ledger's confidence gate never mistakes "no signal" for
-    "the model was certain this is wrong".
-    """
-    vals = [c for seg in result.segments if (c := seg.confidence) is not None]
-    return sum(vals) / len(vals) if vals else None

@@ -45,10 +45,9 @@ python -m src.ui.web_app             # web app on http://127.0.0.1:8005 — veri
 
 - `src/` — all application code: `core` (settings/logging), `dictation` (offline pipeline), `ui` (desktop + web front-ends), `medical`, `features`, `imaging` (optional X-ray assistant), `cloud` (optional fine-tuning), `training`, `templates`.
 - `data/` — runtime data: autosave backups, cache, `macros.json`, `audit.log`, training corpus.
-- `scripts/` — one-off utilities: setup verification, correction mining, cloud training entrypoints.
+- `scripts/` — one-off utilities: correction mining, accuracy evaluation (`eval/`), cloud training entrypoints.
 - `docs/ARCHITECTURE.md` — deeper flow + performance notes; `CLAUDE.md` — full per-module map.
 - `dictation_settings.json` — the one settings file, read at project root.
-- `tests/` — pytest suite. `python scripts/verify_theme.py` is separate on purpose: it needs real Qt, which the suite stubs out, so it is the only thing that checks the desktop UI actually paints.
 
 ```
 

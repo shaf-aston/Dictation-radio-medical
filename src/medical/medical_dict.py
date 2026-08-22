@@ -6,8 +6,9 @@ Two wordlists with two distinct jobs (keeping them separate is what fixes the
 * **Membership** — :func:`get_medical_terms` answers *"is this already a real
   word, leave it alone?"*. Broad is good here, so it is the union of the generic
   medical wordlist (``src/resources/medical_terms.txt``, ~98k terms) and the
-  curated radiology lexicon. The generic list ships in-repo; if it is missing on
-  first use (e.g. a fresh checkout without LFS), a one-time download refills it.
+  curated radiology lexicon. Both ship in-repo and are read from disk only —
+  nothing here fetches anything, because a workstation that promises dictation
+  never touches the network cannot make an exception for its own dictionary.
 
 * **Correction targets** — :func:`get_correction_targets` returns the curated
   radiology lexicon (``src/resources/radiology_lexicon.txt``), the terms a typo
@@ -75,28 +76,8 @@ _FULL_TERMS_LIST: Optional[List[str]] = None     # Sorted membership, fallback s
 _CORRECTION_TARGETS: Optional[List[str]] = None  # Curated lexicon: the snap targets
 _LOCK = threading.Lock()
 
-# Free medical wordlist (plaintext, one term per line)
-# Source: https://github.com/glutanimate/wordlist-medicalterms-en
-_WORDLIST_URL = (
-    "https://raw.githubusercontent.com/glutanimate/wordlist-medicalterms-en/master/wordlist.txt"
-)
-
-# Below this count, the on-disk file is considered incomplete and refetched
+# Below this count, the on-disk file is considered incomplete
 _MIN_VALID_TERMS = 1000
-
-
-def _download_wordlist(path: Path) -> bool:
-    import urllib.request  # noqa: PLC0415 — lazy: only the rare one-time refill
-
-    try:
-        with urllib.request.urlopen(_WORDLIST_URL, timeout=10) as resp:
-            content = resp.read()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
-        return True
-    except Exception as exc:
-        logger.warning("Medical wordlist download failed: %s", exc)
-        return False
 
 
 def _load_terms_from_disk(path: Path) -> Optional[Set[str]]:
@@ -136,14 +117,24 @@ def _load_lexicon_from_disk(path: Path) -> List[str]:
 
 def _load_and_cache_terms() -> Set[str]:
     global _TERMS, _COMMON_TERMS, _FULL_TERMS_LIST, _CORRECTION_TARGETS
-    # Broad generic wordlist — the membership net (one-time refill if missing).
+    # Broad generic wordlist — the membership net, read from disk only.
     path = medical_wordlist_path()
     logger.info("Loading medical terms from %s", path)
     generic = _load_terms_from_disk(path) if path.exists() else None
     if generic is None or len(generic) < _MIN_VALID_TERMS:
-        logger.warning("Medical terms missing or incomplete, downloading...")
-        if _download_wordlist(path):
-            generic = _load_terms_from_disk(path)
+        # No refetch. This list ships in-repo, and reaching out to a public host
+        # to refill it would be a network call on a workstation whose whole
+        # promise is that dictation never makes one — silently, from inside the
+        # correction path, with no consent gate. A short list degrades exactly
+        # as a missing lexicon does: fewer words are recognised as already
+        # correct, so the corrector leaves more alone. Under-correcting is the
+        # safe direction; phoning out is not.
+        logger.warning(
+            "Medical wordlist at %s is missing or incomplete (%d terms) — "
+            "membership checks will be weaker and the fuzzy corrector will "
+            "leave more words untouched. Restore the file to fix it.",
+            path, 0 if generic is None else len(generic),
+        )
     generic = generic or set()
 
     # Curated radiology lexicon — the clean snap targets (always bundled in-repo).

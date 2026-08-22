@@ -59,6 +59,13 @@ _DEFAULTS: dict = {
     "web_host": "127.0.0.1",    # loopback only — the app is offline by default
     "web_port": 8005,
     "max_upload_mb": 50,        # reject audio uploads larger than this
+    # Two models, one dictation. This small one decodes the words that appear
+    # while you are still speaking; `model_size` above re-decodes after Stop,
+    # where being right matters more than being quick. Whisper's model cache
+    # holds two (transcriber._MODEL_CACHE_MAX), so this pair costs no reloads —
+    # naming a third distinct model here would make them evict each other.
+    "web_live_model_size": "tiny.en",
+    "live_cycle_sec": 0.5,      # how often the live loop looks for new audio
     "recent_reports": [],
     "patient_info_visible": True,
     "macros_panel_visible": True,

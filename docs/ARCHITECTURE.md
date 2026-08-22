@@ -183,7 +183,6 @@ Not done this pass; each needs its own focused change + review.
 ```bash
 python -m src.ui            # desktop GUI
 python -m src.ui.web_app    # web app on 127.0.0.1:8005
-python -m pytest tests/ -q  # all pass; a handful skip on optional deps
 ruff check src tests
 ```
 

@@ -31,9 +31,11 @@ from src.core.patient_schema import normalize_patient_info
 from src.features.file_manager import report_filename
 from src.ui.collapsible import Section
 from src.ui.status import StatusTrack
+from src.ui.finding_marks import FindingGutter
 from src.ui.term_marks import TermMarks
 from src.ui.term_popup import TermPopup
-from src.ui.styles import DARK, LIGHT, set_status_state
+from src.ui.styles import DARK, LIGHT, set_findings_state, set_status_state
+from src.features.report_release import OutstandingFindings
 from src.dictation.worker import STATE_CATCHING_UP, STATE_LIVE, STATE_LOADING
 from src.features.report_manager import (
     autosave_report, save_report_txt, export_to_word, DOCX_AVAILABLE
@@ -124,6 +126,8 @@ class MainWindow(QMainWindow):
     _macro_layout: QVBoxLayout
     template_combo: QComboBox
     editor: QTextEdit
+    finding_gutter: FindingGutter
+    _findings_pill: QLabel
     _info_words: QLabel
     btn_record: QPushButton
     btn_stop: QPushButton
@@ -185,6 +189,12 @@ class MainWindow(QMainWindow):
         # one (src/ui/status.py).
         self._status = StatusTrack()
 
+        # Which critical findings this report has and which have been answered
+        # for. Built before the UI because the gutter and the count pill are
+        # two views of this one object, and the release gate updates it — the
+        # rule itself lives in the shared service, not in this front-end.
+        self.findings = OutstandingFindings()
+
         build_ui(self)
         self.patient_section.toggled.connect(self._on_patient_section_toggled)
         self.template_section.toggled.connect(self._on_template_section_toggled)
@@ -197,6 +207,7 @@ class MainWindow(QMainWindow):
         # popup only helps someone who already suspects the word.
         self.term_marks = TermMarks(self.editor, self.dictation_active, self)
         self.term_marks.changed.connect(self._on_marks_changed)
+        self.finding_gutter.changed.connect(self._on_findings_changed)
         self.term_popup.applied.connect(self._on_lookup_used)
         build_menu(self)
         self._setup_shortcuts()
@@ -355,9 +366,10 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.setStyleSheet(DARK if theme == "dark" else LIGHT)  # type: ignore[union-attr]
-        # Extra selections are painted in code, so the stylesheet cannot reach
-        # them — the marks are told the theme explicitly.
+        # Extra selections and the gutter marks are painted in code, so the
+        # stylesheet cannot reach them — both are told the theme explicitly.
         self.term_marks.set_theme(theme)
+        self.finding_gutter.set_theme(theme)
         if self.settings.get("theme") != theme:
             self.settings.set("theme", theme)
 
@@ -387,6 +399,27 @@ class MainWindow(QMainWindow):
             text = f"{count} {noun} to check"
         self._info_marks.setText(text)
         self._info_marks.show()
+
+    def _on_findings_changed(self, count: int) -> None:
+        """Say, always and without opening anything, what this report contains.
+
+        Three readings, and only one of them is loud: a clean report is a quiet
+        "No findings" rather than a red zero, because a warning shown every
+        session is a warning nobody reads by the time it matters.
+        """
+        state = self.findings.state
+        if count == 0:
+            text = "No findings"
+        else:
+            outstanding = len(self.findings.outstanding)
+            shown = outstanding or count
+            noun = "finding" if shown == 1 else "findings"
+            text = (
+                f"{shown} {noun} to communicate" if outstanding
+                else f"{shown} {noun} acknowledged"
+            )
+        self._findings_pill.setText(text)
+        set_findings_state(self._findings_pill, state)
 
     def _hint_ceiling(self) -> int:
         return int(self.settings.get("term_lookup_hint_uses", 3) or 3)
@@ -564,6 +597,7 @@ class MainWindow(QMainWindow):
                 return
         self.flush_dictation_edits()
         self.editor.clear()
+        self._start_new_report_findings()
         self.patient_name.clear()
         self.patient_id.clear()
         self.patient_dob.clear()
@@ -575,7 +609,18 @@ class MainWindow(QMainWindow):
     def _load_report_from_path(self, path: str) -> None:
         with open(path, "r", encoding="utf-8") as fh:
             self.editor.setPlainText(fh.read())
+        self._start_new_report_findings()
         self._show_status(f"Opened: {os.path.basename(path)}", 2000, state="ok")
+
+    def _start_new_report_findings(self) -> None:
+        """Forget the previous report's findings and its acknowledgements.
+
+        Acknowledgement answers "has this been phoned through for *this*
+        patient". Carrying them into the next report would show the next
+        patient's identical finding as already communicated.
+        """
+        self.findings.reset()
+        self.finding_gutter.refresh()
 
     def on_open_report(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -655,6 +700,7 @@ class MainWindow(QMainWindow):
         if self.editor.toPlainText().strip():
             audit_log.log_report_cleared(self._get_patient_info().get("id", ""))
         self.editor.clear()
+        self._start_new_report_findings()
 
     # ------------------------------------------------------------------
     # Recent reports menu
@@ -760,6 +806,13 @@ class MainWindow(QMainWindow):
         line_count = text.count("\n") + 1 if text else 0
         self._info_words.setText(f"Words: {word_count}  |  Lines: {line_count}")
         self._wordcount_label.setText(f"Words: {word_count}")
+
+        # The single "the report changed" funnel: editor.textChanged reaches
+        # here, and so do the dictation writes that block that signal and call
+        # this method by hand. Both overlays hang off it rather than off
+        # textChanged, so neither can miss a dictated report.
+        self.finding_gutter.schedule_refresh()
+        self.term_marks.schedule_rescan()
 
         # Passive learning: track user edits (debounced — fires 500 ms after
         # the last keystroke rather than on every character).
