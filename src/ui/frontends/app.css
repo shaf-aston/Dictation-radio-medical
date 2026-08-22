@@ -13,6 +13,8 @@
 /* Self-hosted icons (offline-safe: no external CDN). Each .fa-* class masks
    an inline SVG so currentColor still applies and the existing markup +
    JS class-swaps keep working unchanged. */
+[hidden] { display: none !important; }
+
 .fas { display: inline-block; width: 1em; height: 1em; vertical-align: -0.125em;
     background-color: currentColor;
     -webkit-mask: var(--fa) no-repeat center / contain;
@@ -95,6 +97,11 @@ body {
     height: 100%;
     display: grid;
     grid-template-rows: var(--bar-h) minmax(0, 1fr);
+    /* The column needs the same minmax(0,…) the rows already have. An implicit
+       `auto` column is sized to its items' MAX-content, so one long status
+       message widened the whole page and made a phone scroll sideways instead
+       of the message being truncated. */
+    grid-template-columns: minmax(0, 1fr);
 }
 
 /* --------------------------------------------------------------------------
@@ -137,7 +144,15 @@ body {
     color: var(--text-dim);
     min-width: 0;
 }
-.status span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* min-width:0 is what makes the ellipsis actually work. Without it this span's
+   automatic minimum size is the whole un-wrapped message, so it refuses to
+   shrink, the pill cannot shrink either, and a long status widens the entire
+   page instead of being truncated — 390px of phone became 501px of sideways
+   scrolling. */
+.status span:last-child {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0;
+}
 
 .dot {
     width: 7px; height: 7px; border-radius: 50%;
@@ -211,7 +226,6 @@ body {
     border-radius: var(--r);
     box-shadow: 0 10px 30px rgb(0 0 0 / .35);
 }
-.menu[hidden] { display: none; }
 
 .menu button {
     display: flex; align-items: center; gap: .6rem;
@@ -394,6 +408,34 @@ body {
     100% { box-shadow: 0 0 0 0    color-mix(in srgb, var(--rec) 0%, transparent); }
 }
 
+/* The recording row: discard on one side, elapsed time and level on the other,
+   both flanking the button so the state is read where the click happened. The
+   slots hold their width whether or not they are filled, so starting a
+   recording does not shove the microphone button sideways. */
+.rec-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: .9rem; }
+.rec-row > #cancelBtn { justify-self: end; }
+.rec-row > .rec-meter { justify-self: start; }
+
+.rec-meter { display: flex; align-items: center; gap: .5rem; }
+.rec-timer { font: 600 .8rem var(--mono); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+/* --level is the last frame's true peak, written by app.js. */
+.rec-level {
+    width: 3rem; height: .3rem; border-radius: 999px;
+    background: color-mix(in srgb, var(--edge) 80%, transparent);
+    overflow: hidden;
+}
+.rec-level i {
+    display: block; height: 100%; width: calc(var(--level, 0) * 100%);
+    background: var(--rec); border-radius: 999px;
+    transition: width .08s linear;
+}
+
+/* The provisional tail: still being decoded, so it is dimmed rather than shown
+   as settled text. It lives in the marks underlay, never in the textarea, so it
+   cannot reach an export. */
+.editor-marks .preview { color: var(--text-dim); opacity: .72; }
+
 .hint { margin: 0; font-size: .76rem; color: var(--text-dim); }
 
 kbd {
@@ -533,7 +575,6 @@ select:disabled, input:disabled { opacity: .5; }
     border-radius: var(--r);
     box-shadow: 0 10px 30px rgb(0 0 0 / .35);
 }
-.termpop[hidden] { display: none; }
 
 .tp-head {
     margin: 0 0 .35rem;
@@ -589,7 +630,6 @@ select:disabled, input:disabled { opacity: .5; }
     background: color-mix(in srgb, var(--room) 82%, transparent);
     backdrop-filter: blur(2px);
 }
-.scrim[hidden] { display: none; }
 
 .modal {
     width: min(34rem, 100%);

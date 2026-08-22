@@ -48,7 +48,12 @@ src/
 │   │                       name→engine mapping) · engines/faster_whisper_engine.py
 │   ├── stream/             chunk-once streaming — vad.py (Silero VAD, bundled
 │   │                       with faster-whisper, no new dep) · segmenter.py
-│   │                       (pure VAD-marks→chunk-cuts policy) · ledger.py
+│   │                       (pure VAD-marks→chunk-cuts policy) · live_session.py
+│   │                       (the Qt-free live loop: a push-fed audio buffer
+│   │                        instead of the desktop's growing WAV, so the web
+│   │                        app streams over a WebSocket using these same
+│   │                        chunk rules. Owns the shared build_context_prompt /
+│   │                        mean_confidence / should_skip_preview) · ledger.py
 │   │                       (freezes each closed chunk's decode permanently,
 │   │                       the "decode once" guarantee) · tail.py
 │   │                       (LocalAgreement-2 stable preview of the open tail)
@@ -144,10 +149,20 @@ Other optional, off-by-default add-ons:
 ## Dictation data-flow (always local)
 
 ```
-microphone → audio.py → worker.py (QThread, chunk-once)
-           → asr/ (AsrEngine port → transcriber.py/Whisper) → postprocess/ (10 stages)
-           → UI (views.py / web_app.py) → report_manager.py (.docx / .txt export)
+desktop:  microphone → audio.py → worker.py (QThread, chunk-once, growing WAV)
+web:      microphone → AudioWorklet → /ws/dictate (16-bit PCM @16k)
+                     → stream/live_session.py (chunk-once, in-memory buffer)
+both:     → asr/ (AsrEngine port → transcriber.py/Whisper) → postprocess/ (10 stages)
+          → UI (views.py / web_app.py) → report_manager.py (.docx / .txt export)
 ```
+
+The web path uses two models: `web_live_model_size` (fast) decodes what appears
+while you speak, and `model_size` re-decodes the low-confidence chunks after
+Stop. Stop hands the live text back immediately and the accuracy pass upgrades
+it in the background, so pressing Stop never makes the radiologist wait.
+
+Front-end files are cached in memory on first read (`web_app._frontend_cache`),
+so an edit to app.js/app.css/app.html needs a server restart to show up.
 
 ## Live-speed design (why dictation keeps up)
 
