@@ -378,8 +378,17 @@ def _warm_up_singletons() -> None:
         warm_up_async,
     )
 
-    model_size = resolve_model(_settings().get("model_size"))
-    warm_up_async(postprocess_warmers() + [transcriber_warmer(model_size)])
+    settings = _settings()
+    model_size = resolve_model(settings.get("model_size"))
+    live_model_size = resolve_model(settings.get("web_live_model_size"))
+    warmers = postprocess_warmers() + [transcriber_warmer(model_size)]
+    # The live model decodes every word shown while the radiologist is still
+    # speaking — leaving it lazy means the FIRST dictation after every
+    # restart pays its full model-load cost on that exact path, so the first
+    # sentence stalls for several seconds before any text appears.
+    if live_model_size != model_size:
+        warmers.append(transcriber_warmer(live_model_size))
+    warm_up_async(warmers)
 
 
 app = FastAPI(title="Radio Dictate Web", lifespan=lifespan)
@@ -867,6 +876,7 @@ def _live_session(settings, prefs: dict) -> LiveSession:
         live_beam_size=int(settings.get("live_beam_size")),
         final_beam_size=int(settings.get("final_beam_size")),
         silence_rms_floor=float(settings.get("silence_rms_floor")),
+        silence_rms_margin=float(settings.get("silence_rms_margin")),
         preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
         polish_confidence_ceiling=float(settings.get("polish_confidence_ceiling")),
         initial_prompt=build_context_prompt(),

@@ -62,6 +62,7 @@ from src.dictation.asr import (
 )
 from src.dictation.stream.ledger import ChunkLedger
 from src.dictation.stream.rules import (
+    AdaptiveFloor,
     build_context_prompt,
     mean_confidence,
     rms,
@@ -115,7 +116,8 @@ class LiveTranscribeWorker(QObject):
         pause_threshold: float = 2.5,
         model_path: Optional[Union[str, Path]] = None,
         chunk_policy: Optional[ChunkPolicy] = None,
-        silence_rms_floor: float = 0.002,
+        silence_rms_floor: float = 0.0005,
+        silence_rms_margin: float = 2.5,
         live_beam_size: int = 2,
         final_beam_size: int = 5,
         polish_confidence_ceiling: float = 0.75,
@@ -131,7 +133,7 @@ class LiveTranscribeWorker(QObject):
         # inside each chunk decode.
         self.vad_enabled = vad_enabled
         self.pause_threshold = pause_threshold
-        self.silence_rms_floor = max(0.0, float(silence_rms_floor))
+        self._noise_floor = AdaptiveFloor(silence_rms_floor, silence_rms_margin)
         self.live_beam_size = max(1, int(live_beam_size))
         self.final_beam_size = max(1, int(final_beam_size))
         self.polish_confidence_ceiling = float(polish_confidence_ceiling)
@@ -271,7 +273,7 @@ class LiveTranscribeWorker(QObject):
                 continue
             local = slice(chunk.start_sample - tail_start, chunk.end_sample - tail_start)
             chunk_audio = tail_audio[local]
-            if rms(chunk_audio) < self.silence_rms_floor:
+            if self._noise_floor.is_silence(rms(chunk_audio)):
                 # Genuinely silent (e.g. a long unspoken pause force-cut by
                 # the segmenter) — nothing to decode, nothing to hallucinate.
                 self._ledger.commit(chunk, "", None)
@@ -366,7 +368,7 @@ class LiveTranscribeWorker(QObject):
 
         local = slice(open_chunk.start_sample - tail_start, open_chunk.end_sample - tail_start)
         open_audio = tail_audio[local]
-        if rms(open_audio) < self.silence_rms_floor:
+        if self._noise_floor.is_silence(rms(open_audio)):
             return self._agreement.update("")
 
         decode_started = time.time()
@@ -439,7 +441,7 @@ class LiveTranscribeWorker(QObject):
         # Whatever never closed before the recording stopped gets its only
         # decode here, at final quality.
         tail = audio[self._ledger.open_start_sample:]
-        if len(tail) and rms(tail) >= self.silence_rms_floor:
+        if len(tail) and not self._noise_floor.is_silence(rms(tail)):
             self.progress.emit("Polishing final section...")
             try:
                 result = engine.transcribe(

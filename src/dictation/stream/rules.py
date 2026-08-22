@@ -58,6 +58,42 @@ def rms(clip: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.square(clip, dtype=np.float64))))
 
 
+class AdaptiveFloor:
+    """Is this clip silence — judged against THIS room, not one fixed number.
+
+    A single fixed loudness threshold cannot be right for two different
+    radiologists: a quiet talker's real speech can sit below a number tuned
+    for a normal voice, and gets thrown away before the decoder ever sees it;
+    a noisy room's background hum can sit above that same number and get fed
+    to the decoder as if it were speech, which is what the confidence gate
+    calls the decoder's own hallucination anti-measure exists to catch
+    upstream of. This tracks the room's own ambient level instead and gates
+    relative to *it*.
+
+    Only clips already judged quiet feed the estimate, so a loud sentence
+    never drags its own gate up and locks out the next quiet word — the
+    estimate follows the room, not the voice. ``floor_min`` is a hard safety
+    net for literal digital silence, so the very first clip (before any
+    estimate exists) is never mistaken for speech.
+    """
+
+    def __init__(self, floor_min: float, margin: float = 2.5, smoothing: float = 0.2):
+        self.floor_min = max(0.0, float(floor_min))
+        self.margin = max(1.0, float(margin))
+        self.smoothing = min(1.0, max(0.0, float(smoothing)))
+        self._estimate = self.floor_min
+
+    @property
+    def threshold(self) -> float:
+        return max(self.floor_min, self._estimate * self.margin)
+
+    def is_silence(self, level: float) -> bool:
+        quiet = level < self.threshold
+        if quiet:
+            self._estimate = (1 - self.smoothing) * self._estimate + self.smoothing * level
+        return quiet
+
+
 def should_skip_preview(
     open_tail_sec: float, decode_cost: float, max_lag_sec: float
 ) -> bool:

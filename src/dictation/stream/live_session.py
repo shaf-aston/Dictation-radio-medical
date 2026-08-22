@@ -28,6 +28,7 @@ from src.dictation.asr.types import AsrResult
 from src.dictation.postprocess.incremental import IncrementalPostprocessor
 from src.dictation.stream.ledger import ChunkLedger
 from src.dictation.stream.rules import (
+    AdaptiveFloor,
     mean_confidence,
     rms,
     should_skip_preview,
@@ -76,7 +77,8 @@ class LiveSession:
         pause_threshold: float = 2.5,
         live_beam_size: int = 2,
         final_beam_size: int = 5,
-        silence_rms_floor: float = 0.002,
+        silence_rms_floor: float = 0.0005,
+        silence_rms_margin: float = 2.5,
         preview_max_lag_sec: float = 3.0,
         polish_confidence_ceiling: float = 0.85,
         initial_prompt: str = "",
@@ -88,7 +90,7 @@ class LiveSession:
         self.pause_threshold = pause_threshold
         self.live_beam_size = live_beam_size
         self.final_beam_size = final_beam_size
-        self.silence_rms_floor = silence_rms_floor
+        self._noise_floor = AdaptiveFloor(silence_rms_floor, silence_rms_margin)
         self.preview_max_lag_sec = preview_max_lag_sec
         self.polish_confidence_ceiling = polish_confidence_ceiling
         self.initial_prompt = initial_prompt
@@ -209,7 +211,7 @@ class LiveSession:
                 logger.warning("Chunk runs past the sliced tail; deferring")
                 break
             clip = tail_audio[chunk.start_sample - tail_start : stop]
-            if rms(clip) < self.silence_rms_floor:
+            if self._noise_floor.is_silence(rms(clip)):
                 # Genuinely silent (a long pause the segmenter force-cut) —
                 # nothing to decode, nothing to hallucinate.
                 self._ledger.commit(chunk, "", None)
@@ -242,7 +244,7 @@ class LiveSession:
         clip = tail_audio[
             open_chunk.start_sample - tail_start : open_chunk.end_sample - tail_start
         ]
-        if rms(clip) < self.silence_rms_floor:
+        if self._noise_floor.is_silence(rms(clip)):
             return self._agreement.update("")
 
         result = self._decode(
@@ -287,7 +289,7 @@ class LiveSession:
 
         end = self._len
         tail = self._buf[self._ledger.open_start_sample:end]
-        if len(tail) and rms(tail) >= self.silence_rms_floor:
+        if len(tail) and not self._noise_floor.is_silence(rms(tail)):
             say("Improving the last section")
             result = self._decode(
                 self.final_engine, tail, self.final_beam_size,
