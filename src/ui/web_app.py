@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import io
 import json
@@ -921,12 +922,33 @@ async def dictate_socket(ws: WebSocket) -> None:
 
     started = time.time()
     last_cycle = 0.0
+    # A decode (the preview or a closing chunk) costs whole seconds on this
+    # machine (see should_skip_preview's docstring) — awaiting it here before
+    # looping back to receive() would stall reading the socket for that long,
+    # and the microphone does not pause while it waits. Running each cycle as
+    # a background task instead means incoming audio is always drained
+    # immediately; only the transcript's freshness lags behind, not the
+    # capture of the audio itself. `cycle_task` guards against two decodes
+    # running at once, which session.cycle() is not written to survive.
+    cycle_task: Optional[asyncio.Task] = None
 
     async def send(payload: dict) -> None:
         try:
             await ws.send_json(payload)
         except Exception:
             pass  # the page navigated away mid-send; the finally block cleans up
+
+    async def run_cycle() -> None:
+        update = await anyio.to_thread.run_sync(session.cycle)
+        if update is not None:
+            await send({
+                "type": "partial",
+                "committed": update.committed,
+                "preview": update.preview,
+                "state": update.state,
+                "audioSec": round(update.audio_sec, 1),
+                "uncertain": list(update.uncertain),
+            })
 
     try:
         while True:
@@ -943,18 +965,9 @@ async def dictate_socket(ws: WebSocket) -> None:
                     return
                 session.feed(np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0)
 
-                if time.time() - last_cycle >= cycle_sec:
-                    update = await anyio.to_thread.run_sync(session.cycle)
+                if time.time() - last_cycle >= cycle_sec and (cycle_task is None or cycle_task.done()):
                     last_cycle = time.time()
-                    if update is not None:
-                        await send({
-                            "type": "partial",
-                            "committed": update.committed,
-                            "preview": update.preview,
-                            "state": update.state,
-                            "audioSec": round(update.audio_sec, 1),
-                            "uncertain": list(update.uncertain),
-                        })
+                    cycle_task = asyncio.create_task(run_cycle())
                 continue
 
             if (text := message.get("text")) is None:
@@ -965,6 +978,10 @@ async def dictate_socket(ws: WebSocket) -> None:
             except (ValueError, AttributeError):
                 continue
             if command == "stop":
+                # A cycle may still be decoding a chunk the ledger hasn't
+                # committed yet — finalize() must see that commit, not race it.
+                if cycle_task is not None and not cycle_task.done():
+                    await cycle_task
                 # Hand back what is already decoded first. The radiologist has
                 # been reading this text as they spoke it, so it is theirs to
                 # edit now — the accurate re-decode below is an upgrade, not a
@@ -997,6 +1014,8 @@ async def dictate_socket(ws: WebSocket) -> None:
         logger.error("Live dictation failed: %s", exc, exc_info=True)
         await send({"type": "error", "message": "Dictation failed. Your audio is still in the browser — press Retry."})
     finally:
+        if cycle_task is not None and not cycle_task.done():
+            cycle_task.cancel()
         with contextlib.suppress(Exception):
             await ws.close()
 
