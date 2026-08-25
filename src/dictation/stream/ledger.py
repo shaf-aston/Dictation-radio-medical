@@ -32,6 +32,31 @@ class CommittedChunk:
     mean_confidence: Optional[float]
 
 
+#: Characters that already end a sentence.
+_SENTENCE_END = ".!?:;"
+#: Closing marks a stop can hide behind: he said "no."
+_TRAILING = '"\')]}”’'
+
+
+def close_sentence(text: str) -> str:
+    """End *text* with a full stop unless it already ends a sentence.
+
+    A pause long enough to break the paragraph is the speaker finishing a
+    thought. Whisper decodes each chunk in isolation and never hears the
+    silence that followed, so it routinely leaves that last word bare --
+    which is why a dictation reads back as one run-on line per paragraph,
+    and why the capitalisation stage downstream has no sentence boundary to
+    work from. A trailing comma is left alone: the speaker was mid-list, and
+    a full stop there would claim more than the pause supports.
+    """
+    stripped = text.rstrip()
+    if not stripped or stripped[-1] == ",":
+        return stripped or text
+    if stripped.rstrip(_TRAILING)[-1:] in _SENTENCE_END:
+        return stripped
+    return stripped + "."
+
+
 class ChunkLedger:
     """Tracks which audio has been decoded-and-frozen versus still open.
 
@@ -80,7 +105,11 @@ class ChunkLedger:
                 continue
             if prev_end is not None:
                 gap_sec = (c.start_sample - prev_end) / self._sr
-                pieces.append("\n" if gap_sec >= self._pause_threshold else " ")
+                if gap_sec >= self._pause_threshold:
+                    pieces[-1] = close_sentence(pieces[-1])
+                    pieces.append("\n")
+                else:
+                    pieces.append(" ")
             pieces.append(c.text)
             prev_end = c.end_sample
         return "".join(pieces)

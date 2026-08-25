@@ -245,7 +245,12 @@ body {
 .menu-danger .fas { color: var(--rec); }
 
 /* --------------------------------------------------------------------------
-   Main: the lit stage, then the folded panels
+   Main: the lit stage, and the rail of templates and phrases beside it.
+
+   Narrow screens stack (report first, rail under it). From --rail-at up, the
+   rail moves to the side and stays on screen while you dictate — a template
+   or a stock phrase you have to scroll away from the report to reach is one
+   nobody uses mid-dictation.
    -------------------------------------------------------------------------- */
 
 .main {
@@ -253,6 +258,18 @@ body {
     overflow-y: auto;
     padding: var(--gap);
     display: flex; flex-direction: column; gap: var(--gap);
+}
+
+@media (min-width: 68rem) {
+    .main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 21rem;
+        overflow: hidden;
+    }
+    /* The report keeps the full height and the rail scrolls on its own, so a
+       long list of phrases can never push the microphone button off screen. */
+    .stage { min-height: 0; }
+    .panels { min-height: 0; max-height: 100%; overflow-y: auto; padding-right: .2rem; }
 }
 
 .stage {
@@ -321,6 +338,14 @@ body {
     background: none;
     color: transparent;
     border-bottom: 2px dotted var(--glow);
+}
+
+/* The decoder's own doubt, not a suggestion. Fainter and thinner than the mark
+   above on purpose: this one has nothing to offer if you click it, it only
+   says "read this word again". Two identical underlines meaning two different
+   things would make both of them noise. */
+.editor-marks mark.unsure {
+    border-bottom: 1px solid color-mix(in srgb, var(--glow) 40%, transparent);
 }
 
 /* --------------------------------------------------------------------------
@@ -458,6 +483,12 @@ kbd {
     border-radius: var(--r);
     background: var(--room-2);
     overflow: hidden;
+    /* A flex item with overflow:hidden gets an automatic minimum size of 0
+       (CSS Flexbox spec), so .panels' column layout can shrink an open panel
+       below its own content height whenever the sidebar is too full to fit
+       every open panel — the scrollable ancestor should absorb that instead,
+       not squash and clip one panel's controls into invisibility. */
+    flex-shrink: 0;
 }
 
 .panel > summary {

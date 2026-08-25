@@ -944,6 +944,7 @@ function openSocket() {
         if (msg.type === 'partial') {
             committedText = msg.committed || '';
             previewText = msg.preview || '';
+            uncertainWords = new Set(msg.uncertain || []);
             renderLiveText();
             showStatus(
                 msg.state === 'catching_up'
@@ -956,6 +957,7 @@ function openSocket() {
             // but you can read and edit while it does.
             previewText = '';
             committedText = msg.text || '';
+            uncertainWords = new Set(msg.uncertain || []);
             renderLiveText();
             handedOverText = editor.value;
             finishSession(null);
@@ -969,6 +971,7 @@ function openSocket() {
                 showStatus('Kept your edits — the improved version was discarded', 'is-ok', 4000);
             } else {
                 committedText = improved;
+                uncertainWords = new Set(msg.uncertain || []);
                 renderLiveText();
                 pushUndoState();
                 announceReportChanged();
@@ -1056,6 +1059,9 @@ async function startRecording() {
     baseText = editor.value.trim();
     committedText = '';
     previewText = '';
+    // The doubts belong to the dictation that raised them. A new session will
+    // report its own, and text from the last one has already been read.
+    uncertainWords = new Set();
     isRecording = true;
     setRecordingUi(true);
     startTimer();
@@ -1110,13 +1116,16 @@ syncReportButtons();
 // state and has no business going through the server.
 // ---------------------------------------------------------------------------
 
-const PANEL_STORAGE_KEY = "radio-dictate-web-panels";
+// Bumped when the defaults below changed: someone who had already visited was
+// otherwise pinned to the old folded-everything layout forever, and would have
+// had to find the fix by hand.
+const PANEL_STORAGE_KEY = "radio-dictate-web-panels-v2";
 
 function loadOpenPanels() {
     const saved = safeParseJson(localStorage.getItem(PANEL_STORAGE_KEY), null);
-    // First visit: patient details open, the rest folded. A new user sees the
-    // fields they need for an export without having to discover them.
-    return Array.isArray(saved) ? saved : ["patient"];
+    // First visit: the two you reach for while dictating are open. Patient
+    // details and Settings are things you set once, so they start folded.
+    return Array.isArray(saved) ? saved : ["template", "phrases"];
 }
 
 function saveOpenPanels() {
@@ -1304,6 +1313,11 @@ const marksHint = document.getElementById('marksHint');
 
 let marksTimer = null;
 let marksRequest = 0;
+// Words the decoder itself was unsure of, sent by the server with each update.
+// They are underlined more faintly than the suspect-term marks: one says "the
+// machine guessed at this", the other says "this word has alternatives worth
+// seeing", and collapsing them into one mark would lose that difference.
+let uncertainWords = new Set();
 let lookupUses = BOOTSTRAP.term_lookup_uses || 0;
 const lookupHintUses = BOOTSTRAP.term_lookup_hint_uses || 3;
 
@@ -1317,14 +1331,37 @@ function clearMarks() {
     marksHint.hidden = true;
 }
 
+// Every word the decoder was unsure of, wherever it appears in the report.
+// Matched by word rather than by position because the correction pipeline has
+// rewritten the text since the decode, so the original offsets no longer point
+// anywhere real -- and marking one word too many is the safe direction.
+function uncertainSpans(text, taken) {
+    if (!uncertainWords.size) return [];
+    const out = [];
+    const word = /[A-Za-z][A-Za-z'-]*/g;
+    let hit;
+    while ((hit = word.exec(text)) !== null) {
+        if (!uncertainWords.has(hit[0].toLowerCase())) continue;
+        const start = hit.index;
+        const end = start + hit[0].length;
+        // A suspect-term mark already covers this word and says more.
+        if (taken.some((s) => start < s.end && end > s.start)) continue;
+        out.push({ start, end, kind: 'unsure' });
+    }
+    return out;
+}
+
 function paintMarks(spans) {
     const text = editor.value;
+    const all = spans.concat(uncertainSpans(text, spans))
+        .sort((a, b) => a.start - b.start);
     const out = document.createDocumentFragment();
     let at = 0;
-    spans.forEach((span) => {
+    all.forEach((span) => {
         if (span.start < at) return;          // overlapping spans cannot happen, but never trust
         out.append(text.slice(at, span.start));
         const mark = document.createElement('mark');
+        if (span.kind === 'unsure') mark.className = 'unsure';
         mark.textContent = text.slice(span.start, span.end);
         out.append(mark);
         at = span.end;
@@ -1335,14 +1372,23 @@ function paintMarks(spans) {
     editorMarks.replaceChildren(out);
     syncMarksScroll();
 
-    if (!spans.length) {
+    // Both kinds of underline are counted, and named apart. An underline the
+    // radiologist cannot account for is worse than no underline: they either
+    // learn to ignore all of them or stop trusting the text around them.
+    const unsure = all.length - spans.length;
+    if (!all.length) {
         marksHint.hidden = true;
         return;
     }
-    const noun = spans.length === 1 ? 'word' : 'words';
-    marksHint.textContent = lookupUses < lookupHintUses
-        ? `${spans.length} ${noun} to check — highlight one to see alternatives`
-        : `${spans.length} ${noun} to check`;
+    const parts = [];
+    if (spans.length) {
+        parts.push(`${spans.length} ${spans.length === 1 ? 'word' : 'words'} to check`
+            + (lookupUses < lookupHintUses ? ' — highlight one to see alternatives' : ''));
+    }
+    if (unsure) {
+        parts.push(`${unsure} the machine wasn't sure of`);
+    }
+    marksHint.textContent = parts.join(' · ');
     marksHint.hidden = false;
 }
 

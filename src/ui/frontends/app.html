@@ -127,8 +127,51 @@
             </div>
         </section>
 
-        <!-- Everything below folds. What you leave open is what you get next time. -->
-        <div class="panels">
+        <!-- On a wide screen this is a rail beside the report, not a stack
+             under it: a template you have to scroll down and unfold to reach
+             is a template nobody uses mid-dictation. Each section still folds,
+             and what you leave open is what you get next time. -->
+        <aside class="panels" aria-label="Templates, phrases and settings">
+
+            <details data-panel="template" class="panel">
+                <summary>
+                    <span class="p-title">Template</span>
+                    <span class="p-note">starter text for an exam type</span>
+                </summary>
+                <div class="p-body">
+                    <div class="p-toolbar">
+                        <p class="field field-inline field-grow">
+                            <label for="templateSelect">Report template</label>
+                            <select id="templateSelect"></select>
+                        </p>
+                        <button id="loadTemplateBtn" class="btn btn-quiet" type="button">
+                            <i class="fas fa-file-import" aria-hidden="true"></i>
+                            <span id="loadTemplateText">Load template</span>
+                        </button>
+                    </div>
+                </div>
+            </details>
+
+            <details data-panel="phrases" class="panel">
+                <summary>
+                    <span class="p-title">Quick phrases</span>
+                    <span class="p-note">tap to insert at the cursor</span>
+                </summary>
+                <div class="p-body">
+                    <div class="p-toolbar">
+                        <p class="field field-inline">
+                            <label for="macroRegionSelect">Region</label>
+                            <select id="macroRegionSelect"></select>
+                        </p>
+                        <button id="reloadMacrosBtn" class="btn btn-quiet" type="button"
+                                title="Reload phrases from macros.json">
+                            <i class="fas fa-rotate-right" aria-hidden="true"></i>
+                            <span>Reload</span>
+                        </button>
+                    </div>
+                    <div id="macroButtons" class="chips" aria-live="polite"></div>
+                </div>
+            </details>
 
             <details data-panel="patient" class="panel">
                 <summary>
@@ -165,46 +208,6 @@
                 </div>
             </details>
 
-            <details data-panel="phrases" class="panel">
-                <summary>
-                    <span class="p-title">Quick phrases</span>
-                    <span class="p-note">tap to insert at the cursor</span>
-                </summary>
-                <div class="p-body">
-                    <div class="p-toolbar">
-                        <p class="field field-inline">
-                            <label for="macroRegionSelect">Region</label>
-                            <select id="macroRegionSelect"></select>
-                        </p>
-                        <button id="reloadMacrosBtn" class="btn btn-quiet" type="button"
-                                title="Reload phrases from macros.json">
-                            <i class="fas fa-rotate-right" aria-hidden="true"></i>
-                            <span>Reload</span>
-                        </button>
-                    </div>
-                    <div id="macroButtons" class="chips" aria-live="polite"></div>
-                </div>
-            </details>
-
-            <details data-panel="template" class="panel">
-                <summary>
-                    <span class="p-title">Template</span>
-                    <span class="p-note">starter text for an exam type</span>
-                </summary>
-                <div class="p-body">
-                    <div class="p-toolbar">
-                        <p class="field field-inline field-grow">
-                            <label for="templateSelect">Report template</label>
-                            <select id="templateSelect"></select>
-                        </p>
-                        <button id="loadTemplateBtn" class="btn btn-quiet" type="button">
-                            <i class="fas fa-file-import" aria-hidden="true"></i>
-                            <span id="loadTemplateText">Load template</span>
-                        </button>
-                    </div>
-                </div>
-            </details>
-
             <details data-panel="settings" class="panel">
                 <summary>
                     <span class="p-title">Settings</span>
@@ -236,7 +239,7 @@
                 </div>
             </details>
 
-        </div>
+        </aside>
     </main>
 </div>
 

@@ -207,17 +207,32 @@ _PAGE_FILES = {"app.html", "developer.html"}
 
 
 def _frontend_file(name: str) -> str:
-    """Read one bundled front-end file. Cached in memory after first read."""
+    """Read one bundled front-end file.
+
+    Cached in memory, but keyed on the file's modification time — so editing
+    app.js shows up on the next reload instead of needing a server restart.
+    The old cache made a stale front-end indistinguishable from a working one:
+    the browser went on using the previous release's code against the current
+    server, which is how a page kept using the old record-then-upload path
+    (and felt many seconds slower) long after live dictation had landed.
+    """
     if name not in _FRONTEND_FILES:
         raise HTTPException(status_code=404, detail="Not found")
+    path = FRONTEND_DIR / name
+    stamp = path.stat().st_mtime_ns
     cached = _frontend_cache.get(name)
-    if cached is None:
-        cached = (FRONTEND_DIR / name).read_text(encoding="utf-8")
+    if cached is None or cached[0] != stamp:
+        cached = (stamp, path.read_text(encoding="utf-8"))
         _frontend_cache[name] = cached
-    return cached
+    return cached[1]
 
 
-_frontend_cache: dict[str, str] = {}
+#: Nothing the front-end serves may be cached by the browser. See
+#: :func:`_frontend_file` for why a stale copy is worse than a re-read.
+_NO_STORE = {"Cache-Control": "no-store"}
+
+#: name -> (mtime_ns, text)
+_frontend_cache: dict[str, tuple[int, str]] = {}
 
 
 def _macros_payload() -> dict:
@@ -399,14 +414,21 @@ async def static_file(name: str):
     media_type = _FRONTEND_FILES.get(name)
     if media_type is None or name in _PAGE_FILES:
         raise HTTPException(status_code=404, detail="Not found")
-    return Response(content=_frontend_file(name), media_type=media_type)
+    return Response(
+        content=_frontend_file(name),
+        media_type=media_type,
+        # The server is on this machine, so re-reading a few KB costs nothing,
+        # and a browser holding yesterday's app.js against today's server is a
+        # real failure that looks like a slow app rather than a stale one.
+        headers=_NO_STORE,
+    )
 
 
 
 
 @app.get("/")
 async def root():
-    return HTMLResponse(_render_html(_current_theme()))
+    return HTMLResponse(_render_html(_current_theme()), headers=_NO_STORE)
 
 
 @app.get("/developer")
@@ -417,7 +439,8 @@ async def developer_page():
     asking why dictation felt slow, not part of writing a report.
     """
     return HTMLResponse(
-        _frontend_file("developer.html").replace("__THEME_VARS__", css_variables())
+        _frontend_file("developer.html").replace("__THEME_VARS__", css_variables()),
+        headers=_NO_STORE,
     )
 
 
@@ -879,6 +902,9 @@ def _live_session(settings, prefs: dict) -> LiveSession:
         silence_rms_margin=float(settings.get("silence_rms_margin")),
         preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
         polish_confidence_ceiling=float(settings.get("polish_confidence_ceiling")),
+        uncertain_word_confidence=float(
+            settings.get("uncertain_word_confidence", get_default("uncertain_word_confidence"))
+        ),
         initial_prompt=build_context_prompt(),
         sr=LIVE_SAMPLE_RATE,
     )
@@ -927,6 +953,7 @@ async def dictate_socket(ws: WebSocket) -> None:
                             "preview": update.preview,
                             "state": update.state,
                             "audioSec": round(update.audio_sec, 1),
+                            "uncertain": list(update.uncertain),
                         })
                 continue
 
@@ -942,10 +969,18 @@ async def dictate_socket(ws: WebSocket) -> None:
                 # been reading this text as they spoke it, so it is theirs to
                 # edit now — the accurate re-decode below is an upgrade, not a
                 # gate, and blocking on it would put the old wait straight back.
-                await send({"type": "stopped", "text": session.committed_text()})
+                await send({
+                    "type": "stopped",
+                    "text": session.committed_text(),
+                    "uncertain": list(session.uncertain_words),
+                })
                 audio_ended = time.time()
                 text_out = await anyio.to_thread.run_sync(session.finalize)
-                await send({"type": "final", "text": text_out})
+                await send({
+                    "type": "final",
+                    "text": text_out,
+                    "uncertain": list(session.uncertain_words),
+                })
                 _record_web_run(
                     settings, prefs, text_out,
                     elapsed=time.time() - started,

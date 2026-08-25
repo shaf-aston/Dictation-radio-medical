@@ -50,6 +50,31 @@ def mean_confidence(result: AsrResult) -> float | None:
     return sum(vals) / len(vals) if vals else None
 
 
+def low_confidence_words(result: AsrResult, ceiling: float) -> set:
+    """The words in *result* the decoder itself was unsure about.
+
+    Returned lower-cased and stripped of surrounding punctuation, because the
+    front-end matches them against the finished report -- which the correction
+    pipeline has since capitalised and punctuated. Matching whole words this
+    way marks every later occurrence of the same word too, which is the
+    conservative direction: the point is to draw the radiologist's eye to a
+    word the machine guessed at, not to make a claim about one position.
+
+    Empty when the engine gave no word timestamps: no signal is not the same
+    as "the model was sure", and inventing marks would train the radiologist
+    to ignore them.
+    """
+    out = set()
+    for seg in result.segments:
+        for word in seg.words:
+            if word.confidence >= ceiling:
+                continue
+            cleaned = word.text.strip().strip(".,;:!?()[]{}\"'").lower()
+            if cleaned:
+                out.add(cleaned)
+    return out
+
+
 def rms(clip: np.ndarray) -> float:
     """Loudness of one clip. Accumulates in float64 because a long clip of
     float32 squares loses enough precision to move the silence decision."""
@@ -94,36 +119,39 @@ class AdaptiveFloor:
         return quiet
 
 
-def should_skip_preview(
-    open_tail_sec: float, decode_cost: float, max_lag_sec: float
-) -> bool:
+def should_skip_preview(preview_cost_sec: float, max_lag_sec: float) -> bool:
     """Whether to drop this cycle's live preview decode.
 
-    Compares what the preview would actually cost — ``open_tail_sec *
-    decode_cost`` wall seconds, since the whole open tail is re-decoded — with
-    *max_lag_sec*, the delay the radiologist is willing to accept before the
+    *preview_cost_sec* is what the last preview decode actually took, in wall
+    seconds. *max_lag_sec* is the delay the radiologist will accept before the
     words they just said appear. Costing more than that budget means the
     preview is showing stale words *and* holding up the committed chunks queued
-    behind it, so it is dropped.
+    behind it, so it is dropped and the last stable preview stays on screen.
 
-    A fast machine keeps its preview: at ``decode_cost`` 0.05 a 20-second tail
-    costs 1 second, well inside a 3-second budget. A slow one loses it exactly
-    when the tail has grown too expensive to be worth re-decoding.
+    ``max_lag_sec <= 0`` turns the skip off entirely; a cost of 0.0 means "not
+    measured yet", which keeps the preview for the first cycles.
 
-    ``max_lag_sec <= 0`` turns the skip off entirely; ``decode_cost`` of 0.0
-    means "not measured yet", which keeps the preview for the first cycles.
+    Two superseded tests are worth recording, because both were wrong in the
+    same direction -- they modelled the price of a decode as a function of how
+    much audio it covered:
 
-    The superseded test was ``decode_cost > 1.0 and open_tail_sec >
-    max_lag_sec`` — "does this machine decode slower than speech?". It could
-    not do the job for two reasons. This machine measures RTF 0.47-0.57
-    (docs/dictation-accuracy.md), so the first clause was false and the preview
-    was never skipped however far behind the loop fell. And ``decode_cost`` is
-    total-wall-over-total-audio, which a fixed ~3.6s per-``transcribe()`` call
-    cost (Whisper pads every clip to 30s) makes a function of *call count*
-    rather than of throughput — so it rose above 1.0 only when the decoded
-    clips were short, i.e. exactly when the preview was cheapest. What matters
-    is this preview's own price, which is what this now asks.
+    * ``decode_cost > 1.0 and open_tail_sec > max_lag_sec`` -- "does this
+      machine decode slower than speech?". This machine measures RTF 0.47-0.57
+      (docs/dictation-accuracy.md), so the first clause was never true and the
+      preview was never skipped however far behind the loop fell.
+    * ``open_tail_sec * decode_cost > max_lag_sec`` -- "what does re-decoding
+      the whole open tail cost?". Measured on this machine, one ``transcribe()``
+      call on the live model costs about the same whatever it is given:
+      1.33s for a 3s clip, 1.36s for 6s, 1.52s for 25s. Whisper pads every clip
+      to a 30-second window, so the encoder does identical work each time and
+      the decoder's share is small. Multiplying by the tail length therefore
+      grew a number that in reality stayed flat, and the preview was switched
+      off part-way through every chunk -- exactly the stretch where the
+      radiologist has said the most and can see the least.
+
+    So the question is not how long the tail is. It is how long the last one of
+    these calls took.
     """
     if max_lag_sec <= 0:
         return False
-    return open_tail_sec * decode_cost > max_lag_sec
+    return preview_cost_sec > max_lag_sec

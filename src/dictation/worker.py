@@ -158,6 +158,14 @@ class LiveTranscribeWorker(QObject):
         # _decode_sec_total this gives the measured cost of a second of audio on
         # this machine, which is what decides whether a preview is affordable.
         self._decode_wall_total: float = 0.0
+        # What one preview decode actually costs here, in wall seconds. It is
+        # its own measurement rather than a share of the ratio above, because
+        # a transcribe() call's price barely depends on how much audio it was
+        # given -- see rules.should_skip_preview.
+        self._preview_cost: float = 0.0
+        # Earliest wall-clock time the next preview may start — see
+        # LiveSession for why previews are capped at half the wall clock.
+        self._preview_earliest: float = 0.0
         # The last stable preview shown. Re-shown while previews are being
         # skipped, so the display stalls instead of losing words it already
         # showed. Cleared whenever a chunk closes, since the committed text
@@ -308,12 +316,15 @@ class LiveTranscribeWorker(QObject):
             self._agreement.reset()
             self._last_stable = ""
 
-        open_tail_sec = (total_samples - self._ledger.open_start_sample) / sr
-        if should_skip_preview(
-            open_tail_sec, self._decode_cost(), self.preview_max_lag_sec
+        if (
+            should_skip_preview(self._preview_cost, self.preview_max_lag_sec)
+            or time.time() < self._preview_earliest
         ):
             # Cosmetic only: the last stable preview stays on screen and every
-            # remaining second goes to the chunks that are actually kept.
+            # remaining second goes to the chunks that are actually kept. The
+            # cost decays while skipping so the preview returns on its own once
+            # the machine is free again.
+            self._preview_cost *= 0.9
             self._emit_state(STATE_CATCHING_UP)
             stable_tail = self._last_stable
         else:
@@ -335,15 +346,6 @@ class LiveTranscribeWorker(QObject):
             self.partial.emit(output, len(committed_text))
 
         return emitted, time.time() - t0
-
-    def _decode_cost(self) -> float:
-        """Measured wall seconds of decoding per second of audio decoded.
-
-        ``0.0`` until the first decode has been timed.
-        """
-        if self._decode_sec_total <= 0:
-            return 0.0
-        return self._decode_wall_total / self._decode_sec_total
 
     def _emit_state(self, state: str) -> None:
         """Emit a live-loop status only when it changes."""
@@ -389,8 +391,13 @@ class LiveTranscribeWorker(QObject):
         except Exception as exc:
             logger.warning("Live preview transcription failed: %s", exc)
             return self._agreement.update("")
-        self._decode_wall_total += time.time() - decode_started
+        cost = time.time() - decode_started
+        self._decode_wall_total += cost
         self._decode_sec_total += len(open_audio) / sr
+        # Smoothed, so one unlucky decode does not switch the preview off and
+        # one lucky one does not switch it straight back on.
+        self._preview_cost = cost if self._preview_cost <= 0 else 0.6 * self._preview_cost + 0.4 * cost
+        self._preview_earliest = time.time() + cost
         return self._agreement.update(result.text.strip())
 
     # ------------------------------------------------------------------

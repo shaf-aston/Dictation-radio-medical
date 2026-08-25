@@ -53,6 +53,12 @@ _DEFAULTS: dict = {
     "preview_max_lag_sec": 3.0,
     # committed chunks below this mean word confidence get one re-decode after stop
     "polish_confidence_ceiling": 0.75,
+    # A single word below this confidence gets a faint underline in the report.
+    # Lower than polish_confidence_ceiling on purpose: that one decides whether
+    # a whole chunk is worth re-decoding, this one decides whether one word is
+    # worth a second look from the radiologist, and marking every third word
+    # would make the marks worth nothing.
+    "uncertain_word_confidence": 0.6,
     # Hard safety-net minimum below which a clip is always silence, however
     # quiet the room has been. The working threshold is adaptive above this —
     # see silence_rms_margin (rules.AdaptiveFloor) — so a quiet talker isn't

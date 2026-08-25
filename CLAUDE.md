@@ -161,8 +161,13 @@ while you speak, and `model_size` re-decodes the low-confidence chunks after
 Stop. Stop hands the live text back immediately and the accuracy pass upgrades
 it in the background, so pressing Stop never makes the radiologist wait.
 
-Front-end files are cached in memory on first read (`web_app._frontend_cache`),
-so an edit to app.js/app.css/app.html needs a server restart to show up.
+Front-end files are cached in memory keyed on the file's modification time
+(`web_app._frontend_cache`), and every page and asset is served `no-store`. Both
+halves matter: without the mtime key an edit to app.js needed a server restart,
+and without `no-store` the browser kept running the previous release's script
+against the current server — which is how the page went on using the old
+record-then-upload path, and felt many seconds slower, long after live dictation
+had landed.
 
 ## Live-speed design (why dictation keeps up)
 
@@ -193,12 +198,19 @@ dictation used to get slower the longer it ran:
    (`ledger.py`) — nothing ever re-decodes committed audio. Only the still-open
    tail (bounded by `ChunkPolicy.force_cut_sec`, default 20s) is re-decoded
    cycle to cycle, purely for a stable live preview via LocalAgreement-2
-   (`tail.py`) — and that preview is dropped altogether (`should_skip_preview`,
-   `preview_max_lag_sec`) once the machine is measured to decode slower than
-   speech AND the open tail has grown past the knob, so preview decodes can
-   never starve the committed chunks queued behind them
-   (`stream.decode_ratio` in `core/perf.py` is the measured proof —
-   target ≤1.4x versus the old sliding window's ~8x). After recording stops
+   (`tail.py`). **The preview is priced per call, not per second of audio.**
+   Measured on this machine, one `transcribe()` on the live model costs about
+   the same whatever it is handed — 1.33s for a 3s clip, 1.36s for 6s, 1.52s
+   for 25s — because Whisper pads every clip to a 30-second window, so the
+   encoder does identical work each time. Two rules follow, and both live in
+   `rules.should_skip_preview` and its callers: a preview is dropped when *its
+   own last measured cost* exceeds `preview_max_lag_sec`, and a new one never
+   starts until as long has passed as the last one took. That caps previews at
+   half the wall clock and leaves the other half for the committed chunks,
+   which are the text that is kept. Pricing the preview by tail length instead
+   (`open_tail_sec * decode_cost`, the version this replaced) switched it off
+   part-way through every chunk — exactly the stretch where the radiologist has
+   said the most and can see the least. After recording stops
    there is no full re-transcribe: a confidence-targeted polish
    (`worker._run_confidence_targeted_polish`) re-decodes only the committed
    chunks whose mean word confidence (from the `AsrEngine` port's
@@ -212,6 +224,22 @@ dictation used to get slower the longer it ran:
 when a recording ends and served at `GET /api/debug/perf`. It is in-process
 only — nothing is persisted or sent anywhere, so it does not weaken the
 offline invariant.
+
+**A long pause ends the sentence.** A silence at or beyond `pause_threshold`
+breaks the paragraph, and `stream/ledger.close_sentence` puts a full stop on the
+text before it. Whisper decodes each chunk in isolation and never hears the
+silence that followed, so without this a dictation reads back as one run-on line
+per paragraph and the capitalisation stage has no boundary to work from. A
+trailing comma is left alone — the speaker was mid-list.
+
+**Words the decoder guessed at say so.** Any word below
+`uncertain_word_confidence` (default 0.6) is collected by
+`rules.low_confidence_words`, travels with each socket update, and is drawn as a
+faint thin underline in the browser — deliberately fainter than the suspect-term
+mark, which is a solid dotted line and *does* have alternatives to offer when
+clicked. The confidence-targeted polish after Stop replaces a chunk's flagged
+words along with its text, so nothing stays underlined that the accurate model
+has since settled.
 
 The pipeline (`dictation/postprocess/pipeline.py`) runs, in order: hallucination
 removal → voice commands → punctuation → measurements → terminology →

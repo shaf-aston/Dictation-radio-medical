@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
@@ -26,9 +26,10 @@ from src.core import perf
 from src.dictation.asr import AsrEngine, TranscribeContext
 from src.dictation.asr.types import AsrResult
 from src.dictation.postprocess.incremental import IncrementalPostprocessor
-from src.dictation.stream.ledger import ChunkLedger
+from src.dictation.stream.ledger import ChunkLedger, close_sentence
 from src.dictation.stream.rules import (
     AdaptiveFloor,
+    low_confidence_words,
     mean_confidence,
     rms,
     should_skip_preview,
@@ -60,6 +61,10 @@ class LiveUpdate:
     preview: str
     state: str
     audio_sec: float
+    #: Words the decoder itself was unsure of, lower-cased. The front-end
+    #: underlines them faintly in the committed text -- a report the machine
+    #: half-guessed at should say so, rather than reading as settled.
+    uncertain: Tuple[str, ...] = ()
 
 
 class LiveSession:
@@ -81,6 +86,7 @@ class LiveSession:
         silence_rms_margin: float = 2.5,
         preview_max_lag_sec: float = 3.0,
         polish_confidence_ceiling: float = 0.85,
+        uncertain_word_confidence: float = 0.6,
         initial_prompt: str = "",
         sr: int = SAMPLE_RATE,
     ) -> None:
@@ -93,6 +99,7 @@ class LiveSession:
         self._noise_floor = AdaptiveFloor(silence_rms_floor, silence_rms_margin)
         self.preview_max_lag_sec = preview_max_lag_sec
         self.polish_confidence_ceiling = polish_confidence_ceiling
+        self.uncertain_word_confidence = uncertain_word_confidence
         self.initial_prompt = initial_prompt
         self.sr = sr
 
@@ -106,11 +113,24 @@ class LiveSession:
         self._buf = np.zeros(sr * 60, dtype=np.float32)
         self._len = 0
 
-        self._decode_wall_total = 0.0
-        self._decode_sec_total = 0.0
+        # What one preview decode actually costs on this machine, in wall
+        # seconds. 0.0 means "not measured yet", which keeps the preview on for
+        # the first cycles rather than guessing it is too slow.
+        self._preview_cost = 0.0
+        # Earliest wall-clock time the next preview may start. A preview costs
+        # about the same however much audio it is given, so running one every
+        # cycle spends far more than a second of machine per second of speech
+        # and the loop falls behind the microphone. Holding off for as long as
+        # the last one took caps previews at half the wall clock and leaves the
+        # other half for the committed chunks, which are the text that is kept.
+        self._preview_earliest = 0.0
         self._last_stable = ""
         self._last_update: Optional[LiveUpdate] = None
         self._chunks_decoded = 0
+        # Keyed by committed-chunk index, so the polish pass can replace one
+        # chunk's doubts along with its text instead of leaving marks behind
+        # on words the accurate model has since settled.
+        self._uncertain: dict = {}
 
     # -- audio in -------------------------------------------------------
 
@@ -137,6 +157,19 @@ class LiveSession:
     @property
     def chunks_decoded(self) -> int:
         return self._chunks_decoded
+
+    @property
+    def uncertain_words(self) -> Tuple[str, ...]:
+        """Every word still flagged low-confidence, across all committed chunks."""
+        out: set = set()
+        for words in self._uncertain.values():
+            out |= words
+        return tuple(sorted(out))
+
+    def _note_uncertain(self, result: AsrResult, index: Optional[int] = None) -> None:
+        """Record (or replace) one chunk's doubtful words."""
+        at = len(self._ledger.committed) - 1 if index is None else index
+        self._uncertain[at] = low_confidence_words(result, self.uncertain_word_confidence)
 
     def _audio(self, start: int = 0, end: Optional[int] = None) -> np.ndarray:
         return self._buf[start : self._len if end is None else end]
@@ -168,10 +201,17 @@ class LiveSession:
             self._agreement.reset()
             self._last_stable = ""
 
-        open_tail_sec = (total - self._ledger.open_start_sample) / self.sr
-        if should_skip_preview(open_tail_sec, self._decode_cost(), self.preview_max_lag_sec):
+        if (
+            should_skip_preview(self._preview_cost, self.preview_max_lag_sec)
+            or time.time() < self._preview_earliest
+        ):
             # Cosmetic only: the last stable preview stays on screen and every
-            # remaining second goes to the chunks that are actually kept.
+            # remaining second goes to the chunks that are actually kept. The
+            # recorded cost decays while skipping so the preview comes back on
+            # its own once the machine is free again -- a cost that is only
+            # ever written when a preview runs would latch the preview off
+            # permanently after one slow decode.
+            self._preview_cost *= 0.9
             state = STATE_CATCHING_UP
             preview = self._last_stable
         else:
@@ -185,11 +225,12 @@ class LiveSession:
         # would make finished words visibly change their minds.
         committed = self._post.process(committed_raw, len(committed_raw))[0] if committed_raw else ""
 
-        update = LiveUpdate(committed, preview, state, self.audio_sec)
+        update = LiveUpdate(committed, preview, state, self.audio_sec, self.uncertain_words)
         if self._last_update is not None and (
             update.committed == self._last_update.committed
             and update.preview == self._last_update.preview
             and update.state == self._last_update.state
+            and update.uncertain == self._last_update.uncertain
         ):
             return None
         self._last_update = update
@@ -224,6 +265,7 @@ class LiveSession:
             if result is None:
                 break  # retry this (and any later) chunk next cycle
             self._ledger.commit(chunk, result.text, mean_confidence(result))
+            self._note_uncertain(result)
             self._chunks_decoded += 1
             committed_any = True
         return committed_any
@@ -247,10 +289,16 @@ class LiveSession:
         if self._noise_floor.is_silence(rms(clip)):
             return self._agreement.update("")
 
+        started = time.time()
         result = self._decode(
             self.live_engine, clip, self.live_beam_size,
             want_confidence=False, stage="live.preview",
         )
+        # Smoothed, so one unlucky decode does not switch the preview off and
+        # one lucky one does not switch it back on.
+        cost = time.time() - started
+        self._preview_cost = cost if self._preview_cost <= 0 else 0.6 * self._preview_cost + 0.4 * cost
+        self._preview_earliest = time.time() + cost
         return self._agreement.update(result.text.strip() if result else "")
 
     # -- after Stop -----------------------------------------------------
@@ -286,6 +334,7 @@ class LiveSession:
             )
             if result is not None:
                 self._ledger.replace(i, result.text, mean_confidence(result))
+                self._note_uncertain(result, i)
 
         end = self._len
         tail = self._buf[self._ledger.open_start_sample:end]
@@ -298,13 +347,14 @@ class LiveSession:
             if result is not None and (text := result.text.strip()):
                 closing = Chunk(self._ledger.open_start_sample, end, closed=True)
                 self._ledger.commit(closing, text, mean_confidence(result))
+                self._note_uncertain(result)
                 self._chunks_decoded += 1
 
         raw = self._ledger.committed_text
         # committed_len=0: everything here just got an authoritative decode, so
         # no cached prefix from the live pass may survive into the final report.
         self._post.reset()
-        final = self._post.process(raw, 0)[0] if raw else ""
+        final = close_sentence(self._post.process(raw, 0)[0]) if raw else ""
         logger.info(
             "final polish  audio=%.1fs  elapsed=%.2fs  polished=%d  chars=%d",
             self.audio_sec, time.time() - t0, len(targets), len(final),
@@ -330,7 +380,6 @@ class LiveSession:
         again. Losing a recording because one call threw is not a trade worth
         making.
         """
-        started = time.time()
         try:
             with perf.stage(f"stream.{stage}"):
                 result = engine.transcribe(
@@ -349,12 +398,4 @@ class LiveSession:
         except Exception as exc:
             logger.warning("Decode failed (%s): %s", stage, exc)
             return None
-        self._decode_wall_total += time.time() - started
-        self._decode_sec_total += len(clip) / self.sr
         return result
-
-    def _decode_cost(self) -> float:
-        """Measured wall seconds of decoding per second of audio decoded."""
-        if self._decode_sec_total <= 0:
-            return 0.0
-        return self._decode_wall_total / self._decode_sec_total
