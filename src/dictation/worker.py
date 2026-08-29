@@ -114,6 +114,7 @@ class LiveTranscribeWorker(QObject):
         language: str,
         vad_enabled: bool,
         pause_threshold: float = 2.5,
+        live_model_size: Optional[str] = None,
         model_path: Optional[Union[str, Path]] = None,
         chunk_policy: Optional[ChunkPolicy] = None,
         silence_rms_floor: float = 0.0005,
@@ -126,6 +127,10 @@ class LiveTranscribeWorker(QObject):
         super().__init__()
         self.audio_path = audio_path
         self.model_size = model_size
+        # The fast model that writes what you see while speaking; the accurate
+        # model_size engine only runs the post-stop polish. Same split as the
+        # web app's LiveSession — keep the two front-ends together.
+        self.live_model_size = live_model_size or model_size
         self.language = language
         # VAD is now load-bearing for chunk cutting (not just an engine-side
         # filter), so it stays on regardless of this flag; vad_enabled is
@@ -201,10 +206,18 @@ class LiveTranscribeWorker(QObject):
         cycle_count = 0
         try:
             self.progress.emit(STATE_LOADING)
-            engine = create_engine(
-                model_size=self.model_size, device="auto", model_path=self.model_path
-            )
-            logger.info("Model loaded in %.2fs", time.time() - wall_start)
+            # Engines load their model lazily, so creating both here is free.
+            # A fine-tuned voice model (model_path) only ever replaces the
+            # accurate engine — live text comes from the stock fast model,
+            # exactly as on the web path.
+            live_engine = create_engine(model_size=self.live_model_size, device="auto")
+            if self.live_model_size == self.model_size and not self.model_path:
+                engine = live_engine
+            else:
+                engine = create_engine(
+                    model_size=self.model_size, device="auto", model_path=self.model_path
+                )
+            logger.info("Engines ready in %.2fs", time.time() - wall_start)
             self._emit_state(STATE_LIVE)
 
             final_grace = 0
@@ -241,7 +254,7 @@ class LiveTranscribeWorker(QObject):
                     break
 
                 self._audio_sec_total = total_samples / sr
-                emitted, decode_sec = self._run_cycle(engine, total_samples, sr)
+                emitted, decode_sec = self._run_cycle(live_engine, total_samples, sr)
                 self._prev_total_samples = total_samples
                 if emitted:
                     cycle_count += 1

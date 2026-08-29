@@ -156,10 +156,11 @@ both:     → asr/ (AsrEngine port → transcriber.py/Whisper) → postprocess/ 
           → UI (views.py / web_app.py) → report_manager.py (.docx / .txt export)
 ```
 
-The web path uses two models: `web_live_model_size` (fast) decodes what appears
+Both front-ends use two models: `live_model_size` (fast) decodes what appears
 while you speak, and `model_size` re-decodes the low-confidence chunks after
-Stop. Stop hands the live text back immediately and the accuracy pass upgrades
-it in the background, so pressing Stop never makes the radiologist wait.
+Stop. On the web, Stop hands the live text back immediately and the accuracy
+pass upgrades it in the background; the desktop still waits through that
+polish before Record re-enables.
 
 Front-end files are cached in memory keyed on the file's modification time
 (`web_app._frontend_cache`), and every page and asset is served `no-store`. Both
@@ -257,97 +258,14 @@ lexicon (the spelling authority) or add a precise rule to `corrections.yaml`.
 Never feed PDF/OCR-extracted text into the lexicon — extraction noise (ligature
 splits, hyphenation artefacts) pollutes the snap targets.
 
-## Cloud fine-tuning path (opt-in, off by default)
-
-Inert unless **both** `cloud_enabled` and `cloud_training_consent` are true in
-settings. With default settings nothing is retained, staged, or uploaded.
-
-```
-dictation corrections → training/collector.py (consent-gated capture)
-   → medical/deid.py  de-identify TEXT + AUDIO, validate_clean()
-   → training/staging_db.py  (SQLite: data/training/staging.db)
-   → cloud/tasks/<task>.build_archive()  tar.gz batch (manifest + de-id clips)
-   → cloud/framework/client.py  upload + submit Lightning AI job (key from keychain)
-   → cloud/framework/job_monitor.py polls → framework/sync.py downloads + extracts
-   → cloud/framework/registry.py registers the version (data/models/registry.json)
-   → user activates it; the consuming model loads that artifact directory
-```
-
-`collector.py` is the **only** bridge from dictation into the cloud subsystem,
-and the dependency is one-directional: dictation/features call into the
-collector but never import `src.cloud.*`.
-
-**Multi-task framework.** The framework is task-agnostic; a `TrainingTask`
-(`cloud/tasks/`) supplies only what differs per model — how to bundle its batch
-and how to describe its Lightning job (`JobSpec`). Three tasks exist: voice
-(Whisper LoRA → CT2), text-correction (small seq2seq), and scan-classifier
-(DenseNet head fine-tune). Each is keyed by `task_type`; the registry holds one
-active model **per task**. Every training script enforces a *do-not-regress*
-gate on a held-out split (WER for voice, exact-match for text, mean-AUC for
-scans) and rejects a run that doesn't beat its validated baseline.
-
-## Scan assistant path (opt-in, local inference)
-
-`src/imaging/` analyses a chest X-ray locally and surfaces findings **only when
-confident and localisable**. Pipeline: `classifier` (TorchXRayVision DenseNet121)
-→ `abstention` (drop untrained heads + anything below the calibrated
-per-pathology threshold) → `localization` (Grad-CAM region per kept finding) →
-`analyzer` (withhold any finding it can't point to; render an overlay; attach
-the non-diagnostic disclaimer). Needs the optional imaging extra
-(`scripts/lightning/requirements_imaging.txt`); without it the feature degrades
-gracefully and the rest of the app is unaffected.
-
-**Specialty focus: chest trauma.** Rib/clavicle fractures correlate clinically
-with pneumothorax and haemothorax, and plain films are documented to miss a
-large share of rib fractures — the highest-leverage gap for this assistant to
-close. The local fine-tune (`scan_classifier` task, `ScanClassifierTask` in
-`cloud/tasks/scan_finetune.py`) oversamples `Fracture`, `Pneumothorax`, and
-`Effusion` positives (`_TRAUMA_FOCUS_LABELS`) when building a batch, so a site's
-fine-tune sharpens on trauma cases rather than diluting evenly across all 18
-baseline labels. This changes *what the model trains on*, not the safety gate —
-per-label abstention thresholds remain the calibration lever for a site's own
-validated data (`data/imaging/thresholds.json`).
-
-## Measuring dictation quality (`scripts/eval/`)
-
-Any change to transcription or post-processing is judged by numbers, not by
-reading a sample. The harness transcribes a *gold set* (audio + known-correct
-text), runs the pipeline, and reports four things:
-
-- **WER** — the general yardstick.
-- **medical-term error rate** — WER restricted to `radiology_lexicon.txt` terms.
-  A report can post a respectable WER while mangling every anatomical word in
-  it; this is the number that catches that.
-- **false-correction rate** — of the edits the post-processing pipeline made,
-  the share that took a *correct* word and made it wrong. A correction layer
-  that fixes 10 words and breaks 12 is worse than none, and this is what says
-  which side of that line it is on.
-- **real-time factor** — decode seconds per second of audio. Above 1.0 the
-  machine cannot keep up with live speech even decoding each second once.
-
-Four gold sets, each measuring something different — never blend them into one
-figure. `own` (the user's own voice: the only set that measures real acoustics)
-· `tts` (synthesised radiology reports: medical *vocabulary* under
-unrealistically clean audio) · `libri` (public-domain read speech: general
-English regression + per-engine RTF) · `bench` (the existing `data/bench_audio/`
-clips, once hand-corrected).
-
-What the harness has actually decided so far — including the two changes that
-moved the false-correction rate and the one that was measured and switched back
-off — is in [docs/dictation-accuracy.md](docs/dictation-accuracy.md). Read it
+**Three subsystems keep their guidance in their own folder** — each loads only
+when work touches that folder: cloud fine-tuning (`src/cloud/CLAUDE.md`, opt-in),
+the scan assistant (`src/imaging/CLAUDE.md`, opt-in), and the accuracy-measuring
+harness (`scripts/eval/CLAUDE.md`). Any change to transcription or
+post-processing is judged by that harness's numbers, not by reading a sample —
+read `scripts/eval/CLAUDE.md` and [docs/dictation-accuracy.md](docs/dictation-accuracy.md)
 before proposing an accuracy change; several obvious ones are already refuted
 there.
-
-Sets live in `data/eval/<name>/` (gitignored — the `own` set is the user's
-recorded voice). A reference still marked `[UNREVIEWED]` is a machine draft, and
-`corpus.load_set` refuses to score against one: grading a model on its own
-output produces a flattering number that measures nothing.
-
-`metrics.py` is pure — no I/O, no model — and its normalisation is the single
-place scoring rules live. It canonicalises what the pipeline changes *on
-purpose* (spoken units → `mm`, hyphen joins) but deliberately leaves spelling
-variants (`calibre`/`caliber`) visible, because silently Americanising a British
-report is a real change to the radiologist's text.
 
 ## Invariants (do not break)
 
@@ -389,11 +307,7 @@ python -m src.ui.web_app    # web app on 127.0.0.1:8005
 ruff check src tests
 npx pyright src              # type check (optional-dep import warnings expected)
 
-# Dictation accuracy + speed measurement (scripts/eval/) — see below
-python -m scripts.eval.build_sets --set tts       # synthesise the gold set
-python -m scripts.eval.build_sets --set own --record   # record the own set (mic)
-python -m scripts.eval.run_eval --set tts --label my-change \
-       --baseline data/eval/reports/<earlier>.json
+# Accuracy + speed measurement: see scripts/eval/CLAUDE.md
 
 # Optional extras (lazy-imported; core app runs without them):
 pip install -r scripts/lightning/requirements_imaging.txt   # Scan Assistant (local)

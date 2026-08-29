@@ -396,7 +396,7 @@ def _warm_up_singletons() -> None:
 
     settings = _settings()
     model_size = resolve_model(settings.get("model_size"))
-    live_model_size = resolve_model(settings.get("web_live_model_size"))
+    live_model_size = resolve_model(settings.get("live_model_size"))
     warmers = postprocess_warmers() + [transcriber_warmer(model_size)]
     # The live model decodes every word shown while the radiologist is still
     # speaking — leaving it lazy means the FIRST dictation after every
@@ -883,7 +883,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
 
 def _live_session(settings, prefs: dict) -> LiveSession:
     """Build a session from saved settings — the only place the knobs are read."""
-    live_model = resolve_model(settings.get("web_live_model_size", get_default("web_live_model_size")))
+    live_model = resolve_model(settings.get("live_model_size", get_default("live_model_size")))
     final_model = resolve_model(prefs.get("model_size") or settings.get("model_size"))
     return LiveSession(
         _get_engine(live_model),

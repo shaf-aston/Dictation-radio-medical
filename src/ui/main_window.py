@@ -290,12 +290,18 @@ class MainWindow(QMainWindow):
             from src.ui.recording_session import _active_model_path
 
             active_model = _active_model_path()
-            warm_up_async(postprocess_warmers() + [
+            warmers = postprocess_warmers() + [
                 transcriber_warmer(
                     model_size,
                     model_path=str(active_model) if active_model else None,
                 )
-            ])
+            ]
+            # The live model writes the first words on screen — leaving it lazy
+            # makes the first dictation after every launch stall on its load.
+            live_model_size = resolve_model(self.settings.get("live_model_size"))
+            if live_model_size != model_size or active_model:
+                warmers.append(transcriber_warmer(live_model_size))
+            warm_up_async(warmers)
         except Exception as exc:  # warm-up is an optimisation, never fatal
             logger.debug("Could not start dictation warm-up: %s", exc)
 

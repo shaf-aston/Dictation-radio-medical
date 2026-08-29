@@ -77,7 +77,7 @@ _DEFAULTS: dict = {
     # where being right matters more than being quick. Whisper's model cache
     # holds two (transcriber._MODEL_CACHE_MAX), so this pair costs no reloads —
     # naming a third distinct model here would make them evict each other.
-    "web_live_model_size": "tiny.en",
+    "live_model_size": "tiny.en",
     "live_cycle_sec": 0.5,      # how often the live loop looks for new audio
     "recent_reports": [],
     "patient_info_visible": True,
