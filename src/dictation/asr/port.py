@@ -2,7 +2,7 @@
 concrete recognition engine.
 
 Adding a second engine (M3: an ONNX/Parakeet CTC model) means writing one new
-class satisfying this Protocol — nothing in ``worker.py`` or ``web_app.py``
+class satisfying this Protocol: nothing in ``worker.py`` or ``web_app.py``
 changes. A ``Protocol`` rather than an ABC on purpose: it lets the eval
 harness's ``WhisperRunner`` and any future test double satisfy the interface
 structurally, with no inheritance and no import of this module required.
@@ -24,7 +24,7 @@ class AsrEngine(Protocol):
         ...
 
     def capabilities(self) -> EngineCaps:
-        """What this engine can actually provide — checked, never assumed."""
+        """What this engine can actually provide: checked, never assumed."""
         ...
 
     def preload(self) -> None:

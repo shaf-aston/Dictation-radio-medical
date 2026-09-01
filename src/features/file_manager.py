@@ -5,7 +5,7 @@ Directory structure:
 - data/temp/          Temporary audio files (cleaned on startup + after use)
 - data/autosave/      Auto-saved reports (retention: 30 days)
 - data/cache/         ALL rebuildable caches (SymSpell index, Whisper model
-                      downloads, imaging embeddings). Safe to delete whole —
+                      downloads, imaging embeddings). Safe to delete whole:
                       the app rebuilds/re-downloads on next use.
 - data/macros.json    User-editable quick phrases
 - templates/          Report templates (read-only)
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _project_root() -> Path:
-    """Project root — the parent of src/.
+    """Project root: the parent of src/.
 
     This file lives at src/features/file_manager.py, so the root is three
     levels up: file → features/ → src/ → project root.
@@ -54,7 +54,7 @@ def autosave_dir() -> Path:
 def cache_dir() -> Path:
     """Single home for every rebuildable on-disk cache.
 
-    Everything in here is derived data — the SymSpell index, downloaded
+    Everything in here is derived data: the SymSpell index, downloaded
     Whisper models, imaging embeddings. Deleting the whole folder is always
     safe; each cache is rebuilt or re-downloaded on next use.
     """
@@ -76,7 +76,7 @@ def whisper_cache_dir() -> Path:
 def onnx_asr_cache_dir(model_name: str) -> Path:
     """Download directory for one onnx-asr model (Parakeet), under data/cache/.
 
-    Same reason as :func:`whisper_cache_dir` — keep the several-hundred-MB
+    Same reason as :func:`whisper_cache_dir`: keep the several-hundred-MB
     download visible and deletable with the other caches instead of hidden in
     the per-user HuggingFace cache.
 
@@ -110,11 +110,11 @@ def templates_dir() -> Path:
     return _project_root() / "src" / "templates"
 
 def medical_wordlist_path() -> Path:
-    """Broad generic medical wordlist — the membership net (read-only static)."""
+    """Broad generic medical wordlist: the membership net (read-only static)."""
     return _project_root() / "src" / "resources" / "medical_terms.txt"
 
 def radiology_lexicon_path() -> Path:
-    """Curated radiology lexicon — the clean spelling-correction snap targets.
+    """Curated radiology lexicon: the clean spelling-correction snap targets.
 
     Distinct from :func:`medical_wordlist_path`: that broad list answers "is this
     already a real word?", while this curated, radiology-only list is what a
@@ -182,7 +182,7 @@ def learned_context_corpus_path() -> Path:
     """Append-only radiology text learned from the user's finalized reports.
 
     Feeds the context n-gram model so disambiguation improves with use. Stays
-    on-device (never uploaded) — the reports are PHI. Written finalize-time by
+    on-device (never uploaded): the reports are PHI. Written finalize-time by
     the context corrector's learning hook; separate from the shipped seed
     corpus so an app update never clobbers it.
     """
@@ -221,7 +221,7 @@ def run_log_path() -> Path:
 
     Written by ``features/run_log.py``. Unlike the audit log this one is capped
     and rolls: it is diagnostics, not a retention record, and it may hold report
-    text — so it is bounded on purpose. Local only, like everything under
+    text: so it is bounded on purpose. Local only, like everything under
     ``data/``.
     """
     return _data_dir() / "runs.jsonl"
@@ -269,14 +269,14 @@ def analysis_dir() -> Path:
     return path
 
 # ---------------------------------------------------------------------------
-# Dictation evaluation corpus (accuracy/speed measurement — local only)
+# Dictation evaluation corpus (accuracy/speed measurement: local only)
 # ---------------------------------------------------------------------------
 
 def eval_dir() -> Path:
     """Root for the dictation evaluation gold sets and their reports.
 
     Not under :func:`cache_dir` on purpose: the ``own`` set is the user's own
-    voice recordings and the ``bench`` set is hand-corrected — neither is
+    voice recordings and the ``bench`` set is hand-corrected: neither is
     rebuildable, so a ``clear_cache()`` must never take them. The ``libri`` and
     ``tts`` subdirectories *are* regenerable via ``scripts/eval/build_sets.py``
     and are safe to delete individually.
@@ -306,7 +306,7 @@ def eval_manifest_path(name: str) -> Path:
     return eval_set_dir(name) / "manifest.jsonl"
 
 def eval_reports_dir() -> Path:
-    """Evaluation report JSONs, one per run — the milestone-to-milestone record."""
+    """Evaluation report JSONs, one per run: the milestone-to-milestone record."""
     path = eval_dir() / "reports"
     path.mkdir(exist_ok=True)
     return path
@@ -331,7 +331,7 @@ def imaging_dir() -> Path:
     """Root for scan assistant storage (datasets, overlays, thresholds).
 
     Rebuildable embedding caches live under :func:`imaging_embeddings_dir`
-    (data/cache/), not here — this dir holds only non-derived data.
+    (data/cache/), not here: this dir holds only non-derived data.
     """
     path = _data_dir() / "imaging"
     path.mkdir(exist_ok=True)

@@ -60,7 +60,7 @@ _WINDOW = 70  # character window to scan before/after term
 # Critical term lists
 # ---------------------------------------------------------------------------
 
-# Level 1 — life-threatening, immediate verbal communication required
+# Level 1: life-threatening, immediate verbal communication required
 _LEVEL_1_TERMS: List[str] = [
     "tension pneumothorax",
     "pneumothorax",
@@ -101,7 +101,7 @@ _LEVEL_1_TERMS: List[str] = [
     "myocardial infarction",
 ]
 
-# Level 2 — urgent, same-day communication required
+# Level 2: urgent, same-day communication required
 _LEVEL_2_TERMS: List[str] = [
     "pulmonary embolism",
     "filling defect",
@@ -203,7 +203,7 @@ def scan_for_critical_findings(text: str) -> List[CriticalFinding]:
     seen_terms: set = set()
     #: Where an accepted finding already sits. Terms are matched longest first,
     #: so "acute appendicitis" claims the words before plain "appendicitis" can
-    #: report the same phrase a second time — one clinical problem, one finding.
+    #: report the same phrase a second time: one clinical problem, one finding.
     claimed: List[Tuple[int, int]] = []
 
     for pattern, level in _TERM_PATTERNS:
@@ -226,8 +226,8 @@ def scan_for_critical_findings(text: str) -> List[CriticalFinding]:
                 # Only report if the negation itself is uncertain
                 continue
 
-            # Marked seen only once the mention is ACCEPTED. Marking it above —
-            # before the negation checks — meant a denial silenced every later
+            # Marked seen only once the mention is ACCEPTED. Marking it above,
+            # before the negation checks, meant a denial silenced every later
             # real mention of the same term, and "no pneumothorax on the prior
             # film ... large right pneumothorax" is ordinary report prose, so the
             # whole report scanned clear and no acknowledgement was ever asked
@@ -260,9 +260,9 @@ def format_findings_for_dialog(findings: List[CriticalFinding]) -> str:
     for f in findings:
         qualifier = ""
         if f.uncertain:
-            qualifier = " [UNCERTAIN — cannot exclude]"
+            qualifier = " [UNCERTAIN, cannot exclude]"
         elif f.negated:
-            qualifier = " [negated — verify context]"
+            qualifier = " [negated, verify context]"
         severity = "⚠ LIFE-THREATENING" if f.level == 1 else "⚠ URGENT"
         lines.extend(
             (

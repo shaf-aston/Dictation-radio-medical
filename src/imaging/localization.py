@@ -9,7 +9,7 @@ renders an overlay PNG.
 Grad-CAM is hand-rolled (~one hook + a weighted sum) rather than pulling in
 another dependency, keeping the imaging extra lean. Torch/skimage are imported
 lazily. If localization fails for a finding, the caller (the analyzer) withholds
-that finding — a finding with no shown evidence is worse than no finding.
+that finding: a finding with no shown evidence is worse than no finding.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def localize(
     """Compute a Grad-CAM bounding region (fractional coords) per finding label.
 
     Returns ``{label: (x0, y0, x1, y1)}`` for labels that localised successfully;
-    labels that fail are simply absent from the map. Best-effort — never raises,
+    labels that fail are simply absent from the map. Best-effort: never raises,
     so a localization failure degrades to "finding withheld", not a crash.
     """
     if not findings:

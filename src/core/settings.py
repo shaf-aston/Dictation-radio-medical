@@ -22,7 +22,7 @@ _DEFAULTS: dict = {
     # on the `tts` gold set at 0.90 the gate blocked two rewrites and both were
     # correct ones, so it could only subtract. Whisper is confidently wrong often
     # enough that its confidence does not separate a misheard word from a heard
-    # one — at least not on synthetic audio, where every word scores high.
+    # one: at least not on synthetic audio, where every word scores high.
     # Set a float to switch it on; the honest test is the `own` set, real
     # acoustics, where confidence actually varies. See docs/dictation-accuracy.md.
     "correction_confidence_ceiling": None,
@@ -35,7 +35,7 @@ _DEFAULTS: dict = {
     # shorter than chunk_min_sec, cut at the latest pause found by
     # chunk_soft_max_sec if one exists, otherwise force-cut at
     # chunk_force_cut_sec regardless of whether a pause was found (the only
-    # case that can land mid-word — see ChunkPolicy's docstring).
+    # case that can land mid-word: see ChunkPolicy's docstring).
     "chunk_min_sec": 6.0,
     "chunk_soft_max_sec": 15.0,
     "chunk_force_cut_sec": 20.0,
@@ -43,7 +43,7 @@ _DEFAULTS: dict = {
     "live_beam_size": 2,        # beam=1 caused repetition; beam=2 still real-time
     # Every decode that is not the live loop: the desktop's post-stop polish and
     # the web app's one-shot upload. Both are "transcribe this once, properly",
-    # so they share one knob — the web app used to have its own copy of it.
+    # so they share one knob: the web app used to have its own copy of it.
     "final_beam_size": 5,
     # The live preview of the still-open tail is dropped once that tail is
     # longer than this AND the machine is measured to decode slower than speech
@@ -60,8 +60,8 @@ _DEFAULTS: dict = {
     # would make the marks worth nothing.
     "uncertain_word_confidence": 0.6,
     # Hard safety-net minimum below which a clip is always silence, however
-    # quiet the room has been. The working threshold is adaptive above this —
-    # see silence_rms_margin (rules.AdaptiveFloor) — so a quiet talker isn't
+    # quiet the room has been. The working threshold is adaptive above this,
+    # see silence_rms_margin (rules.AdaptiveFloor), so a quiet talker isn't
     # judged against a level tuned for someone else's voice.
     "silence_rms_floor": 0.0005,
     # A clip counts as silence only when it is this many times quieter than
@@ -69,13 +69,13 @@ _DEFAULTS: dict = {
     "silence_rms_margin": 2.5,
     "autosave_retention_days": 30,  # days to keep autosave files
     # --- Web front-end (src/ui/web_app.py) ---
-    "web_host": "127.0.0.1",    # loopback only — the app is offline by default
+    "web_host": "127.0.0.1",    # loopback only: the app is offline by default
     "web_port": 8005,
     "max_upload_mb": 50,        # reject audio uploads larger than this
     # Two models, one dictation. This small one decodes the words that appear
     # while you are still speaking; `model_size` above re-decodes after Stop,
     # where being right matters more than being quick. Whisper's model cache
-    # holds two (transcriber._MODEL_CACHE_MAX), so this pair costs no reloads —
+    # holds two (transcriber._MODEL_CACHE_MAX), so this pair costs no reloads:
     # naming a third distinct model here would make them evict each other.
     "live_model_size": "tiny.en",
     "live_cycle_sec": 0.5,      # how often the live loop looks for new audio
@@ -95,7 +95,7 @@ _DEFAULTS: dict = {
     # Local diagnostics: one record per dictation. Capped because each record
     # can hold a full report, and rolling beats growing without limit.
     "run_log_max": 200,
-    # The report text alongside the numbers — that output is the point of the
+    # The report text alongside the numbers: that output is the point of the
     # page. Turn off to keep every timing and drop only the body.
     "run_log_store_text": True,
     # --- Live event diary (core/event_log.py, shown in the developer panel) ---
@@ -123,7 +123,7 @@ _DEFAULTS: dict = {
 
 
 def get_default(key: str) -> Any:
-    """The shipped default for *key* — the single source of truth for defaults.
+    """The shipped default for *key*: the single source of truth for defaults.
 
     Callers that mirror settings elsewhere (the web client's preferences
     payload) read defaults from here rather than re-listing them, which is how

@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 LIVE_SAMPLE_RATE = 16000
 
 transcriber_lock = Lock()
-# One engine per model name — the live model and the final model coexist.
+# One engine per model name: the live model and the final model coexist.
 asr_engines: dict = {}
 
 THEME_STORAGE_KEY = "radio-dictate-theme"
@@ -131,7 +131,7 @@ def _normalize_theme(theme: object) -> str:
 
 
 #: Settings keys the browser client mirrors. The *values* come from
-#: ``settings._DEFAULTS`` — re-listing them here is how the web and desktop
+#: ``settings._DEFAULTS``: re-listing them here is how the web and desktop
 #: defaults drifted apart.
 _PREFERENCE_KEYS = (
     "model_size", "language", "vad_filter", "accent", "cleanup_level",
@@ -186,7 +186,7 @@ def _template_names() -> list[str]:
 
 #: The front-end lives in real .html/.css/.js files next to this module rather
 #: than in a Python string, so it can be edited, linted and diffed like code.
-#: Only these three are ever served — the name is never taken from a request.
+#: Only these three are ever served: the name is never taken from a request.
 FRONTEND_DIR = Path(__file__).parent / "frontends"
 _FRONTEND_FILES = {
     "app.html": "text/html; charset=utf-8",
@@ -210,7 +210,7 @@ _PAGE_FILES = {"app.html", "developer.html"}
 def _frontend_file(name: str) -> str:
     """Read one bundled front-end file.
 
-    Cached in memory, but keyed on the file's modification time — so editing
+    Cached in memory, but keyed on the file's modification time: so editing
     app.js shows up on the next reload instead of needing a server restart.
     The old cache made a stale front-end indistinguishable from a working one:
     the browser went on using the previous release's code against the current
@@ -286,7 +286,7 @@ def _bootstrap_payload() -> dict:
         "term_lookup_uses": int(_settings().get("term_lookup_uses", 0) or 0),
         "term_lookup_hint_uses": int(_settings().get("term_lookup_hint_uses", 3) or 3),
         # The first-launch clinical disclaimer, shipped with the rest of the
-        # first-load state rather than fetched separately — the page must be
+        # first-load state rather than fetched separately: the page must be
         # able to show it before the radiologist can type anything.
         #
         # There is deliberately no learning-consent equivalent here: adaptive
@@ -327,7 +327,7 @@ def _resolve_template_path(template_name: str) -> Path:
 def _render_html(theme: str) -> str:
     """The page shell, with the saved theme and the bootstrap state injected.
 
-    The markup, styles and script are real files under ``frontends/`` — only
+    The markup, styles and script are real files under ``frontends/``: only
     two things vary per request, so only two things are substituted. The
     template list is no longer injected as markup: it is already in the
     bootstrap payload, and the page builds the options from there.
@@ -379,7 +379,7 @@ async def lifespan(_: FastAPI):
     logger.info("Preparing web app state...")
     asr_engines.clear()
     # Same startup housekeeping as the desktop GUI (temp files, old
-    # autosaves, legacy cache locations) — a web-only user must not miss it.
+    # autosaves, legacy cache locations): a web-only user must not miss it.
     startup_cleanup(_settings().get("autosave_retention_days", 30))
     _warm_up_singletons()
     yield
@@ -404,7 +404,7 @@ def _warm_up_singletons() -> None:
     live_model_size = resolve_model(settings.get("live_model_size"))
     warmers = postprocess_warmers() + [transcriber_warmer(model_size)]
     # The live model decodes every word shown while the radiologist is still
-    # speaking — leaving it lazy means the FIRST dictation after every
+    # speaking: leaving it lazy means the FIRST dictation after every
     # restart pays its full model-load cost on that exact path, so the first
     # sentence stalls for several seconds before any text appears.
     if live_model_size != model_size:
@@ -441,7 +441,7 @@ async def root():
 async def developer_page():
     """Local diagnostics: every dictation run, and how each one behaved.
 
-    Unlisted on purpose — no link from the reporting UI. It is for whoever is
+    Unlisted on purpose: no link from the reporting UI. It is for whoever is
     asking why dictation felt slow, not part of writing a report.
     """
     return HTMLResponse(
@@ -562,7 +562,7 @@ async def load_template(template_name: str):
 
 #: The report currently open in the browser, and which of its findings have
 #: been answered for. One instance, because this server is a loopback,
-#: single-radiologist workstation with one report open at a time — the same
+#: single-radiologist workstation with one report open at a time: the same
 #: shape as the one desktop window. It is the *same* class the desktop reads
 #: (``features/report_release.OutstandingFindings``), so the count, the marks
 #: and the meaning of "acknowledged" cannot drift between the two front-ends.
@@ -575,7 +575,7 @@ async def report_findings_endpoint(payload: TextRequest):
     """Re-scan the open report and return what the gutter strip should show.
 
     Positions come back with the findings so the browser can place a mark
-    without knowing any of the scanning rules — exactly what the desktop gutter
+    without knowing any of the scanning rules: exactly what the desktop gutter
     reads off the same object.
     """
     _findings.update(payload.text)
@@ -598,7 +598,7 @@ async def report_findings_endpoint(payload: TextRequest):
 
 @app.post("/api/report/findings/reset")
 async def reset_findings_endpoint():
-    """Forget this report's findings and its acknowledgements — a new report.
+    """Forget this report's findings and its acknowledgements: a new report.
 
     Acknowledgement answers "has this been phoned through for *this* patient",
     so carrying it into the next report would show the next patient's identical
@@ -611,7 +611,7 @@ async def reset_findings_endpoint():
 def _confirm_release(payload: ReportRequest) -> None:
     """Refuse to emit a report the radiologist has not answered for yet.
 
-    The HTTP shape of the shared gate in ``features/report_release.py`` — the rules
+    The HTTP shape of the shared gate in ``features/report_release.py``: the rules
     and the audit trail live there, alongside the desktop front-end's dialog. Enforced
     here rather than in the browser so a client that forgets to ask cannot silently
     skip the warning.
@@ -632,7 +632,7 @@ def _confirm_release(payload: ReportRequest) -> None:
         )
 
     # Scanned through the shared state object, so this answer settles the same
-    # count the strip in the browser is showing — and a finding typed in after
+    # count the strip in the browser is showing: and a finding typed in after
     # an acknowledgement puts it back to outstanding, rather than riding out on
     # an answer given before it existed.
     _findings.update(payload.text)
@@ -727,8 +727,8 @@ def _record_web_run(
 
     Both browser paths land here. The one-shot upload has no separate "catching
     up after Stop", so it leaves *finalise_sec* at zero rather than inventing
-    one; the live socket fills it in, because for streaming that number — how
-    long after the last word the final text arrived — is the whole point.
+    one; the live socket fills it in, because for streaming that number, how
+    long after the last word the final text arrived, is the whole point.
     """
     record = run_log.start("web", model=str(prefs.get("model_size", "")))
     record.audio_sec = audio_sec
@@ -799,7 +799,7 @@ async def perf_endpoint():
     """Rolling stage timings for this process (local only, nothing is sent out).
 
     This is the "tracking" surface: it shows where dictation time actually goes
-    — per post-process stage, per transcription — so a slowdown can be pointed
+, per post-process stage, per transcription, so a slowdown can be pointed
     at rather than guessed at.
     """
     return {"stages": perf.snapshot(), "gauges": perf.gauges()}
@@ -810,7 +810,7 @@ async def events_endpoint(after: int = 0, limit: int = 500):
     """The live diary: what happened since event *after*, oldest first.
 
     The developer panel passes back the last sequence number it printed, so a
-    poll only ever carries what is new. Local only — this reads a buffer in
+    poll only ever carries what is new. Local only: this reads a buffer in
     this process and serves it on loopback; nothing is stored or sent out.
     """
     return {
@@ -841,7 +841,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         prefs = _current_preferences()
         pause_threshold = settings.get("pause_threshold", 2.5)
         # A one-shot batch transcription of the whole clip, not the
-        # latency-critical live loop — so it wants the same proper beam search as
+        # latency-critical live loop: so it wants the same proper beam search as
         # the desktop's post-stop polish, and reads the same setting. Two names
         # for one decision is how the two front-ends drift apart.
         beam_size = int(settings.get("final_beam_size"))
@@ -850,7 +850,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         # multi-second/CPU-bound. Run them in a worker thread so a request does
         # not block the event loop and stall every other concurrent request.
         # Timed per request as well as into perf. perf is never reset on this
-        # path, so its snapshot is cumulative for the process — which is the
+        # path, so its snapshot is cumulative for the process: which is the
         # right thing for /api/debug/perf and the wrong thing for one run's
         # record. These are this run's own numbers.
         run_stages: dict = {}
@@ -898,7 +898,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
 # ---------------------------------------------------------------------------
 # Live dictation over a WebSocket.
 #
-# The browser sends raw 16-bit PCM at 16 kHz — no container, no codec. That is
+# The browser sends raw 16-bit PCM at 16 kHz: no container, no codec. That is
 # the whole reason this can stream: webm/opus blobs from MediaRecorder are not
 # independently decodable, so a live loop would have to re-decode the container
 # from the start every cycle. Raw frames just append to a buffer.
@@ -911,7 +911,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
 
 
 def _live_session(settings, prefs: dict) -> LiveSession:
-    """Build a session from saved settings — the only place the knobs are read."""
+    """Build a session from saved settings: the only place the knobs are read."""
     live_model = resolve_model(settings.get("live_model_size", get_default("live_model_size")))
     final_model = resolve_model(prefs.get("model_size") or settings.get("model_size"))
     # The knobs are read here and nowhere else, so this is the one honest place
@@ -971,7 +971,7 @@ async def dictate_socket(ws: WebSocket) -> None:
     cycles = 0
     event_log.emit("live", "dictation socket open", cycle_sec=cycle_sec)
     # A decode (the preview or a closing chunk) costs whole seconds on this
-    # machine (see should_skip_preview's docstring) — awaiting it here before
+    # machine (see should_skip_preview's docstring): awaiting it here before
     # looping back to receive() would stall reading the socket for that long,
     # and the microphone does not pause while it waits. Running each cycle as
     # a background task instead means incoming audio is always drained
@@ -1056,19 +1056,19 @@ async def dictate_socket(ws: WebSocket) -> None:
                     audio_sec=round(session.audio_sec, 1), chunks=session.chunks_decoded,
                 )
                 # A cycle may still be decoding a chunk the ledger hasn't
-                # committed yet — finalize() must see that commit, not race it.
+                # committed yet: finalize() must see that commit, not race it.
                 if cycle_task is not None and not cycle_task.done():
                     with event_log.timed("live", "waited for the in-flight decode"):
                         await cycle_task
                 # Close the still-open tail with the fast model first. Without
                 # this the hand-back is everything except the last chunk, and
-                # the last chunk is where the impression lives — a report that
+                # the last chunk is where the impression lives: a report that
                 # says "ready to edit" while a third of it is still missing is
                 # worse than one that took a second longer to arrive.
                 with event_log.timed("live", "closing the last section", stage="web.stop_tail"):
                     await anyio.to_thread.run_sync(session.close_open_tail_fast)
                 # Now hand it back. The radiologist has been reading this text
-                # as they spoke it, so it is theirs to edit — the accurate
+                # as they spoke it, so it is theirs to edit: the accurate
                 # re-decode below is an upgrade, not a gate, and blocking on it
                 # would put the old wait straight back.
                 await send({
@@ -1107,7 +1107,7 @@ async def dictate_socket(ws: WebSocket) -> None:
     except Exception as exc:
         logger.error("Live dictation failed: %s", exc, exc_info=True)
         event_log.emit("live", f"dictation failed: {exc}", level="error")
-        await send({"type": "error", "message": "Dictation failed. Your audio is still in the browser — press Retry."})
+        await send({"type": "error", "message": "Dictation failed. Your audio is still in the browser: press Retry."})
     finally:
         if cycle_task is not None and not cycle_task.done():
             cycle_task.cancel()

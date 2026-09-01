@@ -6,7 +6,7 @@ acknowledgement, learning reset) is written as a JSON-line entry.
 The log file is opened in append mode and is never truncated by this module.
 
 Log location: data/audit.log
-Retention: files are never deleted automatically — manual archival required
+Retention: files are never deleted automatically: manual archival required
            after the institutional retention period (recommended: 8 years).
 """
 
@@ -43,7 +43,7 @@ def _write(action: str, detail: Dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Public API — one function per loggable action
+# Public API: one function per loggable action
 # ---------------------------------------------------------------------------
 
 def log_report_saved(path: str, patient_id: str, word_count: int) -> None:

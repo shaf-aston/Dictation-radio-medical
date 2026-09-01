@@ -2,7 +2,7 @@
 
 The constraint that shapes this whole file is that **the radiologist's own
 characters are never touched**. No underline, no highlight, no background, no
-character format of any kind — the report is the thing being judged, and the
+character format of any kind: the report is the thing being judged, and the
 software does not write on it. So the marks live in a gutter widget of their
 own, painted next to the text rather than on it.
 
@@ -16,7 +16,7 @@ The interaction is one thing only: click a mark, and the phrase is scrolled to
 and selected in the editor.
 
 Like the term marks, it never runs during dictation (the region is being
-rewritten every second) and it decides nothing — which findings exist is
+rewritten every second) and it decides nothing: which findings exist is
 :class:`src.features.report_release.OutstandingFindings`. That service is
 written to be front-end agnostic, but today only this desktop window reads it;
 the web app gates its exports per request through ``check_release`` and shows
@@ -44,7 +44,7 @@ from src.ui.theme import tokens
 
 logger = logging.getLogger(__name__)
 
-#: Wait for typing to settle before re-scanning — the scan reads the whole
+#: Wait for typing to settle before re-scanning: the scan reads the whole
 #: document, so it must not run per keystroke.
 SCAN_DELAY_MS = 400
 
@@ -80,7 +80,7 @@ class FindingGutter(QWidget):
         self._hit_boxes: List[Tuple[int, CriticalFinding]] = []
 
         self.setFixedWidth(GUTTER_WIDTH)
-        self.setToolTip("Critical and urgent findings — click a mark to jump to it")
+        self.setToolTip("Critical and urgent findings: click a mark to jump to it")
 
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -90,7 +90,7 @@ class FindingGutter(QWidget):
         # Driven by MainWindow._on_text_changed, NOT by editor.textChanged
         # directly: every path that writes dictated text into the editor blocks
         # the editor's signals and calls _on_text_changed by hand, so a widget
-        # listening to textChanged never sees a dictated report at all — which
+        # listening to textChanged never sees a dictated report at all: which
         # is the one report this strip exists to mark.
         #
         # Nothing listens to scrolling either: a mark's position comes from the
@@ -110,7 +110,7 @@ class FindingGutter(QWidget):
         """Re-scan the report now and show what it found."""
         if self._is_dictating():
             # The dictated region is rewritten every cycle, so offsets taken now
-            # would be stale before they were painted. Stand down — but leave
+            # would be stale before they were painted. Stand down: but leave
             # the state alone: scanning "" here would overwrite the shared
             # OutstandingFindings the count pill reads, flipping it to "No
             # findings" for a report that has them, and nothing would restore it
@@ -137,7 +137,7 @@ class FindingGutter(QWidget):
         Marks are placed by position **in the document**, not by where the text
         currently sits on screen, so the strip always shows every finding the
         report has. Placing them by screen position instead meant a finding
-        three pages down had no mark and therefore nothing to click — and
+        three pages down had no mark and therefore nothing to click: and
         reaching a finding you cannot already see is the entire interaction.
 
         A mark for text scrolled off the top or bottom is pinned to the nearest
@@ -205,7 +205,7 @@ class FindingGutter(QWidget):
         self._select(hit[1])
 
     def _select(self, finding: CriticalFinding) -> None:
-        """Scroll to the finding and select its words — the whole interaction."""
+        """Scroll to the finding and select its words: the whole interaction."""
         if not self._span_still_matches(finding):
             # The document moved under the debounced offsets; selecting anyway
             # would highlight unrelated text and present it as the finding.

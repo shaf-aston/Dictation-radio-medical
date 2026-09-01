@@ -15,7 +15,7 @@ hnswlib>=0.8
 # Medical dictionary fuzzy matching
 rapidfuzz>=3.0.0
 
-# Offline English dictionary — the non-word guard for the spelling corrector.
+# Offline English dictionary: the non-word guard for the spelling corrector.
 # Bundles its own frequency dict (no network). When absent, the corrector
 # degrades to a conservative ratio-only mode rather than risk over-correction.
 pyspellchecker>=0.8
@@ -24,7 +24,7 @@ pyspellchecker>=0.8
 # deletion-dictionary over the ~98k-term wordlist keeps "nearest known term
 # within edit distance N" lookups sub-millisecond even with a large candidate
 # pool. When absent, the corrector falls back to the slower rapidfuzz ratio path.
-# editdistpy is symspellpy's fast (C) distance backend — since symspellpy 6.10 it
+# editdistpy is symspellpy's fast (C) distance backend: since symspellpy 6.10 it
 # is an OPTIONAL extra, and without it get_symspell()'s lookups raise ImportError
 # and silently drop to the ~200x slower rapidfuzz 98k-term scan (which also fails
 # to correct one-letter medical typos). Pin it explicitly so a fresh install gets
@@ -45,13 +45,13 @@ python-multipart>=0.0.6
 jinja2>=3.1.2
 httpx>=0.24.0
 
-# Cloud training (Lightning AI) — local side only.
+# Cloud training (Lightning AI): local side only.
 # The API key is stored in the OS keychain via keyring; httpx (above) is the
 # REST transport. Model fine-tuning itself runs on Lightning AI using the
 # heavier deps listed in scripts/lightning/requirements_cloud.txt.
 keyring>=24.0
 
-# Evaluation harness (scripts/eval) — development-time only, not needed to run
+# Evaluation harness (scripts/eval): development-time only, not needed to run
 # the app. Only used to synthesise the `tts` gold set via the offline Windows
 # speech engine; the builder fails with an install hint if it is absent.
 # Accuracy metrics reuse rapidfuzz (above) rather than adding jiwer, since the

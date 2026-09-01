@@ -5,9 +5,9 @@ shows a dialog, the web app answers 409. Neither owns the rules, so neither can
 drift from the other; this module has no Qt, no HTTP and no dialog vocabulary
 in it.
 
-1. **Unfilled template fields** (``unfilled_fields``) — report quality. The
+1. **Unfilled template fields** (``unfilled_fields``): report quality. The
    answer *can* cancel: "No" means the report does not leave. Not audited.
-2. **Critical or urgent findings** (``check_release`` / ``record_release``) —
+2. **Critical or urgent findings** (``check_release`` / ``record_release``):
    clinical safety. The report is **never withheld**: a radiologist must always
    be able to get their report out, so both answers proceed and only the audit
    entry differs.
@@ -38,14 +38,14 @@ logger = logging.getLogger(__name__)
 
 #: What a template leaves behind for the radiologist to fill in: a SHOUTED
 #: bracketed name (``[FINDINGS]``) or a moustache placeholder (``{{name}}``).
-#: Deliberately narrow — ``[5 mm]`` and ``[Findings]`` are ordinary text.
+#: Deliberately narrow: ``[5 mm]`` and ``[Findings]`` are ordinary text.
 _UNFILLED_FIELD_RE = re.compile(r"\[([A-Z][A-Z0-9 _/-]{1,40})\]|\{\{([^}]{1,40})\}\}")
 
 
 def unfilled_fields(text: str) -> Tuple[str, ...]:
     """Return the placeholder names still in *text*, in first-appearance order.
 
-    Each name appears once however often it was left in the report — the
+    Each name appears once however often it was left in the report: the
     question asked is "which fields are unfilled?", not "how many brackets are
     there?". Empty when the report is clean.
     """
@@ -60,7 +60,7 @@ class ReleaseCheck:
     findings: Tuple[CriticalFinding, ...] = ()
     #: Human-readable list of the findings; "" when there is nothing to show.
     summary: str = ""
-    #: Most severe level present — 1 = life-threatening, 2 = urgent, 0 = clear.
+    #: Most severe level present: 1 = life-threatening, 2 = urgent, 0 = clear.
     worst_level: int = 0
 
     @property
@@ -108,7 +108,7 @@ class OutstandingFindings:
 
     Answers are kept per finding, so an edit that introduces a *new* finding
     leaves that one outstanding while the ones already communicated stay
-    answered — and deleting a finding never un-answers the rest.
+    answered: and deleting a finding never un-answers the rest.
 
     Answers belong to **one report**. Whoever owns an instance must call
     :meth:`reset` when the editor moves to a different report, or an
@@ -131,7 +131,7 @@ class OutstandingFindings:
         self.check = check_release(text)
 
     def reset(self) -> None:
-        """Forget this report entirely — a different report is being loaded."""
+        """Forget this report entirely: a different report is being loaded."""
         self.check = _CLEAR
         self.answered = frozenset()
 
@@ -174,8 +174,8 @@ def record_release(
 ) -> None:
     """Write the radiologist's answer to the audit log.
 
-    ``acknowledged`` True means verbal communication was confirmed — logged per
-    finding. False means they proceeded anyway — logged once, as an override.
+    ``acknowledged`` True means verbal communication was confirmed: logged per
+    finding. False means they proceeded anyway: logged once, as an override.
 
     Takes the findings actually being answered for, not the whole scan: an audit
     entry claims a phone call happened, so exporting the same report twice must

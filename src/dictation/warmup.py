@@ -1,22 +1,22 @@
 """Background pre-warming of the heavy dictation singletons.
 
 Two things dominate first-use latency, and both are built lazily on the *first*
-spoken chunk — so the app feels frozen at exactly the moment the radiologist
+spoken chunk: so the app feels frozen at exactly the moment the radiologist
 starts talking:
 
-* the SymSpell medical-spelling index — ~1.3 s to build (or unpickle) on every
+* the SymSpell medical-spelling index: ~1.3 s to build (or unpickle) on every
   launch, paid inside the fuzzy-match post-process stage;
-* the Whisper model — a few seconds on the first ``transcribe()``.
+* the Whisper model: a few seconds on the first ``transcribe()``.
 
 This module moves that cost to app startup, on a background thread, so first use
-is instant. It only calls the *existing* lazy loaders — it owns no data and does
+is instant. It only calls the *existing* lazy loaders: it owns no data and does
 no I/O of its own, so it adds no new failure mode: any warmer that raises is
 logged and skipped, and the ordinary lazy path still runs on first use.
 
 Design notes (loose coupling / SRP):
 
 * A **warmer** is just ``(name, callable)``. The set is data, not hard-coded
-  control flow — front-ends compose the list they need (see
+  control flow: front-ends compose the list they need (see
   :func:`postprocess_warmers` and :func:`transcriber_warmer`).
 * No Qt, no ``settings`` import here. The caller resolves the model size and
   passes it in, so this module stays a pure, testable utility usable from the
@@ -77,7 +77,7 @@ def _warm_english_guard() -> None:
 def _warm_term_lookup() -> None:
     # Mines the lexicon's stem families and reads the curated relations file
     # (~150 ms) for the highlight-a-word panel. Warmed here, with the rest,
-    # because both front-ends already call this list — a warmer added only to
+    # because both front-ends already call this list: a warmer added only to
     # one of them is how the two drift apart.
     from src.medical import term_lookup
 
@@ -85,7 +85,7 @@ def _warm_term_lookup() -> None:
 
 
 def postprocess_warmers() -> List[Warmer]:
-    """Warmers for the pure-Python singletons — no model, no settings needed.
+    """Warmers for the pure-Python singletons: no model, no settings needed.
 
     Always safe to run: these are device-agnostic index builds, wanted by every
     front-end before the radiologist's first word (or first highlight).
@@ -126,7 +126,7 @@ def _run_warmer(name: str, fn: Callable[[], object]) -> None:
 
 
 def warm_up(warmers: Optional[Iterable[Warmer]] = None) -> None:
-    """Run every warmer once — concurrently — timed under ``warmup.<name>``.
+    """Run every warmer once, concurrently, timed under ``warmup.<name>``.
 
     Each warmer runs on its own daemon thread so the multi-second Whisper model
     load overlaps the pure-Python index builds instead of queuing behind them:
@@ -134,10 +134,10 @@ def warm_up(warmers: Optional[Iterable[Warmer]] = None) -> None:
     ≈14.5s serial when the model load and the SymSpell build are both present).
     The warmers touch independent singletons, each guarded by its own lock
     (`_MODEL_CACHE_LOCK`, `medical_dict._LOCK`) or idempotent, and `perf.record`
-    is lock-guarded — so concurrent execution is safe.
+    is lock-guarded: so concurrent execution is safe.
 
     Blocks until every warmer has finished. A warmer that raises is logged and
-    skipped — pre-warming is a latency optimisation, never a correctness
+    skipped: pre-warming is a latency optimisation, never a correctness
     dependency, so it must never break startup.
     """
     resolved = postprocess_warmers() if warmers is None else list(warmers)
@@ -157,7 +157,7 @@ def warm_up(warmers: Optional[Iterable[Warmer]] = None) -> None:
 def warm_up_async(
     warmers: Optional[Iterable[Warmer]] = None,
 ) -> Optional[threading.Thread]:
-    """Warm up on a daemon thread. Idempotent — only the first call starts it.
+    """Warm up on a daemon thread. Idempotent: only the first call starts it.
 
     Returns the started thread, or ``None`` if warming has already begun this
     process (so a second front-end call, or a test, is a harmless no-op).
@@ -178,7 +178,7 @@ def warm_up_async(
 def reset() -> None:
     """Clear the once-only guard so :func:`warm_up_async` can start again.
 
-    For tests only — production warms exactly once per process.
+    For tests only: production warms exactly once per process.
     """
     global _started
     with _start_lock:

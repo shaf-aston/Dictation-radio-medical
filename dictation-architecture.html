@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Radiology dictation platform — architecture</title>
+<title>Radiology dictation platform: architecture</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -76,15 +76,15 @@
 <body>
 
 <header><div class="headinner">
-  <div class="eyebrow">Architecture — all zoom levels</div>
+  <div class="eyebrow">Architecture: all zoom levels</div>
   <h1>Radiology dictation platform</h1>
   <p class="lede">One document, four levels of detail. Starts with where the system sits in a hospital and ends with exactly what happens to a single corrected word.</p>
   <nav class="toc">
     <div>Contents</div>
-    <a href="#l1">Level 1 <span>— where the platform sits</span></a>
-    <a href="#l2">Level 2 <span>— the four parts</span></a>
-    <a href="#l3">Level 3 <span>— inside each part</span></a>
-    <a href="#l4">Level 4 <span>— the detail that matters</span></a>
+    <a href="#l1">Level 1 <span>, where the platform sits</span></a>
+    <a href="#l2">Level 2 <span>, the four parts</span></a>
+    <a href="#l3">Level 3 <span>, inside each part</span></a>
+    <a href="#l4">Level 4 <span>, the detail that matters</span></a>
     <a href="#loop">The loop, in one page</a>
   </nav>
 </div></header>
@@ -93,7 +93,7 @@
 
 <!-- LEVEL 1 -->
 <section id="l1">
-  <div class="lvl">Level 1 — context</div>
+  <div class="lvl">Level 1: context</div>
   <h2>Where the platform sits</h2>
   <p class="note">The widest view: who uses it, what it produces, and the conditions it has to run inside.</p>
 
@@ -154,7 +154,7 @@
 
 <!-- LEVEL 2 -->
 <section id="l2">
-  <div class="lvl">Level 2 — the four parts</div>
+  <div class="lvl">Level 2: the four parts</div>
   <h2>Inside the platform</h2>
   <p class="note">Two parts run while someone is speaking. One runs when they read the text back. One runs overnight.</p>
 
@@ -201,9 +201,9 @@
 
 <!-- LEVEL 3 -->
 <section id="l3">
-  <div class="lvl">Level 3 — inside each part</div>
+  <div class="lvl">Level 3: inside each part</div>
   <h2>What each part is made of</h2>
-  <p class="note">The same four parts, opened up one layer. Each component below is a distinct job with a clear boundary — nothing here does two things at once.</p>
+  <p class="note">The same four parts, opened up one layer. Each component below is a distinct job with a clear boundary: nothing here does two things at once.</p>
 
   <h3>Capture &amp; recognition</h3>
   <ul class="b amber">
@@ -214,26 +214,26 @@
 
   <h3>Vocabulary &amp; personalization</h3>
   <ul class="b amber">
-    <li>Saved word list<span>Holds the terms this radiologist actually uses — drug names, devices, eponyms, referring clinicians, local place names. Without it, the system falls back to whatever common word sounds closest, which is where most "it never gets my accent" complaints really come from.</span></li>
+    <li>Saved word list<span>Holds the terms this radiologist actually uses: drug names, devices, eponyms, referring clinicians, local place names. Without it, the system falls back to whatever common word sounds closest, which is where most "it never gets my accent" complaints really come from.</span></li>
     <li>Personal voice profile<span>The accumulated result of everything this person has corrected so far, applied to how their speech is read. It is small, individual, and completely separate from the model everyone else shares.</span></li>
   </ul>
 
   <h3>Correction &amp; review</h3>
   <ul class="b violet">
     <li>Final check before signing<span>A deliberate look for the specific errors that read as perfectly plausible on the page. These are the ones a normal proofread misses, because the sentence still makes sense when it is wrong.</span></li>
-    <li>Fix capture<span>Records every correction in full at the moment it is made. This step does double duty — it is a safety action for the patient and, at the same time, the only source of learning data the system will ever receive.</span></li>
+    <li>Fix capture<span>Records every correction in full at the moment it is made. This step does double duty: it is a safety action for the patient and, at the same time, the only source of learning data the system will ever receive.</span></li>
   </ul>
 
   <h3>Training &amp; adaptation</h3>
   <ul class="b teal">
-    <li>Overnight update<span>Collects the day's corrections and uses them to adjust this one person's profile. It runs unattended, once a night, rather than continuously — so a single odd moment mid-shift can never destabilise recognition while someone is working.</span></li>
+    <li>Overnight update<span>Collects the day's corrections and uses them to adjust this one person's profile. It runs unattended, once a night, rather than continuously: so a single odd moment mid-shift can never destabilise recognition while someone is working.</span></li>
     <li>Quality check<span>Decides whether the new update is allowed near tomorrow's dictation. Nothing goes live on the assumption that more learning is automatically better; it has to be demonstrated first.</span></li>
   </ul>
 </section>
 
 <!-- LEVEL 4 -->
 <section id="l4">
-  <div class="lvl">Level 4 — the detail that matters</div>
+  <div class="lvl">Level 4: the detail that matters</div>
   <h2>The parts worth knowing precisely</h2>
   <p class="note">Six components where the specifics decide whether the whole thing works. Each is broken into the same shape: what it does, and the few decisions inside it that carry real weight.</p>
 
@@ -249,7 +249,7 @@
   <p class="note">Where speed and accuracy meet. Done properly, one does not cost the other.</p>
   <ul class="b amber">
     <li>Text streams out continuously<span>Words appear the moment they are said, so the radiologist can follow along as they dictate rather than waiting and then reviewing a wall of text.</span></li>
-    <li>Early guesses are allowed to change<span>A word can be revised a moment later once the rest of the phrase makes the meaning obvious. This is what lets it be both fast and accurate — it commits early but is not stuck with it.</span></li>
+    <li>Early guesses are allowed to change<span>A word can be revised a moment later once the rest of the phrase makes the meaning obvious. This is what lets it be both fast and accurate: it commits early but is not stuck with it.</span></li>
     <li>A strong shared model does the heavy lifting<span>It already understands general speech and radiology language well before anything personal is applied. Personalization is a refinement on top of something good, not a rescue of something weak.</span></li>
     <li>This person's profile sits on top<span>The shared model handles language; the personal profile handles this specific voice. Keeping them separate is what allows one to improve nightly without disturbing the other.</span></li>
   </ul>
@@ -257,7 +257,7 @@
   <h3>Cleanup pass</h3>
   <p class="note">Deliberately narrow. It only looks at error types with real clinical consequences.</p>
   <ul class="b violet">
-    <li>Numbers and units<span>A measurement in the wrong unit is never a harmless typo — it changes the finding. Comparisons against a prior study are the highest-risk case of all.</span></li>
+    <li>Numbers and units<span>A measurement in the wrong unit is never a harmless typo: it changes the finding. Comparisons against a prior study are the highest-risk case of all.</span></li>
     <li>Left and right<span>These read as entirely plausible when wrong, which is exactly what makes them dangerous. The sentence stays grammatical and sensible, so nothing about it prompts a second look.</span></li>
     <li>Negative words<span>Dropping a single "no" turns a normal finding into an abnormal one. They are short, unstressed, and easy to lose in fast speech, which is a poor combination for the most meaning-carrying word in the sentence.</span></li>
     <li>Nothing else is touched<span>Wording and style are left exactly as dictated. Restricting the pass this tightly is what guarantees it can only remove errors, never introduce new ones of its own.</span></li>
@@ -272,11 +272,11 @@
   </ul>
 
   <h3>Fix capture</h3>
-  <p class="note">All recorded automatically. Deleting the words and saying them again records none of it — which is exactly why the correction tool matters.</p>
+  <p class="note">All recorded automatically. Deleting the words and saying them again records none of it: which is exactly why the correction tool matters.</p>
   <ul class="b violet">
     <li>The short piece of audio<span>So the system can listen again to what was actually said rather than guess from text alone. Without the audio, a correction shows what was wrong but not why.</span></li>
     <li>What the system first wrote<span>The wrong text, kept so the mistake itself can be studied. Knowing what it reached for reveals which words it confuses with which.</span></li>
-    <li>What the radiologist changed it to<span>The correct text — the actual thing to be learned. This is the target the overnight update trains toward.</span></li>
+    <li>What the radiologist changed it to<span>The correct text: the actual thing to be learned. This is the target the overnight update trains toward.</span></li>
     <li>The words just before and after<span>So the fix is learned in its real context rather than as an isolated word swap. The same word can be right in one sentence and wrong in another, and only the surrounding words tell them apart.</span></li>
   </ul>
 
@@ -315,7 +315,7 @@
   <ul class="b teal">
     <li>Collect today's fixes, plus the last few days<span>A single day rarely holds enough corrections to reveal a real pattern. Widening the window slightly means the update learns habits rather than one afternoon's oddities.</span></li>
     <li>Set aside the ones that teach nothing<span>Duplicates of the same fix and anything with no matching audio behind it are dropped. Repeating one correction many times would skew the update toward that single word.</span></li>
-    <li>Adjust only this person's profile<span>The shared model underneath is left completely untouched. This is what makes nightly updates safe to run — the blast radius of a bad night is one individual, not the whole hospital.</span></li>
+    <li>Adjust only this person's profile<span>The shared model underneath is left completely untouched. This is what makes nightly updates safe to run: the blast radius of a bad night is one individual, not the whole hospital.</span></li>
     <li>Hold back a portion of the fixes<span>Some corrections are deliberately kept out of the update, so there is something honest left to test it against afterwards. Testing on material it already learned from would prove nothing.</span></li>
   </ul>
 
@@ -335,9 +335,9 @@
   <div class="lvl">The whole thing</div>
   <h2>The loop, in one page</h2>
   <div class="callout">
-    <b>Clean audio in.</b> A directional microphone in a consistent position gives the system the best possible signal — nothing downstream can recover what is lost here.
+    <b>Clean audio in.</b> A directional microphone in a consistent position gives the system the best possible signal: nothing downstream can recover what is lost here.
     <b>Live text out.</b> Words appear as they are spoken, shaped by this radiologist's saved word list and personal voice profile, then checked by a narrow cleanup pass for numbers, laterality and negative words.
-    <b>The radiologist corrects.</b> Every fix is captured in full — the audio, the wrong text, the right text, the surrounding words.
+    <b>The radiologist corrects.</b> Every fix is captured in full: the audio, the wrong text, the right text, the surrounding words.
     <b>Overnight, it learns.</b> The day's fixes adjust that one person's profile, a held-back portion tests whether it actually improved, and the update only goes live if it did.
     Tomorrow starts slightly better than today, every day, without anyone managing it.
   </div>
@@ -345,6 +345,6 @@
 
 </div>
 
-<footer>Architecture reference — function and data flow only. No implementation details or code-level naming.</footer>
+<footer>Architecture reference: function and data flow only. No implementation details or code-level naming.</footer>
 </body>
 </html>

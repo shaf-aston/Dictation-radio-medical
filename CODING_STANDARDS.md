@@ -1,7 +1,7 @@
 # CODING_STANDARDS.md
 
 These are the conventions already in force across `src/`. Descriptive, not
-aspirational — match them so the codebase stays uniform. For architecture and
+aspirational: match them so the codebase stays uniform. For architecture and
 module boundaries, and for `.claude/` agents/skills/workflows, see
 [CLAUDE.md](CLAUDE.md).
 
@@ -27,7 +27,7 @@ module boundaries, and for `.claude/` agents/skills/workflows, see
 
 - Standard top-of-file imports for lightweight, always-present dependencies.
 - **Lazily import heavy or optional dependencies inside the function that uses
-  them** — PySide6, `httpx`, `soundfile`, `keyring`, `rapidfuzz`, and the cloud
+  them**: PySide6, `httpx`, `soundfile`, `keyring`, `rapidfuzz`, and the cloud
   modules are imported at call sites, not module top-level. Keeps the offline
   pipeline importable without cloud/GUI deps and keeps startup fast.
 - No unused imports (`ruff` F401 must be clean).
@@ -50,7 +50,7 @@ module boundaries, and for `.claude/` agents/skills/workflows, see
   logged.
 - Any data destined to leave the device passes through `DeIdentifier` and
   `validate_clean()` first; on failure the record is dropped.
-- Treat downloaded/external archives as untrusted — validate member paths
+- Treat downloaded/external archives as untrusted: validate member paths
   before extracting (see `cloud/framework/sync.py::_extract_model`).
 
 ## Patient-safety (clinical ML output)
@@ -75,7 +75,7 @@ module boundaries, and for `.claude/` agents/skills/workflows, see
 ## Checking a change
 
 - There is no automated test suite. A change is checked by running the app and
-  exercising the path it touched — `python -m src.ui` for the desktop,
+  exercising the path it touched: `python -m src.ui` for the desktop,
   `python -m src.ui.web_app` for the browser.
 - `ruff check src scripts` must be green before shipping a change.
 - Exercise the safety-critical paths by hand when you touch them: PHI

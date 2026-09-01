@@ -1,7 +1,7 @@
 """The desktop half of "which words are worth a second look".
 
 :mod:`src.ui.term_popup` answers a highlighted word. This points at the words
-worth highlighting in the first place — otherwise the lookup only helps a
+worth highlighting in the first place: otherwise the lookup only helps a
 radiologist who already suspects something, and the words worth suspecting are
 exactly the ones that read as plausible.
 
@@ -9,7 +9,7 @@ Every mark is drawn with ``QTextEdit.setExtraSelections``, and that choice is
 the whole safety argument: extra selections live in the *view*, not the
 document. Nothing is inserted, so the undo stack is untouched and Copy, Save
 TXT and Export Word all emit exactly what the radiologist typed. A marking
-scheme that edited the text — inserting tags, or even zero-width characters —
+scheme that edited the text, inserting tags, or even zero-width characters,
 could leak a mark into a signed report, and this one cannot.
 
 Two behaviours it shares with the popup, for the same reasons:
@@ -23,7 +23,7 @@ Two behaviours it shares with the popup, for the same reasons:
 
 The colour is read from the theme tokens rather than written down here: extra
 selections are painted in code, so they are the one surface a stylesheet cannot
-reach. ``glow`` is the token for the machine's own suggestions — never ``rec``,
+reach. ``glow`` is the token for the machine's own suggestions: never ``rec``,
 which this app reserves for recording and clinical severity.
 """
 
@@ -102,7 +102,7 @@ class TermMarks(QObject):
         self._paint()
 
     def count(self) -> int:
-        """How many words are currently marked — what the hint line reports."""
+        """How many words are currently marked: what the hint line reports."""
         return len(self._spans)
 
     # -- drawing ------------------------------------------------------------

@@ -17,7 +17,7 @@ _CONFIGURED = False
 
 
 def setup_logging(level: int = logging.INFO, *, fmt: Optional[str] = None) -> None:
-    """Initialise the root logger.  Idempotent — safe to call multiple times."""
+    """Initialise the root logger.  Idempotent: safe to call multiple times."""
     global _CONFIGURED
     if _CONFIGURED:
         return

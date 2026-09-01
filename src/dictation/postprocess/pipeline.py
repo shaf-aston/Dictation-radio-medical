@@ -6,27 +6,27 @@ behaviour-changing so don't reshuffle without updating the tests in
 
 Stage order
 -----------
-0. Hallucination filter        — :func:`filter_hallucinations`
-1. Voice correction commands   — :func:`apply_correction_commands`
-2. Spoken punctuation          — :func:`apply_spoken_commands`
-3. Whitespace                  — :func:`normalize_spaces`
-4. Measurements                — :func:`apply_measurement_standardisation`
-5. Radiology terminology       — :func:`apply_terminology`
-6. Accent-specific Whisper fix — :func:`apply_accent_corrections`
-6.5 Split-compound rejoin      — :func:`rejoin_split_compounds` (before fuzzy so
+0. Hallucination filter: :func:`filter_hallucinations`
+1. Voice correction commands: :func:`apply_correction_commands`
+2. Spoken punctuation: :func:`apply_spoken_commands`
+3. Whitespace: :func:`normalize_spaces`
+4. Measurements: :func:`apply_measurement_standardisation`
+5. Radiology terminology: :func:`apply_terminology`
+6. Accent-specific Whisper fix, :func:`apply_accent_corrections`
+6.5 Split-compound rejoin, :func:`rejoin_split_compounds` (before fuzzy so
                                   "hydro nephrosis" becomes a real term instead
                                   of being mangled per-fragment)
-7. Medical dictionary fuzzy    — :func:`apply_medical_dictionary_suggestions`
-7.5 Context real-word fix      — :func:`apply_context_correction` (confusable
+7. Medical dictionary fuzzy, :func:`apply_medical_dictionary_suggestions`
+7.5 Context real-word fix, :func:`apply_context_correction` (confusable
                                   real words: "spinal chord"->"cord")
-8. Learned user corrections    — :func:`apply_learned_corrections` (runs last
+8. Learned user corrections: :func:`apply_learned_corrections` (runs last
                                   so user overrides win)
-9. Smart capitalisation        — :func:`smart_capitalize`
+9. Smart capitalisation: :func:`smart_capitalize`
 
 Confidence veto
 ---------------
 Stages 6-7.5 are the *guessing* stages: they rewrite a word because it resembles
-something in a vocabulary. Given the decoder's per-word confidences (optional —
+something in a vocabulary. Given the decoder's per-word confidences (optional:
 see :mod:`~src.dictation.postprocess.confidence_gate`), the block's output is
 diffed against its input and any rewrite of words the decoder was already sure
 about is reverted. With no confidences the veto is inert and the pipeline
@@ -37,14 +37,14 @@ Cleanup levels
 ``cleanup_level`` lets the dictating radiologist control how much the pipeline
 rewrites their words:
 
-* ``"soft"``   — only structural cleanup (stages 0-4, 9): hallucination
+* ``"soft"``: only structural cleanup (stages 0-4, 9): hallucination
   removal, spoken voice/punctuation commands, whitespace, measurement
   formatting, and capitalisation. Skips terminology, accent, fuzzy-dictionary,
-  and learned-correction stages (5-8) — the stages that rewrite a word based
+  and learned-correction stages (5-8): the stages that rewrite a word based
   on similarity to a vocabulary, so the dictated words pass through almost
   verbatim.
-* ``"medium"`` (default) — the full ten-stage pipeline above, unchanged.
-* ``"hard"``  — the full pipeline, plus an AI cleanup pass
+* ``"medium"`` (default): the full ten-stage pipeline above, unchanged.
+* ``"hard"``: the full pipeline, plus an AI cleanup pass
   (:func:`~src.dictation.postprocess.llm_cleanup.clean_with_llm`) if that
   optional, consent-gated feature is enabled; otherwise identical to
   ``"medium"``.
@@ -116,7 +116,7 @@ _GATED_STAGES = (
 )
 
 # The word-level diff powering the corrections banner is quadratic in document
-# length (difflib): measured ~24 ms at 1,000 words but ~1.3 s at 4,000 — ~10x
+# length (difflib): measured ~24 ms at 1,000 words but ~1.3 s at 4,000: ~10x
 # the cost of the whole pipeline. A radiology report is typically 150–600
 # words, so above this bound the diff is skipped (the banner just shows no
 # examples) rather than stalling the live fallback path or the final pass.
@@ -156,16 +156,16 @@ def postprocess_transcript(
         accent: Accent profile key for stage 6
             (``"neutral"``, ``"south_asian"``, ``"middle_eastern"``,
             ``"east_asian"``, ``"west_african"``).
-        cleanup_level: ``"soft"``, ``"medium"`` (default), or ``"hard"`` —
+        cleanup_level: ``"soft"``, ``"medium"`` (default), or ``"hard"``:
             see the module docstring.
         live: ``True`` when called per-chunk during live dictation. Forces the
-            ``"hard"`` AI-cleanup (network) stage to be skipped — that pass is
+            ``"hard"`` AI-cleanup (network) stage to be skipped: that pass is
             for the *finished* document only (see ``llm_cleanup`` docstring and
             the CLAUDE.md "AI cleanup is on-demand only" invariant), never on
             every live cycle.
         confidences: The decoder's per-word confidence for *text*, one entry per
             word, ``None`` where unknown. Omit it (the default) and the
-            confidence veto is inert — output is byte-identical to a run without
+            confidence veto is inert: output is byte-identical to a run without
             it.
         confidence_ceiling: Confidence at or above which the guessing stages may
             not rewrite a word (see :mod:`confidence_gate`). ``None`` disables
@@ -263,7 +263,7 @@ def postprocess_transcript_with_changes(
 
     ``live=True`` skips the per-cycle AI-cleanup network call, and
     ``confidences`` / ``confidence_ceiling`` / ``vetoed_out`` drive the
-    confidence veto — all four behave exactly as in
+    confidence veto: all four behave exactly as in
     :func:`postprocess_transcript`.
 
     Returns:
@@ -279,7 +279,7 @@ def postprocess_transcript_with_changes(
     )
 
     if len(original_words) > _MAX_DIFF_WORDS:
-        # Quadratic diff not worth it on very long documents — see
+        # Quadratic diff not worth it on very long documents: see
         # _MAX_DIFF_WORDS. The processed text is unaffected; only the banner's
         # example list is dropped.
         logger.debug(

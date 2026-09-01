@@ -1,11 +1,11 @@
 /* ===========================================================================
-   Radio Dictate — web front-end
+   Radio Dictate: web front-end
    ---------------------------------------------------------------------------
    The idea: the report is a film on a lightbox. It is the only lit surface;
    every control around it is the dim reading room. That is why the editor is
    the brightest thing on screen and the chrome is deliberately quiet.
 
-   No web fonts, no framework, no build step. One stylesheet, system faces —
+   No web fonts, no framework, no build step. One stylesheet, system faces:
    the page paints on first byte because a radiologist should never wait for
    the interface before they can wait for the model.
    =========================================================================== */
@@ -50,7 +50,7 @@
     color-scheme: dark light;
 
     /* Colours are NOT here. They come from src/ui/tokens.json, rendered into
-       the page's <head> by src/ui/theme.py — the same file the desktop
+       the page's <head> by src/ui/theme.py: the same file the desktop
        stylesheet reads, so the two front-ends cannot drift apart. */
 
     --r:      6px;
@@ -74,7 +74,7 @@
 html, body { height: 100%; }
 
 /* Two rows: the app, and the developer drawer under it. A drawer that is a
-   row rather than an overlay can never cover the microphone button — which is
+   row rather than an overlay can never cover the microphone button: which is
    the one control you still need while you are reading the console. */
 body {
     margin: 0;
@@ -163,7 +163,7 @@ body {
 /* min-width:0 is what makes the ellipsis actually work. Without it this span's
    automatic minimum size is the whole un-wrapped message, so it refuses to
    shrink, the pill cannot shrink either, and a long status widens the entire
-   page instead of being truncated — 390px of phone became 501px of sideways
+   page instead of being truncated: 390px of phone became 501px of sideways
    scrolling. */
 .status span:last-child {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -273,7 +273,7 @@ body {
    Main: the lit stage, and the rail of templates and phrases beside it.
 
    Narrow screens stack (report first, rail under it). From --rail-at up, the
-   rail moves to the side and stays on screen while you dictate — a template
+   rail moves to the side and stays on screen while you dictate: a template
    or a stock phrase you have to scroll away from the report to reach is one
    nobody uses mid-dictation.
    -------------------------------------------------------------------------- */
@@ -335,7 +335,7 @@ body {
 }
 
 /* The film on the lightbox: the one surface that emits rather than reflects.
-   The wrapper carries the surface so the textarea itself can be transparent —
+   The wrapper carries the surface so the textarea itself can be transparent:
    that is what lets the marks underlay show through from behind it. */
 .editor-wrap {
     /* One width for the findings strip, used by the strip and by the marks
@@ -416,7 +416,7 @@ body {
 }
 
 /* Placed by position in the *document*, not by where the text happens to be
-   scrolled — so a finding three pages down still has a tick to click. Only
+   scrolled: so a finding three pages down still has a tick to click. Only
    `top` is set from script; the colour belongs to the theme. */
 .finding-mark {
     position: absolute;
@@ -444,7 +444,7 @@ body {
     color: var(--text-dim);
 }
 /* Red only while something is genuinely waiting on a phone call. A clear
-   report and an answered one stay quiet — a badge that shouts every time
+   report and an answered one stay quiet: a badge that shouts every time
    stops being read. */
 .findings-pill[data-findings="outstanding"] {
     background: color-mix(in srgb, var(--rec) 18%, transparent);
@@ -455,7 +455,7 @@ body {
     color: var(--ok);
 }
 
-/* "3 words to check — highlight one to see alternatives". Assistive, so it is
+/* "3 words to check: highlight one to see alternatives". Assistive, so it is
    dim and never --rec, which this app keeps for recording and severity. */
 .marks-hint {
     margin: 0;
@@ -542,7 +542,7 @@ kbd {
     /* A flex item with overflow:hidden gets an automatic minimum size of 0
        (CSS Flexbox spec), so .panels' column layout can shrink an open panel
        below its own content height whenever the sidebar is too full to fit
-       every open panel — the scrollable ancestor should absorb that instead,
+       every open panel: the scrollable ancestor should absorb that instead,
        not squash and clip one panel's controls into invisibility. */
     flex-shrink: 0;
 }
@@ -634,7 +634,7 @@ select:disabled, input:disabled { opacity: .5; }
    Quick phrase chips: tapped mid-report, so they are big enough to hit
    -------------------------------------------------------------------------- */
 
-/* A quick phrase is a name and the sentence it inserts — two different things,
+/* A quick phrase is a name and the sentence it inserts: two different things,
    so they get two lines. As a centred 999px pill they ran together into
    "Rotator cuff intactRotator cuff tendons are..." and wrapped to three ragged
    lines, which is what made the rail look broken. */
@@ -664,7 +664,7 @@ select:disabled, input:disabled { opacity: .5; }
     font-weight: 600;
     color: var(--text);
 }
-/* The sentence itself is a preview, not the label — quieter, and clipped to
+/* The sentence itself is a preview, not the label: quieter, and clipped to
    two lines so one long phrase cannot push the rest of the list off screen. */
 .macro-chip span {
     display: -webkit-box;
@@ -681,7 +681,7 @@ select:disabled, input:disabled { opacity: .5; }
 
 /* --------------------------------------------------------------------------
    Term popover: the neighbourhood of the highlighted word
-   Two tiers, and the size difference is the whole message — what the word
+   Two tiers, and the size difference is the whole message: what the word
    might have been reads at full strength, what merely goes with it is
    deliberately quieter so it can be skimmed past. Suggestions are the
    machine's voice, so they wear --glow, never --rec.
@@ -770,8 +770,8 @@ select:disabled, input:disabled { opacity: .5; }
     color: var(--rec);
 }
 
-/* The text arrives as one string with blank lines in it — the same string the
-   desktop dialog shows — so the line breaks have to survive. */
+/* The text arrives as one string with blank lines in it, the same string the
+   desktop dialog shows, so the line breaks have to survive. */
 .modal-text {
     margin: 0;
     white-space: pre-line;
@@ -786,7 +786,7 @@ select:disabled, input:disabled { opacity: .5; }
 
    A row under the app, never an overlay: the microphone button has to stay
    reachable while you are reading why the last decode was slow. Deliberately
-   the plainest surface in the file — monospace, no colour except where a line
+   the plainest surface in the file: monospace, no colour except where a line
    is an error or a duration is over budget, because a console that decorates
    itself is one you stop reading.
    -------------------------------------------------------------------------- */
@@ -814,7 +814,7 @@ select:disabled, input:disabled { opacity: .5; }
 }
 
 /* The five numbers a slow dictation is actually judged on, on the bar rather
-   than buried in the stream — you should not have to read a log to find out
+   than buried in the stream: you should not have to read a log to find out
    how far behind the text is. */
 .dev-stat-row { display: flex; align-items: baseline; gap: .9rem; flex-wrap: wrap; min-width: 0; }
 
@@ -871,7 +871,7 @@ select:disabled, input:disabled { opacity: .5; }
 .dev-line .ms { color: var(--text-dim); font-weight: 600; }
 .dev-line .ms.over { color: var(--warn-text); }
 .dev-line.is-error .msg, .dev-line.is-error .src { color: var(--rec); }
-/* What the browser itself measured, told apart from what the server reported —
+/* What the browser itself measured, told apart from what the server reported:
    the two clocks are different machines' clocks and must never be read as one. */
 .dev-line.is-browser .src { color: var(--ok); }
 

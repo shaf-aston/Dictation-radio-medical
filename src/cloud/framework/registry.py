@@ -1,4 +1,4 @@
-"""Registry of downloaded fine-tuned models — task-aware source of truth.
+"""Registry of downloaded fine-tuned models: task-aware source of truth.
 
 State lives in ``data/models/registry.json`` so it is human-inspectable and
 survives without the cloud being reachable. Each task type (voice, text, scan)

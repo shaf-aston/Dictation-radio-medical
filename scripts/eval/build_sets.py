@@ -14,7 +14,7 @@ touches the network, once, and only when explicitly asked for.
 The ``bench`` set writes *drafts* transcribed by the current engine and marks
 them ``[UNREVIEWED]``. A draft is a machine guess, not ground truth, so
 ``corpus.load_set`` refuses to score against one until a human has corrected it
-and deleted the marker — scoring a model against its own output would report a
+and deleted the marker: scoring a model against its own output would report a
 flattering number that means nothing.
 """
 
@@ -40,7 +40,7 @@ _CORPUS_PATH = Path(__file__).resolve().parent / "resources" / "report_corpus.tx
 _OWN_SET_SIZE = 5
 
 #: LibriSpeech test-clean: public domain read speech, the standard neutral
-#: yardstick. Only a slice is kept — the full archive is 346 MB and the extra
+#: yardstick. Only a slice is kept: the full archive is 346 MB and the extra
 #: utterances add nothing but runtime.
 _LIBRI_URL = "https://www.openslr.org/resources/12/test-clean.tar.gz"
 _LIBRI_CLIPS = 100
@@ -64,7 +64,7 @@ def load_report_corpus() -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# tts — synthesised radiology reports
+# tts: synthesised radiology reports
 # ---------------------------------------------------------------------------
 
 def build_tts(limit: int = 0) -> int:
@@ -72,7 +72,7 @@ def build_tts(limit: int = 0) -> int:
 
     Voices are cycled across reports so the set carries at least a little
     acoustic variety. This audio is far cleaner than a real dictation, which is
-    exactly why the manifest flags it ``synthetic`` — it measures how the
+    exactly why the manifest flags it ``synthetic``: it measures how the
     pipeline handles medical *vocabulary*, and says nothing about microphones.
     """
     try:
@@ -128,13 +128,13 @@ def build_tts(limit: int = 0) -> int:
 
 
 # ---------------------------------------------------------------------------
-# own — the user's own voice
+# own: the user's own voice
 # ---------------------------------------------------------------------------
 
 def build_own() -> int:
     """Write the reading scripts and a manifest awaiting the user's recordings.
 
-    The reference is the script itself — the user reads it verbatim, so no
+    The reference is the script itself: the user reads it verbatim, so no
     hand-correction step is needed and no machine guess ever enters the truth.
     """
     reports = load_report_corpus()
@@ -295,7 +295,7 @@ def _take_warnings(duration: float, peak: float, rms: float) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# bench — the pre-existing clips, once hand-corrected
+# bench: the pre-existing clips, once hand-corrected
 # ---------------------------------------------------------------------------
 
 def build_bench() -> int:
@@ -356,7 +356,7 @@ against its own output.
 
 
 # ---------------------------------------------------------------------------
-# libri — general-English regression baseline
+# libri: general-English regression baseline
 # ---------------------------------------------------------------------------
 
 def build_libri(clip_count: int = _LIBRI_CLIPS) -> int:

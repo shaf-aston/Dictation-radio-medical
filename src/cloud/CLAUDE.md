@@ -1,6 +1,6 @@
-# src/cloud — Cloud fine-tuning path (opt-in, off by default)
+# src/cloud: Cloud fine-tuning path (opt-in, off by default)
 
-Follows the root [`CLAUDE.md`](../../CLAUDE.md) — this covers only this subsystem.
+Follows the root [`CLAUDE.md`](../../CLAUDE.md): this covers only this subsystem.
 
 Inert unless **both** `cloud_enabled` and `cloud_training_consent` are true in
 settings. With default settings nothing is retained, staged, or uploaded.
@@ -21,7 +21,7 @@ and the dependency is one-directional: dictation/features call into the
 collector but never import `src.cloud.*`.
 
 **Multi-task framework.** The framework is task-agnostic; a `TrainingTask`
-(`cloud/tasks/`) supplies only what differs per model — how to bundle its batch
+(`cloud/tasks/`) supplies only what differs per model: how to bundle its batch
 and how to describe its Lightning job (`JobSpec`). Three tasks exist: voice
 (Whisper LoRA → CT2), text-correction (small seq2seq), and scan-classifier
 (DenseNet head fine-tune). Each is keyed by `task_type`; the registry holds one

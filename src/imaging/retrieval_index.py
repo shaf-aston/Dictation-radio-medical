@@ -1,7 +1,7 @@
 """In-memory embedding index with attribute-aware similarity search + persistence.
 
 Holds normalized embeddings plus their structured metadata and answers top-K
-similarity queries — via HNSW (hnswlib) when available, else a numpy brute-force
+similarity queries: via HNSW (hnswlib) when available, else a numpy brute-force
 dot product. Split from the orchestration layer so the index can be built and
 searched (e.g. in tests) without the torch-heavy extractor.
 """
@@ -20,9 +20,9 @@ from src.imaging.schemas import ReferenceCase
 logger = logging.getLogger(__name__)
 
 # A retrieval filter is a plain dict with any of these optional keys:
-#   required_labels: Iterable[str] — keep cases positive (==1) for ANY listed label
-#   view:            str           — require attributes["view"] to match (case-insensitive)
-#   age_range:       (min, max)    — require attributes["age"] within the inclusive range
+#   required_labels: Iterable[str], keep cases positive (==1) for ANY listed label
+#   view:            str, require attributes["view"] to match (case-insensitive)
+#   age_range:       (min, max), require attributes["age"] within the inclusive range
 Filters = Dict[str, Any]
 
 
@@ -50,7 +50,7 @@ class EmbeddingIndex:
         Args:
             embeddings_list: List of normalized (1-D) embeddings.
             metadata: One metadata dict per embedding (``{"path", "labels",
-                "attributes"}`` — see :meth:`ReferenceCase.to_metadata`). For
+                "attributes"}``: see :meth:`ReferenceCase.to_metadata`). For
                 backward compatibility a bare path string is also accepted and
                 wrapped into an attribute-less case.
 

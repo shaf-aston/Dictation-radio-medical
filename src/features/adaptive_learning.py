@@ -83,7 +83,7 @@ class AdaptiveLearning:
         self._accent_hints: Dict[str, str] = {}
 
         # Compiled patterns (rebuilt when corrections change). Each entry is
-        # ``(trigger_lower, pattern, replacement)`` — trigger_lower is the cheap
+        # ``(trigger_lower, pattern, replacement)``: trigger_lower is the cheap
         # substring gate so apply_learned_corrections can skip the regex when the
         # word can't be present (see apply_learned_corrections).
         self._correction_patterns: List[Tuple[str, re.Pattern, str]] = []
@@ -217,7 +217,7 @@ class AdaptiveLearning:
         given transcript chunk contains only a handful of words. Lower-casing the
         text once and skipping any pattern whose trigger word isn't a substring
         turns "run every regex every chunk" into "run only the few that could
-        match" — the same optimisation accent corrections already use.
+        match": the same optimisation accent corrections already use.
         """
         if not text:
             return text
@@ -447,7 +447,7 @@ def learn_from_edit(old_text: str, new_text: str) -> None:
     Also feeds the corrected text to the context model's on-device learned
     corpus (de-duplicated, so the debounced repeat calls are harmless) so
     real-word disambiguation improves for this radiologist's own reports over
-    time. Best-effort — a failure here never blocks the primary edit tracking.
+    time. Best-effort: a failure here never blocks the primary edit tracking.
     """
     get_adaptive_learning().track_edit(old_text, new_text)
     try:

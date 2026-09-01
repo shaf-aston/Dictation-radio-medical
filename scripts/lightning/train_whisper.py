@@ -1,11 +1,11 @@
-"""Whisper LoRA fine-tuning — runs ON Lightning AI, not locally.
+"""Whisper LoRA fine-tuning: runs ON Lightning AI, not locally.
 
 Consumes a batch archive (manifest.json + audio/ clips) produced by
 ``src.cloud.uploader.DataUploader`` and fine-tunes a Hugging Face Whisper model
 on the user's correction triples using LoRA. The dataset is small (tens to a few
 hundred examples), so the strategy is deliberately conservative:
 
-  * LoRA (r=8) on the decoder attention projections — ~1% trainable params,
+  * LoRA (r=8) on the decoder attention projections: ~1% trainable params,
     which prevents the model from overfitting / forgetting general speech.
   * Encoder frozen for epoch 0, top blocks unfrozen thereafter.
   * 10% held out for word-error-rate (WER) validation; we only consider the run

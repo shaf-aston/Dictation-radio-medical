@@ -1,4 +1,4 @@
-"""Chest X-ray classifier — pretrained TorchXRayVision DenseNet121.
+"""Chest X-ray classifier: pretrained TorchXRayVision DenseNet121.
 
 Loads validated, published weights (trained on RSNA/NIH/CheXpert/PadChest) and
 returns a per-pathology probability for one image. We stand on these weights
@@ -35,8 +35,8 @@ class Classifier(Protocol):
     """A modality classifier: image path → per-label probabilities.
 
     Beyond ``predict``, this is the full contract :mod:`src.imaging.localization`
-    (Grad-CAM) and :mod:`src.imaging.retrieval` (embedding extraction) rely on —
-    ``model``, ``pathologies``, and ``preprocess`` — so any future modality
+    (Grad-CAM) and :mod:`src.imaging.retrieval` (embedding extraction) rely on,
+    ``model``, ``pathologies``, and ``preprocess``, so any future modality
     classifier (CT, MRI, ...) that implements this Protocol slots into both.
     """
 
@@ -45,7 +45,7 @@ class Classifier(Protocol):
         """The underlying torch module (loaded on first access).
 
         ``Any`` because the concrete type is a torch module and torch is a
-        lazy, optional import — the Protocol must not pull it in.
+        lazy, optional import: the Protocol must not pull it in.
         """
         ...
 
@@ -61,7 +61,7 @@ class Classifier(Protocol):
     def preprocess(self, image_path: str) -> Any:
         """Load and normalise *image_path* into the model's expected input tensor.
 
-        ``Any`` for the same reason as :attr:`model` — the return is a torch
+        ``Any`` for the same reason as :attr:`model`: the return is a torch
         Tensor, and torch stays a lazy import.
         """
         ...
@@ -107,7 +107,7 @@ class ChestXRayClassifier:
         """Run the model on *image_path*; return one score per label.
 
         A label whose head was not trained for these weights is marked
-        ``trained=False`` so the abstention gate can exclude it — TorchXRayVision
+        ``trained=False`` so the abstention gate can exclude it: TorchXRayVision
         emits a random value for such heads, which must never be surfaced.
         """
         self._ensure_loaded()

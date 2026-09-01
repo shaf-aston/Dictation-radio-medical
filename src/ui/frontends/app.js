@@ -80,7 +80,7 @@ function setThemeSavingState(isSaving) {
 
 // The status pill's states, matching the desktop window's: recording, working,
 // done, failed. The colour is a class app.css owns (.is-rec / .is-busy /
-// .is-ok / .is-error) so it comes from tokens.json like every other colour —
+// .is-ok / .is-error) so it comes from tokens.json like every other colour:
 // this used to set colours inline here, which both hardcoded them and named
 // classes app.css no longer has, so the dot never changed at all.
 const STATUS_STATES = ['is-rec', 'is-busy', 'is-ok', 'is-error'];
@@ -95,7 +95,7 @@ function showStatus(message, state = '', timeout = 0) {
     }
     statusText.textContent = message;
     if (timeout) {
-        // Only the newest message may clear itself — otherwise a short one
+        // Only the newest message may clear itself: otherwise a short one
         // scheduled earlier wipes the state of whatever is running now.
         setTimeout(() => {
             if (generation === statusGeneration) hideStatus();
@@ -309,7 +309,7 @@ function pushUndoState() {
  *
  * Setting `editor.value` from script fires no `input` event, so anything
  * listening for typing never sees a dictated report, a loaded template or an
- * undo — which is exactly the text the findings strip exists to check. Every
+ * undo: which is exactly the text the findings strip exists to check. Every
  * programmatic write calls this; the `input` listeners cover the typing. */
 // The count is on the report's own head strip, so it has to be refreshed
 // everywhere the text can change -- typing, a template load, a live update, a
@@ -534,7 +534,7 @@ function postReport(url, answers) {
 }
 
 // Returns the refusal the server wants answered, or null if this response was
-// not one — an ordinary error still has to reach the caller as an error.
+// not one: an ordinary error still has to reach the caller as an error.
 async function readReleaseGate(response) {
     if (response.status !== 409) {
         return null;
@@ -576,10 +576,10 @@ function confirmCriticalFindings(info) {
 }
 
 // Sends the report and clears the release gate on the way. Both answers start
-// unset; the server refuses with 409 one rule at a time — unfilled fields first,
-// then critical findings — we ask, and re-send with the radiologist's answer.
+// unset; the server refuses with 409 one rule at a time, unfilled fields first,
+// then critical findings, we ask, and re-send with the radiologist's answer.
 // Same questions the desktop app asks. Every path that lets the report leave the
-// app goes through here, clipboard included — a gate one button can skip is not a
+// app goes through here, clipboard included: a gate one button can skip is not a
 // gate. Returns null when the radiologist cancelled: not an error, just a stop.
 async function postGatedReport(endpoint) {
     const answers = { acknowledged: null, proceed_unfilled: false };
@@ -831,7 +831,7 @@ function redo() {
 // The microphone streams raw 16-bit PCM at 16 kHz straight to /ws/dictate, and
 // text comes back while you are still speaking. It is raw PCM rather than the
 // browser's own MediaRecorder output because a webm/opus blob cannot be decoded
-// a piece at a time — waiting for the container to close is exactly the pause
+// a piece at a time: waiting for the container to close is exactly the pause
 // this replaces.
 //
 // Two kinds of text arrive. `committed` is decoded once, corrected, and final.
@@ -928,7 +928,7 @@ function setRecordingUi(on) {
     if (!on) setLevel(0);
 }
 
-// The real peak of the last frame — a meter that only ever shows "something"
+// The real peak of the last frame: a meter that only ever shows "something"
 // is a meter that cannot tell you the microphone is dead.
 function setLevel(peak) {
     recMeter.style.setProperty('--level', Math.min(1, peak * 2.2).toFixed(3));
@@ -970,7 +970,7 @@ function openSocket() {
             showStatus(
                 msg.state === 'catching_up'
                     ? 'Catching up with you…'
-                    : 'Listening — text appears as you speak',
+                    : 'Listening: text appears as you speak',
                 'is-rec',
             );
         } else if (msg.type === 'stopped') {
@@ -991,10 +991,10 @@ function openSocket() {
             stopPressedAt = 0;
             const improved = msg.text || '';
             if (editor.value !== handedOverText) {
-                // You edited while it was working. Your words win — silently
+                // You edited while it was working. Your words win: silently
                 // replacing them with the machine's would be the worst possible
                 // outcome for a clinical report.
-                showStatus('Kept your edits — the improved version was discarded', 'is-ok', 4000);
+                showStatus('Kept your edits: the improved version was discarded', 'is-ok', 4000);
             } else {
                 committedText = improved;
                 uncertainWords = new Set(msg.uncertain || []);
@@ -1016,7 +1016,7 @@ function openSocket() {
     return socket;
 }
 
-// One undo entry per dictation and one scan of the finished report — not one of
+// One undo entry per dictation and one scan of the finished report: not one of
 // each per partial, which would both blow the 50-entry history in seconds and
 // spend the whole machine re-scanning half-sentences.
 function finishSession(okMessage) {
@@ -1102,7 +1102,7 @@ async function startRecording() {
     setRecordingUi(true);
     startTimer();
     devMark('browser', 'recording started', {}, { ms: performance.now() - dev.recordStart });
-    showStatus('Listening — text appears as you speak', 'is-rec');
+    showStatus('Listening: text appears as you speak', 'is-rec');
 }
 
 async function stopRecording() {
@@ -1151,7 +1151,7 @@ syncReportButtons();
 
 // ---------------------------------------------------------------------------
 // Option A: the panels below the editor remember whether you left them open.
-// This is the whole of "configurable to needs" — you shape the screen by using
+// This is the whole of "configurable to needs": you shape the screen by using
 // it. Kept in localStorage, not settings, because it is per-browser chrome
 // state and has no business going through the server.
 // ---------------------------------------------------------------------------
@@ -1188,7 +1188,7 @@ function initPanels() {
 }
 
 // ---------------------------------------------------------------------------
-// Overflow menu — one primary action stays on the bar, the rest live in here.
+// Overflow menu: one primary action stays on the bar, the rest live in here.
 // ---------------------------------------------------------------------------
 
 function initOverflowMenu() {
@@ -1279,7 +1279,7 @@ function initDisclaimer() {
 // ---------------------------------------------------------------------------
 // The neighbourhood of a highlighted word. Highlight a term and a small panel
 // offers what it might have been (spelling) and what goes with it (related).
-// Both lists — and their order — come from src/medical/term_lookup.py, the
+// Both lists, and their order, come from src/medical/term_lookup.py, the
 // same service the desktop window asks, so the two front-ends cannot suggest
 // different things for the same word. Nothing is ever applied on its own.
 // ---------------------------------------------------------------------------
@@ -1339,7 +1339,7 @@ function applyTermSuggestion(term) {
 // ---------------------------------------------------------------------------
 // Which words are worth highlighting in the first place. The lookup above only
 // helps a radiologist who already suspects a word, and the words worth
-// suspecting are exactly the ones that read as plausible — so the app points.
+// suspecting are exactly the ones that read as plausible: so the app points.
 //
 // Marks are drawn on a transparent copy of the text sitting *behind* the
 // textarea. Nothing is inserted into the report itself, which is why Copy,
@@ -1423,7 +1423,7 @@ function paintMarks(spans) {
     const parts = [];
     if (spans.length) {
         parts.push(`${spans.length} ${spans.length === 1 ? 'word' : 'words'} to check`
-            + (lookupUses < lookupHintUses ? ' — highlight one to see alternatives' : ''));
+            + (lookupUses < lookupHintUses ? ': highlight one to see alternatives' : ''));
     }
     if (unsure) {
         // A whole phrase, not a tail. When there are no suspect terms this is
@@ -1495,7 +1495,7 @@ function initTermMarks() {
 // count that is on show whether or not there is anything to show.
 //
 // Every rule lives on the server, in the same OutstandingFindings object the
-// desktop window reads (features/report_release.py) — what counts as a finding,
+// desktop window reads (features/report_release.py): what counts as a finding,
 // whether a negation clears it, and whether an acknowledgement still holds. The
 // browser only draws the answer, which is why the two front-ends cannot come to
 // different conclusions about the same report.
@@ -1515,7 +1515,7 @@ function paintFindings(data) {
 
     // Placed by where the finding sits in the document rather than by where the
     // text is scrolled to, so a finding further down the report still has a
-    // tick — and reaching one you cannot already see is the whole interaction.
+    // tick: and reaching one you cannot already see is the whole interaction.
     const last = Math.max(1, editor.value.length);
     findings.forEach((f) => {
         const mark = document.createElement('button');
@@ -1558,7 +1558,7 @@ function paintFindings(data) {
 
 async function rescanFindings() {
     // Recording rewrites the report every second, so offsets taken now would be
-    // stale before they were drawn. Stand down — and leave the last answer on
+    // stale before they were drawn. Stand down: and leave the last answer on
     // screen rather than replacing it with "No findings", which would claim a
     // report is clear at the exact moment nothing is re-checking it.
     if (isRecording) return;
@@ -1575,7 +1575,7 @@ async function rescanFindings() {
         paintFindings(await response.json());
     } catch (err) {
         // A strip that cannot answer must never interrupt the report, and must
-        // never quietly claim the report is clear either — leave what is shown.
+        // never quietly claim the report is clear either: leave what is shown.
         console.warn('Findings scan failed:', err);
     }
 }

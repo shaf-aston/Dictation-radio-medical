@@ -1,4 +1,4 @@
-"""Chest X-ray classifier fine-tuning — runs ON Lightning AI, not locally.
+"""Chest X-ray classifier fine-tuning: runs ON Lightning AI, not locally.
 
 Consumes a batch archive (``manifest.json`` with ``examples: [{image_file,
 labels}]`` + ``images/``) produced by
@@ -12,7 +12,7 @@ This is patient-safety-critical, so the strategy is deliberately conservative:
     possibly-noisy local dataset.
   * 20% is held out for a mean-AUC validation gate. The run is REJECTED (non-zero
     exit, no artifact) if the fine-tuned mean AUC regresses versus the base model.
-    A model that does not beat the validated baseline is never shipped — the app
+    A model that does not beat the validated baseline is never shipped: the app
     keeps the safer stock weights.
 
 Usage (invoked by LightningAIClient.submit_training_job):

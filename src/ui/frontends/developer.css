@@ -1,4 +1,4 @@
-/* The /developer page. Every colour is a token from app.css's :root — this
+/* The /developer page. Every colour is a token from app.css's :root: this
    file adds layout only, no new palette. */
 
 .dev {
@@ -41,7 +41,7 @@
 .dev-table tbody tr:hover { background: var(--hover); }
 .dev-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 
-/* Above 1.0 the machine is slower than speech — the one cell worth a warning. */
+/* Above 1.0 the machine is slower than speech: the one cell worth a warning. */
 .dev-table .over { color: var(--warn); font-weight: 600; }
 
 .dev-empty { margin: .8rem 0 0; color: var(--text-dim); font-size: .82rem; }

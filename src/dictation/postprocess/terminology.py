@@ -1,8 +1,8 @@
-"""Stage 5 — radiology terminology corrections.
+"""Stage 5: radiology terminology corrections.
 
 A single ordered list of regex substitutions runs in order, with longer
 and more-specific patterns earlier so they win over shorter generic ones.
-Sections in this file are presentational only — at runtime the table is
+Sections in this file are presentational only: at runtime the table is
 flat.
 
 Three legacy stages (MRI signal, MSK anatomy, general radiology) have
@@ -74,7 +74,7 @@ _RULES: List[_Rule] = [
     (_ci(r"\bnon[- ]?enhancing\b"), "non-enhancing"),
 
     # ------------------------------------------------------------------
-    # MSK Whisper-mishear corrections — compound forms BEFORE bare "tier".
+    # MSK Whisper-mishear corrections: compound forms BEFORE bare "tier".
     # ------------------------------------------------------------------
     (_ci(r"\broot[\s-]?tier\b"), "rotator"),
     (_ci(r"\broot[\s-]?a[\s-]?tier\b"), "rotator"),

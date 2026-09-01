@@ -1,6 +1,6 @@
 """The one place that maps an engine name to a concrete AsrEngine.
 
-Everything else — worker.py, web_app.py, the eval harness — asks for an
+Everything else, worker.py, web_app.py, the eval harness, asks for an
 engine by name and depends only on the port. Adding engine #2 at M3 means one
 new entry in :data:`_ENGINES`; nothing else in this file, or anywhere
 downstream, changes.
@@ -21,7 +21,7 @@ _ENGINES = {
 
 #: The constructor keyword each engine uses for "which model". Callers that
 #: offer one generic model option (the eval harness's ``--model``) ask here
-#: instead of learning engine-specific argument names — which is the whole
+#: instead of learning engine-specific argument names: which is the whole
 #: point of this file being the only name-to-engine mapping.
 _MODEL_KWARG = {
     "faster-whisper": "model_size",
@@ -30,7 +30,7 @@ _MODEL_KWARG = {
 
 DEFAULT_ENGINE = "faster-whisper"
 
-#: Every engine name a caller may ask for — the eval harness builds its
+#: Every engine name a caller may ask for: the eval harness builds its
 #: ``--engine`` choices from this so a new engine needs no CLI edit.
 ENGINE_NAMES = tuple(sorted(_ENGINES))
 

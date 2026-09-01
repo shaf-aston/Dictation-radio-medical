@@ -1,25 +1,25 @@
-"""Accuracy metrics for dictation evaluation — pure functions, no I/O.
+"""Accuracy metrics for dictation evaluation: pure functions, no I/O.
 
 Four numbers matter for this product, and only one of them is the usual WER:
 
-* :func:`word_error_rate` — the standard yardstick. Catches "did I break general
+* :func:`word_error_rate`: the standard yardstick. Catches "did I break general
   English" but says nothing about whether the *medical* words came out right.
-* :func:`term_error_rate` — WER restricted to reference words that are curated
+* :func:`term_error_rate`: WER restricted to reference words that are curated
   radiology-lexicon terms. A report can score a respectable overall WER while
   mangling every anatomical term in it; this is the number that reflects what a
   radiologist actually cares about.
-* :func:`correction_effect` — the honest scoreboard for the post-processing
+* :func:`correction_effect`: the honest scoreboard for the post-processing
   pipeline. It needs three texts (reference, raw ASR, post-processed) and splits
   every change the pipeline made into **true fixes** (a wrong word made right)
   and **false corrections** (a *right* word made wrong). A correction layer that
   fixes 10 words and breaks 12 is worse than no correction layer at all, and
   nothing in the codebase could previously tell you which side of that line it
   sat on.
-* real-time factor — computed by the caller (decode seconds / audio seconds); it
+* real-time factor: computed by the caller (decode seconds / audio seconds); it
   needs no alignment so it does not live here.
 
 Alignment is Levenshtein over *word sequences* via ``rapidfuzz`` (already a
-project dependency — no need for ``jiwer``, and the raw opcodes are required
+project dependency: no need for ``jiwer``, and the raw opcodes are required
 for the term-restricted and false-correction metrics anyway).
 """
 
@@ -41,7 +41,7 @@ _EDGE_PUNCT = re.compile(r"^['-]+|['-]+$")
 #: Spoken unit words map to the symbol the pipeline deliberately standardises
 #: them to (``measurements.py``). Without this, every "twelve millimetres"
 #: dictation scores as an error against a pipeline that correctly wrote "12 mm"
-#: — the harness would be marking the product down for working as designed.
+#:: the harness would be marking the product down for working as designed.
 #:
 #: Deliberately narrow. Spelling variants such as calibre/caliber are NOT
 #: canonicalised: a British-spelling report silently Americanised is a real
@@ -61,7 +61,7 @@ def normalize_words(text: str) -> List[str]:
     """Lower-case, de-punctuate and split *text* into comparable word tokens.
 
     Applied identically to reference and hypothesis so no engine is scored on
-    its punctuation or casing habits. This is the single normalisation point —
+    its punctuation or casing habits. This is the single normalisation point:
     every metric in this module consumes its output, so a change here changes
     all metrics consistently.
 
@@ -111,7 +111,7 @@ def word_error_rate(reference: str, hypothesis: str) -> WerResult:
     """Standard WER between two texts.
 
     An empty reference yields ``wer`` 0.0 when the hypothesis is also empty and
-    1.0 otherwise — reporting a divide-by-zero as a perfect score would be the
+    1.0 otherwise: reporting a divide-by-zero as a perfect score would be the
     kind of silent lie this harness exists to prevent.
     """
     ref, hyp = normalize_words(reference), normalize_words(hypothesis)
@@ -192,7 +192,7 @@ class CorrectionEffect:
 
     ``false_correction_rate`` is false / (false + true): the share of the
     pipeline's *meaningful* edits that made the transcript worse. ``net_gain``
-    is the plain word count the pipeline is up or down on the raw ASR output —
+    is the plain word count the pipeline is up or down on the raw ASR output:
     a negative number means the correction layer is a liability.
     """
 
@@ -290,7 +290,7 @@ def _matched_ref_indices(ref: Sequence[str], hyp: Sequence[str]) -> Set[int]:
 
 
 def _matched_hyp_indices(ref: Sequence[str], hyp: Sequence[str]) -> Set[int]:
-    """Hypothesis positions that align to the reference — i.e. correct words."""
+    """Hypothesis positions that align to the reference: i.e. correct words."""
     return {
         i
         for op in Levenshtein.editops(ref, hyp).as_opcodes()

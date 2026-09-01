@@ -1,7 +1,7 @@
 """Whisper transcription wrapper tuned for radiology dictation.
 
 Lazy-loads `faster-whisper` on first transcribe() to keep startup instant.
-Model instances are shared process-wide per (model, device, compute_type) —
+Model instances are shared process-wide per (model, device, compute_type):
 which is what makes startup warmup (src/dictation/warmup.py) effective for the
 recording worker.
 Applies a domain-specific initial prompt (`RADIOLOGY_PROMPT`, loaded
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 def _load_radiology_prompt() -> str:
     """Read the prompt file: drop blank/comment lines and collapse to one line.
 
-    Whisper truncates from the front of the prompt, so order matters — file
+    Whisper truncates from the front of the prompt, so order matters: file
     content is preserved verbatim except for whitespace normalisation.
     """
     raw = radiology_prompt_path().read_text(encoding="utf-8")
@@ -38,14 +38,14 @@ def _load_radiology_prompt() -> str:
 # Built once at import. The file is tiny (~3KB) so the I/O is negligible, and
 # downstream callers treat this as a plain string constant. It is the same
 # radiology vocabulary for every engine, so it is re-exported from
-# src/dictation/asr/ — code outside asr/ imports it from there, never from here.
+# src/dictation/asr/: code outside asr/ imports it from there, never from here.
 RADIOLOGY_PROMPT = _load_radiology_prompt()
 
 # Supported model sizes in order of speed (fastest first).
 #
 # The `.en` models are English-only. For English dictation they are both faster and
 # more accurate than the same-sized multilingual model, because none of the capacity
-# is spent on the other 98 languages — so they are the right default here and they
+# is spent on the other 98 languages: so they are the right default here and they
 # have to be selectable. Leaving them out silently downgraded anyone whose settings
 # named one: the picker ignored the unknown value and fell back to its first entry.
 SUPPORTED_MODELS = [
@@ -63,7 +63,7 @@ DEFAULT_MODEL = "base.en"
 def resolve_model(name: Optional[str]) -> str:
     """Return *name* if this build supports it, else :data:`DEFAULT_MODEL`, loudly.
 
-    Both front-ends used to drop an unrecognised model on the floor without a word —
+    Both front-ends used to drop an unrecognised model on the floor without a word:
     the web app reassigned it, and the desktop combo box ignored ``setCurrentText``
     for a value it had no item for and stayed on its first entry. Either way the
     radiologist got a different model from the one their settings named, with no
@@ -72,7 +72,7 @@ def resolve_model(name: Optional[str]) -> str:
     if name in SUPPORTED_MODELS:
         return name  # type: ignore[return-value]
     logger.warning(
-        "Model %r is not one of %s — using %s instead. Check 'model_size' in "
+        "Model %r is not one of %s: using %s instead. Check 'model_size' in "
         "dictation_settings.json.", name, SUPPORTED_MODELS, DEFAULT_MODEL,
     )
     return DEFAULT_MODEL
@@ -105,7 +105,7 @@ class Transcriber:
             transcription.
         model_path: Optional local CTranslate2 model directory (a fine-tuned
             model downloaded from Lightning AI). When set it overrides
-            ``model_size`` — faster-whisper loads the model straight from disk.
+            ``model_size``: faster-whisper loads the model straight from disk.
     """
 
     def __init__(
@@ -163,7 +163,7 @@ class Transcriber:
             )
 
             # On CPU, CTranslate2 defaults to 4 intra-op threads regardless of core
-            # count — leave the OS a couple of cores and use the rest.
+            # count: leave the OS a couple of cores and use the rest.
             cpu_threads = 0 if self.device == "cuda" else max(4, (os.cpu_count() or 4) - 2)
 
             last_err: Optional[Exception] = None
@@ -204,7 +204,7 @@ class Transcriber:
         Public warm-up seam: lets a front-end pay the multi-second model load at
         app startup on a background thread (see :mod:`src.dictation.warmup`), so
         the radiologist's first spoken chunk is not the thing that stalls.
-        Idempotent — a no-op once the model is loaded.
+        Idempotent: a no-op once the model is loaded.
         """
         self._ensure_model()
 
@@ -234,7 +234,7 @@ class Transcriber:
 
         segment_list items: {"start": float, "end": float, "text": str}, plus
         a "words" key (list of {"text","start","end","probability"}) when
-        word_timestamps=True — the confidence signal the AsrEngine port
+        word_timestamps=True: the confidence signal the AsrEngine port
         (src/dictation/asr/) surfaces to callers. Off by default: it costs a
         little extra decode time and nothing needs it until the confidence-
         gated post-processing pipeline (M4) consumes it.
@@ -283,7 +283,7 @@ class Transcriber:
         try:
             segments_gen, info = self._model.transcribe(audio, **kwargs)
         except Exception as exc:
-            logger.warning("Transcription failed (vad_filter=%s): %s — retrying without VAD",
+            logger.warning("Transcription failed (vad_filter=%s): %s: retrying without VAD",
                            kwargs.get("vad_filter"), exc)
             kwargs["vad_filter"] = False
             segments_gen, info = self._model.transcribe(audio, **kwargs)
@@ -354,13 +354,13 @@ _HALLUCINATION_PHRASES = {
 }
 
 # Short phrases (<=2 words) are only hallucinations when they are the WHOLE
-# segment — matching them as a prefix silently deleted real dictation like
+# segment: matching them as a prefix silently deleted real dictation like
 # "Your report shows…" or "Young patient…". Long YouTube-outro phrases stay
 # prefix-matched (they trail into varied garbage).
 _SHORT_PHRASES = {p for p in _HALLUCINATION_PHRASES if len(p.split()) <= 2}
 _LONG_PHRASES = _HALLUCINATION_PHRASES - _SHORT_PHRASES
 
-# `(?!)` never matches — a safe alternation when a phrase set is empty (an
+# `(?!)` never matches: a safe alternation when a phrase set is empty (an
 # empty `(?:)` would otherwise match every segment).
 def _alt(phrases: set) -> str:
     return "|".join(re.escape(p) for p in sorted(phrases, key=len, reverse=True)) or "(?!)"

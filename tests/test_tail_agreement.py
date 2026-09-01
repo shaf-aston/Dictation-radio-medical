@@ -2,7 +2,7 @@
 
 Whisper re-decodes the still-open tail every cycle and revises it freely. The
 old stabiliser returned the agreement of the *last two* decodes only, so the
-shown text shrank whenever a decode disagreed earlier than the one before it —
+shown text shrank whenever a decode disagreed earlier than the one before it:
 measured as 11 -> 16 -> 10 -> 22 words on data/bench_audio/chest_long.wav.
 Words vanishing mid-sentence reads as the app losing the dictation.
 """
@@ -57,7 +57,7 @@ def test_an_empty_decode_clears_the_preview():
 
 
 def test_a_closed_chunk_resets_the_preview():
-    """The committed decode now covers that audio — the preview must not repeat it."""
+    """The committed decode now covers that audio: the preview must not repeat it."""
     a = LocalAgreement2()
     a.update("The lungs are clear")
     a.update("The lungs are clear")

@@ -3,7 +3,7 @@
 Three things have to hold, and each one is a way the panel could lie without
 looking broken: a poll must never re-send a line it already printed, the buffer
 must stay bounded however long a session runs, and a block that fails must still
-be recorded with the time it burned before failing — a stage that dies slowly is
+be recorded with the time it burned before failing: a stage that dies slowly is
 exactly the one you opened the console to find.
 """
 

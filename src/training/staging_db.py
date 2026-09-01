@@ -2,7 +2,7 @@
 
 Holds correction records, training batches, and a mirror of the model-version
 registry. SQLite is used (rather than JSON) because the correction table is
-queried by status and grouped into batches — relational access the existing
+queried by status and grouped into batches: relational access the existing
 flat-JSON stores don't serve well. The DB lives at ``data/training/staging.db``
 and is created lazily on first use.
 

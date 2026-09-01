@@ -1,6 +1,6 @@
 """Which status message wins, and what a timed one reverts to.
 
-Pure — no Qt — so the ordering rule can be tested. The rule matters because a
+Pure, no Qt, so the ordering rule can be tested. The rule matters because a
 short message ("Applied 3 corrections", a clipping warning) schedules a revert a
 few seconds later, and that revert used to fire blindly: a tip posted just
 before Stop would land in the middle of finalising and claim the app was idle

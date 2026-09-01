@@ -3,13 +3,13 @@
 Says what the disclaimer is and whether this user has seen it yet; nothing about
 how it is shown. Both front-ends call it: the desktop shows a message box, the
 web app ships the text in its page bootstrap and takes the acknowledgement over
-HTTP. Neither owns the wording, so neither can drift from the other — this
+HTTP. Neither owns the wording, so neither can drift from the other: this
 module has no Qt, no HTTP and no dialog vocabulary in it.
 
 The wording is a liability statement, not copy. Editing it is a legal decision,
 not a refactor.
 
-Not to be confused with ``src/imaging/schemas.py::DISCLAIMER`` — that one is the
+Not to be confused with ``src/imaging/schemas.py::DISCLAIMER``: that one is the
 scan assistant's per-result "assistive, not a diagnosis" notice. This one is the
 app-wide first-launch statement about speech recognition. Two statements, two
 scopes; keep them apart.
@@ -25,11 +25,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: The heading — a window title on the desktop, the modal's heading on the web.
+#: The heading: a window title on the desktop, the modal's heading on the web.
 DISCLAIMER_TITLE = "Clinical Disclaimer"
 
 DISCLAIMER_TEXT = (
-    "DISCLAIMER — IMPORTANT\n\n"
+    "DISCLAIMER: IMPORTANT\n\n"
     "This tool uses OpenAI Whisper for speech recognition. Whisper is a "
     "general-purpose model and is not FDA-cleared or CE-marked for clinical "
     "medical documentation.\n\n"

@@ -1,4 +1,4 @@
-"""Scan-assistant orchestrator — image in, reviewed suggestions out.
+"""Scan-assistant orchestrator: image in, reviewed suggestions out.
 
 This is the public entry point and the only file the UI calls. Like
 ``dictation/postprocess/pipeline.py`` it just *sequences* the stages, each of
@@ -81,7 +81,7 @@ def analyze_scan(
     for f in candidates:
         region = regions.get(f.label)
         if region is None:
-            logger.info("Withholding '%s' — confident but not localised", f.label)
+            logger.info("Withholding '%s': confident but not localised", f.label)
             continue
         f.region = region
         confirmed.append(f)

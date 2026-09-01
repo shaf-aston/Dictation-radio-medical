@@ -1,4 +1,4 @@
-"""Measure real live-dictation latency over /ws/dictate — no browser needed.
+"""Measure real live-dictation latency over /ws/dictate: no browser needed.
 
 Streams a wav file to the socket at real-time pace (as if spoken live) and
 logs, for every server update, the wall-clock lag behind the audio position

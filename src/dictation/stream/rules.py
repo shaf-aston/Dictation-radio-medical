@@ -1,9 +1,9 @@
-"""Pure decisions both live loops make — no state, no I/O, no Qt, no sockets.
+"""Pure decisions both live loops make: no state, no I/O, no Qt, no sockets.
 
 The desktop worker and the web session each own a loop, and each has to answer
 the same four questions: what prompt do we prime the decoder with, how sure was
 the decoder, is this clip silent, and is the preview still worth its price.
-Those answers live here so neither loop is the other's dependency — the desktop
+Those answers live here so neither loop is the other's dependency: the desktop
 used to import them from the web session's module, which read backwards and
 made a front-end look like core.
 """
@@ -20,7 +20,7 @@ from src.features.adaptive_learning import get_custom_prompt_suffix
 def build_context_prompt() -> str:
     """Return the initial prompt: base radiology vocab + learned terms.
 
-    Committed text is intentionally NOT appended — doing so caused Whisper to
+    Committed text is intentionally NOT appended: doing so caused Whisper to
     echo prior words back into the current chunk under the small live beam.
     Chunks never overlap in this design, so there is no boundary-dedup step to
     lean on instead; the prompt just stays fixed.
@@ -30,7 +30,7 @@ def build_context_prompt() -> str:
     vocabulary is sized to fit that slot on its own, so it goes last and always
     survives. The learned terms go in front, where they fill whatever room is
     left and are the ones dropped when there is none. Putting them last
-    instead — as this did — let a full custom vocabulary (capped at 80 terms,
+    instead, as this did, let a full custom vocabulary (capped at 80 terms,
     about 216 tokens) push almost the entire shipped dictionary out of the
     decoder, which is invisible from the outside.
     """
@@ -42,7 +42,7 @@ def build_context_prompt() -> str:
 def mean_confidence(result: AsrResult) -> float | None:
     """Mean word confidence across every segment that reported one.
 
-    ``None`` when the engine gave no word timestamps for this call — distinct
+    ``None`` when the engine gave no word timestamps for this call: distinct
     from 0.0 so the ledger's confidence gate never mistakes "no signal" for
     "the model was certain this is wrong".
     """
@@ -84,7 +84,7 @@ def rms(clip: np.ndarray) -> float:
 
 
 class AdaptiveFloor:
-    """Is this clip silence — judged against THIS room, not one fixed number.
+    """Is this clip silence: judged against THIS room, not one fixed number.
 
     A single fixed loudness threshold cannot be right for two different
     radiologists: a quiet talker's real speech can sit below a number tuned
@@ -96,7 +96,7 @@ class AdaptiveFloor:
     relative to *it*.
 
     Only clips already judged quiet feed the estimate, so a loud sentence
-    never drags its own gate up and locks out the next quiet word — the
+    never drags its own gate up and locks out the next quiet word: the
     estimate follows the room, not the voice. ``floor_min`` is a hard safety
     net for literal digital silence, so the very first clip (before any
     estimate exists) is never mistaken for speech.

@@ -1,4 +1,4 @@
-"""Cloud-training tasks — one module per ML model type.
+"""Cloud-training tasks: one module per ML model type.
 
 Each task plugs into :mod:`src.cloud.framework`: it knows how to bundle its own
 training data into an archive, how to describe its Lightning job (entrypoint,

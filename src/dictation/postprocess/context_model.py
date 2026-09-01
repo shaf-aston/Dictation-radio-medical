@@ -3,17 +3,17 @@
 The fuzzy dictionary stage fixes *misspellings*. This model exists to answer a
 different question the spell-checker cannot: given two real words that sound
 alike ("cord" vs "chord", "coarse" vs "course"), *which one fits here?* It does
-that the way a reader does — by looking at the neighbouring words — using plain
+that the way a reader does, by looking at the neighbouring words, using plain
 word-adjacency statistics learned from radiology text.
 
 Design (loose coupling / SRP):
 
 * **Pure statistics, no vocabulary opinions.** This module knows nothing about
-  which words are confusable — that lives in ``confusion_sets.yaml``. It only
+  which words are confusable: that lives in ``confusion_sets.yaml``. It only
   answers "how likely is word B to follow word A in radiology prose?". The
   corrector (:mod:`context_correct`) composes the two.
 * **Fully offline, tiny, fast.** A bigram/unigram count table over a few
-  thousand sentences is a few hundred KB and scores a word in microseconds — no
+  thousand sentences is a few hundred KB and scores a word in microseconds: no
   model download, no network, no GPU. It runs on the same machine as the
   dictation, so no report text ever leaves the device (the reports are PHI).
 * **Learns with use.** Cold-started from a bundled seed corpus, it also folds in
@@ -43,13 +43,13 @@ from src.features.file_manager import (
 logger = logging.getLogger(__name__)
 
 # Word = run of letters (with internal hyphen/apostrophe), lowercased. Numbers
-# and punctuation are context boundaries, not tokens — "L4-L5" or "3.2 cm"
+# and punctuation are context boundaries, not tokens: "L4-L5" or "3.2 cm"
 # carries no disambiguating signal for a confusable *word*.
 _TOKEN_RE = re.compile(r"[a-z][a-z'\-]*")
 
 # Add-k smoothing constant. Small so real adjacency evidence dominates, non-zero
 # so an unseen neighbour pair still gets a finite (low) probability rather than
-# -inf. Physical calibration knob — kept here, not inlined at the call site.
+# -inf. Physical calibration knob: kept here, not inlined at the call site.
 _SMOOTHING_K = 0.4
 
 
@@ -88,7 +88,7 @@ class ContextModel:
     def score(self, left: Optional[str], word: str, right: Optional[str]) -> float:
         """Context fit of *word* between *left* and *right*: sum of both directions.
 
-        ``log P(word | left) + log P(right | word)`` — how well *word* follows
+        ``log P(word | left) + log P(right | word)``: how well *word* follows
         the previous token and precedes the next. Comparing this across the
         members of a confusion set, in the *same* (left, right) context, is what
         picks the intended word.
@@ -109,7 +109,7 @@ _LOCK = threading.Lock()
 
 
 def _source_signature() -> tuple:
-    """Cheap fingerprint of the corpus sources — (path, size, mtime_ns) each.
+    """Cheap fingerprint of the corpus sources: (path, size, mtime_ns) each.
 
     Changes whenever the seed corpus ships an update or the learned corpus
     grows, so the on-disk cache is transparently invalidated.
@@ -120,13 +120,13 @@ def _source_signature() -> tuple:
             st = p.stat()
             sig.append((str(p), st.st_size, st.st_mtime_ns))
         except OSError:
-            sig.append((str(p), 0, 0))  # missing is fine — learned corpus starts absent
+            sig.append((str(p), 0, 0))  # missing is fine: learned corpus starts absent
     return tuple(sig)
 
 
 def _count_file(path: Path, unigram: Dict[str, int], bigram: Dict[Tuple[str, str], int]) -> None:
     """Accumulate unigram/bigram counts from *path*, per line (a line is a
-    sentence — bigrams never cross line boundaries, so end-of-report words don't
+    sentence: bigrams never cross line boundaries, so end-of-report words don't
     spuriously predict the next report's first word)."""
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -204,7 +204,7 @@ def get_context_model() -> ContextModel:
 
 # Sentences already written to the learned corpus, so repeated calls (the UI's
 # adaptive-learning hook is debounced and fires with the growing draft many
-# times per report) never append a duplicate — which would both bloat the file
+# times per report) never append a duplicate: which would both bloat the file
 # and skew the bigram counts toward whatever the radiologist happened to retype.
 # Loaded from disk once, then kept in sync in-memory.
 _LEARNED_SEEN: Optional[set] = None
@@ -214,7 +214,7 @@ _LEARNED_LOCK = threading.Lock()
 _MIN_LEARN_WORDS = 4
 # Cap the on-device learned corpus so it can't grow without bound over years of
 # use (which would also slow every model rebuild). ~5 MB is on the order of tens
-# of thousands of report sentences — far past the point of diminishing returns
+# of thousands of report sentences: far past the point of diminishing returns
 # for n-gram disambiguation. Once reached, learning stops appending (the seed +
 # accumulated corpus already covers the vocabulary); it never deletes.
 _MAX_LEARNED_BYTES = 5 * 1024 * 1024
@@ -248,7 +248,7 @@ def append_learned_text(text: str) -> None:
 
     De-duplicated: a sentence already in the corpus is skipped, so this is safe
     to call from the debounced editor hook that fires repeatedly with the same
-    (growing) draft — only genuinely new sentences are recorded, exactly once.
+    (growing) draft: only genuinely new sentences are recorded, exactly once.
 
     Best-effort and non-fatal: a write failure just means the model doesn't
     learn from this text. The in-memory model refreshes on the next
@@ -275,7 +275,7 @@ def append_learned_text(text: str) -> None:
         try:
             path = learned_context_corpus_path()
             path.parent.mkdir(parents=True, exist_ok=True)
-            # Stop growing once the corpus is large enough — bounded rebuild cost
+            # Stop growing once the corpus is large enough: bounded rebuild cost
             # and disk. The seed + accumulated learning already covers the
             # vocabulary; further reports add negligible disambiguation power.
             if path.exists() and path.stat().st_size >= _MAX_LEARNED_BYTES:

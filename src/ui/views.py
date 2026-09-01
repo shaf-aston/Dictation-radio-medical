@@ -1,4 +1,4 @@
-"""UI view construction — panels, buttons, layouts, and menus."""
+"""UI view construction: panels, buttons, layouts, and menus."""
 
 from __future__ import annotations
 
@@ -235,7 +235,7 @@ def build_settings_panel(window: MainWindow) -> QFrame:
     # picker on its first entry and silently dictate with the wrong model.
     window.model_combo.setCurrentText(resolve_model(window.settings.get("model_size")))
     window.model_combo.setToolTip(
-        "'.en' models are English-only — faster and more accurate for English "
+        "'.en' models are English-only: faster and more accurate for English "
         "dictation than the same size multilingual model.\n"
         "tiny/base = fastest  |  small/medium = better accuracy  |  large-v2/v3 = best (needs GPU)"
     )
@@ -325,7 +325,7 @@ def build_editor_panel(window: MainWindow) -> QWidget:
     info_bar.addStretch()
     # How the radiologist finds out the lookup exists at all. Hidden until
     # there is something to point at, and it stops explaining itself once the
-    # feature has been used — see MainWindow._on_marks_changed.
+    # feature has been used: see MainWindow._on_marks_changed.
     window._info_marks = QLabel("")
     window._info_marks.setObjectName("info_marks")
     window._info_marks.hide()
@@ -371,7 +371,7 @@ def build_top_bar(window: MainWindow) -> QFrame:
 
     # Whether anything in this report still has to be communicated. Beside the
     # state pill because it must be visible without opening or scrolling
-    # anything — a finding nobody can see is the failure mode. A clean report
+    # anything: a finding nobody can see is the failure mode. A clean report
     # says so quietly; only an outstanding finding is coloured.
     window._findings_pill = QLabel("No findings")
     window._findings_pill.setObjectName("findings_pill")

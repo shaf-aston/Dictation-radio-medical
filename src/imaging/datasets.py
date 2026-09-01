@@ -8,7 +8,7 @@ Registry storage: ``data/imaging/datasets.json``
 Schema: ``{datasets: {book_name: {path: str, metadata: dict, created_at: ISO8601}}}``
 
 This registry allows the scan training task to aggregate examples from multiple
-datasets when building a training batch — a radiologist might have labeled images
+datasets when building a training batch: a radiologist might have labeled images
 from different equipment, time periods, or patient populations, and the fine-tune
 should learn from all of them.
 
@@ -36,8 +36,8 @@ ATTRIBUTES_KEY = "_attributes"
 def parse_label_file(label_path: Path) -> tuple[Dict[str, int], Dict[str, object]]:
     """Parse a sidecar JSON into ``(labels, attributes)``.
 
-    The sidecar is the flat legacy form — per-pathology binary flags such as
-    ``{"Fracture": 1, "Effusion": 0}`` — optionally carrying a reserved
+    The sidecar is the flat legacy form, per-pathology binary flags such as
+    ``{"Fracture": 1, "Effusion": 0}``, optionally carrying a reserved
     ``"_attributes"`` block (``{"age": 54, "sex": "F", "bmi": 27.1,
     "view": "PA", "history": "fall"}``). Legacy files with no ``_attributes`` key
     yield an empty attributes dict, so existing datasets and the scan-fine-tune

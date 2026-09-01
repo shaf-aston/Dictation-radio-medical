@@ -1,31 +1,31 @@
-"""Stage 7.5 — context-aware real-word correction.
+"""Stage 7.5: context-aware real-word correction.
 
 Fixes the error class the fuzzy dictionary stage structurally cannot: a
 correctly-spelled word that is nonetheless the *wrong* word, distinguishable
 only from context. Whisper hears "spinal chord" for "spinal cord", "course"
-for "coarse", "ileum" for "ilium" — nothing is misspelled, so no spell-checker
+for "coarse", "ileum" for "ilium": nothing is misspelled, so no spell-checker
 fires, but the surrounding words make the intended word obvious.
 
 Two bounded, high-precision operations, both driven by data files (not code) and
-both safe by construction — the worst case is a *visible* wrong pick within a
+both safe by construction: the worst case is a *visible* wrong pick within a
 hand-curated pair, never a free rewrite:
 
-* :func:`apply_context_correction` — for each word that belongs to a confusion
+* :func:`apply_context_correction`: for each word that belongs to a confusion
   set (``confusion_sets.yaml``), score every member of that set in the current
   context using the offline n-gram model (:mod:`context_model`) plus curated cue
   words and priors, and switch to the best-scoring member **only** when it beats
   the spoken word by a clear margin. It can only ever move *between members of
-  the same set* — so an unlisted word is untouchable, and a listed word can only
+  the same set*: so an unlisted word is untouchable, and a listed word can only
   become one of its known confusables.
 
-* :func:`rejoin_split_compounds` — rejoin a medical term Whisper split across two
+* :func:`rejoin_split_compounds`: rejoin a medical term Whisper split across two
   tokens ("hydro nephrosis" -> "hydronephrosis") when, and only when, the joined
   form is a known medical term and the two pieces are not both ordinary English
   words. Runs *before* the fuzzy stage so those fragments become a real term
   instead of being mangled by a per-fragment fuzzy match.
 
 Every change made here surfaces in the corrections banner (the pipeline diffs
-input vs output), so the radiologist always sees — and can reject — a real-word
+input vs output), so the radiologist always sees, and can reject, a real-word
 substitution. Skipped entirely in "soft" cleanup mode.
 """
 
@@ -43,10 +43,10 @@ logger = logging.getLogger(__name__)
 # A word token: a letter followed by letters / internal apostrophes / hyphens.
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z'\-]*")
 
-# ── Calibration knobs (physical thresholds — keep here, not inlined) ──────────
+# ── Calibration knobs (physical thresholds: keep here, not inlined) ──────────
 # How many tokens on each side count as "nearby" for cue detection.
 _CUE_WINDOW = 4
-# Score added per matched cue word — deliberately large so an explicit curated
+# Score added per matched cue word: deliberately large so an explicit curated
 # cue ("spinal" near "cord") decisively outweighs weak n-gram noise.
 _CUE_BONUS = 4.0
 # Minimum score advantage the best candidate must have over the *spoken* word
@@ -58,7 +58,7 @@ _SWITCH_MARGIN = 1.5
 # in radiology ("legion", "chord"): the prior alone may trigger a switch off it.
 # Any member with a milder prior is a word that CAN be correct ("know",
 # "discreet", "course"), so switching AWAY from it as spoken requires positive
-# context evidence (a cue match or a corpus-observed word pair) — never the
+# context evidence (a cue match or a corpus-observed word pair): never the
 # prior alone. This is what stops "the clinician should know" -> "...should no".
 _NEVER_CORRECT_PRIOR = -8.0
 
@@ -74,11 +74,11 @@ class _ConfusionSets:
             # Fail loud on the YAML boolean trap: an unquoted "no"/"yes"/"on"/
             # "off" parses as a Python bool, which would silently become the
             # member "false"/"true" and mis-correct real words. A member must be
-            # a string — skip and warn rather than corrupt a clinical correction.
+            # a string: skip and warn rather than corrupt a clinical correction.
             if any(not isinstance(m, str) for m in raw):
                 logger.warning(
                     "Confusion set %r has a non-string member (likely an "
-                    "unquoted YAML boolean like `no`) — quote it in "
+                    "unquoted YAML boolean like `no`): quote it in "
                     "confusion_sets.yaml; skipping this set.", raw,
                 )
                 continue
@@ -97,7 +97,7 @@ class _ConfusionSets:
                 },
             }
             for m in members:
-                # First set wins if a word is (mis)listed twice — flag it loudly.
+                # First set wins if a word is (mis)listed twice: flag it loudly.
                 if m in self._word_to_set:
                     logger.warning("Word %r appears in multiple confusion sets", m)
                     continue
@@ -115,7 +115,7 @@ def _load_config() -> Tuple[_ConfusionSets, frozenset]:
     """Parse ``confusion_sets.yaml`` once into (confusion sets, compound prefixes).
 
     Cached for the process. A missing or malformed file disables the feature
-    (empty sets, empty prefixes) rather than raising — correction is an
+    (empty sets, empty prefixes) rather than raising: correction is an
     enhancement, never a hard dependency of the pipeline.
     """
     global _SETS, _PREFIXES
@@ -124,15 +124,15 @@ def _load_config() -> Tuple[_ConfusionSets, frozenset]:
     sets: List[dict] = []
     prefixes: List[str] = []
     try:
-        import yaml  # noqa: PLC0415 — optional at import, needed only here
+        import yaml  # optional at import, needed only here  # noqa: PLC0415
         with open(confusion_sets_path(), "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         sets = data.get("sets") or []
         prefixes = data.get("compound_prefixes") or []
     except FileNotFoundError:
-        logger.warning("confusion_sets.yaml missing — context correction disabled")
+        logger.warning("confusion_sets.yaml missing, context correction disabled")
     except Exception as exc:
-        logger.warning("Could not load confusion sets: %s — context correction off", exc)
+        logger.warning("Could not load confusion sets: %s, context correction off", exc)
     _SETS = _ConfusionSets(sets)
     _PREFIXES = frozenset(str(p).lower() for p in prefixes if isinstance(p, str))
     return _SETS, _PREFIXES
@@ -207,14 +207,14 @@ def _apply_context_correction(text: str) -> str:
         #      alone because "tendon" cues the spoken word itself, and "perineal
         #      region" is left alone because neither has an exclusive cue.
         #  (b) The spoken word is one we treat as virtually never correct in
-        #      radiology (very negative prior — "legion", "chord"): replace it
+        #      radiology (very negative prior: "legion", "chord"): replace it
         #      with the best-scoring alternative even without a cue.
         #
-        # The sparse n-gram is deliberately NOT a standalone trigger — it only
+        # The sparse n-gram is deliberately NOT a standalone trigger: it only
         # ranks candidates once a trustworthy trigger has fired. This is what
         # prevents a thin corpus + a stray cue from flipping a correct word.
         if spoken in cued:
-            continue  # the spoken word is itself supported — never touch it
+            continue  # the spoken word is itself supported: never touch it
 
         spoken_prior = priors.get(spoken, 0.0)
         candidates = cued - {spoken}
@@ -226,7 +226,7 @@ def _apply_context_correction(text: str) -> str:
         # Score = context fit + prior + an exclusive-cue bonus. The cue bonus is
         # only ever added to a candidate here (the spoken word was excluded above
         # if it was cued), so it can only push a switch that the guards already
-        # deemed trustworthy — it never flips a self-supported word.
+        # deemed trustworthy: it never flips a self-supported word.
         def _score(m: str) -> float:
             s = ctx.score(left, m, right) + priors.get(m, 0.0)
             return s + _CUE_BONUS if m in cued else s
@@ -254,12 +254,12 @@ def rejoin_split_compounds(text: str) -> str:
     "hydro nephrosis" -> "hydronephrosis", "retro peritoneal" ->
     "retroperitoneal". Conservative: only joins when the concatenation is a known
     medical term AND (the first token is a medical combining form OR the two
-    pieces are not both ordinary English words) — so "the rapist" is never joined
+    pieces are not both ordinary English words): so "the rapist" is never joined
     into "therapist". Runs before the fuzzy stage so a real term is reconstructed
     rather than each fragment being fuzzy-matched (which previously corrupted
     "spleno" -> "seleno").
 
-    Never raises — like :func:`apply_context_correction`, a failure degrades to
+    Never raises: like :func:`apply_context_correction`, a failure degrades to
     leaving the text unchanged rather than breaking the live pipeline.
     """
     try:
@@ -270,7 +270,7 @@ def rejoin_split_compounds(text: str) -> str:
 
 
 def _rejoin_split_compounds(text: str) -> str:
-    from src.medical import medical_dict  # noqa: PLC0415 — avoid import cycle at module load
+    from src.medical import medical_dict  # avoid import cycle at module load  # noqa: PLC0415
     from src.dictation.postprocess.medical_dict_match import _english_known  # noqa: PLC0415
 
     terms = medical_dict.get_medical_terms()
@@ -286,7 +286,7 @@ def _rejoin_split_compounds(text: str) -> str:
             a, b = tokens[i], tokens[i + 1]
             al, bl = a.group(0).lower(), b.group(0).lower()
             joined = al + bl
-            # Only "word<space>word" is joinable — a hyphen means the author
+            # Only "word<space>word" is joinable: a hyphen means the author
             # already chose a compound form. The concatenation being a real
             # medical term is the strong guard; the extra check just refuses to
             # weld two ordinary English words ("the rapist" -> "therapist",
@@ -299,7 +299,7 @@ def _rejoin_split_compounds(text: str) -> str:
                 and len(bl) >= 3
                 and joined in terms
                 # Justify the weld: either the first token is a medical combining
-                # form ("retro", "hydro" — a compound was clearly split), or at
+                # form ("retro", "hydro": a compound was clearly split), or at
                 # least one piece isn't an ordinary English word. This blocks
                 # welding two plain words ("the rapist") whose concatenation only
                 # coincidentally lands in the term list.

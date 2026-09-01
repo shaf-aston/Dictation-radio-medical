@@ -3,8 +3,8 @@
 This is the high-level façade the UI talks to; it hides the client, tasks, DB,
 and registry behind three intentions:
 
-  * ``maybe_start_training`` — if enough data has accrued for a task, kick off a job.
-  * ``poll_and_collect`` — advance any in-flight jobs; download + register
+  * ``maybe_start_training``: if enough data has accrued for a task, kick off a job.
+  * ``poll_and_collect``: advance any in-flight jobs; download + register
     finished models (for any task).
   * status helpers for the settings panel.
 
@@ -218,7 +218,7 @@ class SyncManager:
         """Extract a downloaded model archive into *dest*, rejecting unsafe paths.
 
         The archive comes from the cloud, so it is untrusted. Every member is
-        validated to resolve *inside* ``dest`` before extraction — otherwise a
+        validated to resolve *inside* ``dest`` before extraction: otherwise a
         crafted ``../`` or absolute member could overwrite files outside the
         model directory (CVE-2007-4559). ``filter="data"`` adds the standard tar
         hardening on Python 3.12+.

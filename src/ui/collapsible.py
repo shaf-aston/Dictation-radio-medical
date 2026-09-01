@@ -1,4 +1,4 @@
-"""One folding section — the desktop's version of the web app's `<details>` panel.
+"""One folding section: the desktop's version of the web app's `<details>` panel.
 
 Every secondary group in the window (Template, Patient, Settings) is built from
 this one class, so they fold, look and behave identically. The header reuses the

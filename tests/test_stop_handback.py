@@ -1,4 +1,4 @@
-"""Stop hands the report back before the polish — and never takes it away again.
+"""Stop hands the report back before the polish: and never takes it away again.
 
 The desktop used to sit on the finished report until the confidence-targeted
 polish returned (15+ seconds on a 30-second dictation, measured in
@@ -103,7 +103,7 @@ def test_a_late_pass_can_never_rewind_the_report(monkeypatch):
 
 
 def test_the_polish_own_update_cannot_slip_past_the_guard(monkeypatch):
-    """The polish emits a partial before its final pass — guard that one too.
+    """The polish emits a partial before its final pass: guard that one too.
 
     The nearest case the request does not name, and the one that would have
     reached the editor first if only the final pass were checked.

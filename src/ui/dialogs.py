@@ -26,7 +26,7 @@ def show_learning_consent_if_needed(window: MainWindow) -> None:
         return
     reply = QMessageBox.question(
         window,
-        "Adaptive Learning — Your Consent",
+        "Adaptive Learning: Your Consent",
         "This application can learn from your corrections to improve future "
         "transcription accuracy.\n\n"
         "All learning data stays on this device and is never transmitted.\n\n"
@@ -45,7 +45,7 @@ def show_cloud_training_dialog(window: MainWindow) -> None:
     """Settings panel for cloud voice training: consent, credentials, status.
 
     This is the single reachable entry point for the whole cloud subsystem.
-    Without it the feature stays dormant — collection is gated on consent and
+    Without it the feature stays dormant: collection is gated on consent and
     uploads need a Lightning AI key, neither of which can be set elsewhere.
     Everything is opt-in: closing with the box unchecked keeps the app offline.
     """
@@ -66,7 +66,7 @@ def show_cloud_training_dialog(window: MainWindow) -> None:
         "corrections. De-identified audio and text are uploaded; patient "
         "identifiers are removed and spoken identifiers silenced before upload, "
         "and any record that fails the privacy check is dropped.\n\n"
-        "The app always works fully offline — this is entirely optional."
+        "The app always works fully offline: this is entirely optional."
     )
     blurb.setWordWrap(True)
     layout.addWidget(blurb)
@@ -195,7 +195,7 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
     layout = QVBoxLayout(dlg)
 
     blurb = QLabel(
-        "Polish a finished report with a fast cloud LLM (Groq) — fixing grammar, "
+        "Polish a finished report with a fast cloud LLM (Groq): fixing grammar, "
         "punctuation, and obvious speech-to-text slips only. Clinical content is "
         "never changed. Patient identifiers are removed before any text is sent, "
         "and this requires cloud consent (granted in Cloud Voice Training).\n\n"
@@ -315,7 +315,7 @@ def _show_scan_result(window: MainWindow, image_path: str, result) -> None:
     )
 
     dlg = QDialog(window)
-    dlg.setWindowTitle("Scan Assistant — Suggestions")
+    dlg.setWindowTitle("Scan Assistant: Suggestions")
     dlg.setMinimumWidth(520)
     layout = QVBoxLayout(dlg)
 
@@ -326,12 +326,12 @@ def _show_scan_result(window: MainWindow, image_path: str, result) -> None:
 
     if result.has_findings:
         lines = "\n".join(
-            f"  • {f.label} — confidence {f.probability:.0%}"
+            f"  • {f.label}: confidence {f.probability:.0%}"
             for f in result.findings)
         summary = QLabel(f"Findings flagged for your review:\n{lines}")
     else:
         summary = QLabel("No findings met the confidence threshold. "
-                         "This does NOT rule out disease — review the image yourself.")
+                         "This does NOT rule out disease: review the image yourself.")
     summary.setWordWrap(True)
     layout.addWidget(summary)
 
@@ -360,7 +360,7 @@ def _retrieve_reference_matches(result) -> list:
     """Best-effort similar-reference-case retrieval for a scan result.
 
     Returns an empty list (never raises) when imaging/retrieval deps are missing,
-    no reference datasets are registered, or no query embedding is available — so
+    no reference datasets are registered, or no query embedding is available: so
     the panel simply doesn't render and the rest of the dialog is unaffected.
     """
     embedding = getattr(result, "embedding", None)
@@ -376,7 +376,7 @@ def _retrieve_reference_matches(result) -> list:
         labels = [f.label for f in result.findings]
         filters = {"required_labels": labels} if labels else None
         return retrieve_reference_cases(embedding, index, filters=filters, top_k=5)
-    except Exception as exc:   # optional deps / no data — degrade silently
+    except Exception as exc:   # optional deps / no data: degrade silently
         logger.debug("Reference retrieval unavailable: %s", exc)
         return []
 
@@ -397,7 +397,7 @@ def _append_reference_cases(layout, result) -> None:
     if not matches:
         return
 
-    header = QLabel("Similar reference cases (for visual comparison — not a diagnosis):")
+    header = QLabel("Similar reference cases (for visual comparison: not a diagnosis):")
     header.setWordWrap(True)
     header.setStyleSheet("font-weight: bold;")
     layout.addWidget(header)
@@ -421,7 +421,7 @@ def _append_reference_cases(layout, result) -> None:
         attr_bits = [f"{k}: {attrs[k]}" for k in ("age", "sex", "view") if attrs.get(k) is not None]
         caption = QLabel(
             f"{match.similarity:.0%} match\n"
-            + (", ".join(positives) or "—")
+            + (", ".join(positives) or ":")
             + ("\n" + " · ".join(attr_bits) if attr_bits else ""))
         caption.setWordWrap(True)
         caption.setStyleSheet("font-size: 11px;")
@@ -439,7 +439,7 @@ def show_disclaimer_if_needed(window: MainWindow) -> None:
     """Show the clinical disclaimer on first launch.
 
     The desktop shape of the shared statement in
-    ``features/clinical_disclaimer.py`` — the wording and the "have they seen
+    ``features/clinical_disclaimer.py``: the wording and the "have they seen
     it" decision live there, alongside the web front-end's modal. This function
     owns only the message box.
     """
@@ -456,7 +456,7 @@ def show_disclaimer_if_needed(window: MainWindow) -> None:
 def confirm_unfilled_fields(window: MainWindow) -> bool:
     """Ask before releasing a report that still has template fields in it.
 
-    The desktop shape of ``report_release.unfilled_fields`` — what counts as
+    The desktop shape of ``report_release.unfilled_fields``: what counts as
     unfilled lives there, alongside the web app's 409. This function owns only
     the message box, including how many names fit in it. Returns True to
     proceed; False means the radiologist cancelled and the report stays put.
@@ -493,7 +493,7 @@ def on_show_learning_stats(window: MainWindow) -> None:
             f"Accent hints: {stats['accent_hints']}\n"
         )
 
-        # Post-dictation edits — the "was dictation itself wrong?" signal.
+        # Post-dictation edits: the "was dictation itself wrong?" signal.
         try:
             from src.features.edit_tracking import edit_stats, load_edits
             ed = edit_stats()
@@ -562,7 +562,7 @@ def show_correction_rules_dialog(window: MainWindow) -> None:
     layout = QVBoxLayout(dialog)
 
     layout.addWidget(QLabel(
-        "Add words the dictation mishears. 'Only before' is optional — use it for\n"
+        "Add words the dictation mishears. 'Only before' is optional: use it for\n"
         "real words (e.g. correct “plural” to “pleural” only before “effusion, space”)."
     ))
 

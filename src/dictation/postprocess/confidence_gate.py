@@ -1,4 +1,4 @@
-"""Confidence veto — keep the guessing stages off words the decoder was sure about.
+"""Confidence veto: keep the guessing stages off words the decoder was sure about.
 
 Several pipeline stages rewrite a word purely because it looks like something in
 a vocabulary (SymSpell edit-distance snapping above all). They fire just as
@@ -13,7 +13,7 @@ any rewrite whose original words were all above the ceiling.
 
 Two rules the rest of the pipeline depends on:
 
-* ``None`` means "no confidence is known for this word" — an engine without word
+* ``None`` means "no confidence is known for this word": an engine without word
   probabilities, or a word some earlier stage invented. Unknown is never treated
   as confident, so a missing signal can only make the gate fire *less*.
 * Only ``replace`` edits are gated. A ``delete`` is how "scratch that" and the
@@ -83,7 +83,7 @@ def veto_confident_rewrites(
         ceiling: Confidence at or above which a word is protected.
 
     Returns:
-        ``(text, vetoed)`` — the text with confident rewrites restored, and the
+        ``(text, vetoed)``: the text with confident rewrites restored, and the
         ``'"orig" -> "repl"'`` spans that were refused. The list is the gate's
         evidence: what it blocked is surfaced to the caller, never swallowed.
 
@@ -94,7 +94,7 @@ def veto_confident_rewrites(
     protect on their own.
 
     Fails safe: no confidences, no ceiling, or a list whose length doesn't match
-    *before*'s words all return *after* unchanged with no vetoes — no signal
+    *before*'s words all return *after* unchanged with no vetoes: no signal
     means today's exact behaviour, never a half-applied gate.
     """
     before_words = before.split()

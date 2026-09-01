@@ -3,26 +3,26 @@
 Two wordlists with two distinct jobs (keeping them separate is what fixes the
 "dictation keeps misspelling medical terms" problem):
 
-* **Membership** — :func:`get_medical_terms` answers *"is this already a real
+* **Membership**: :func:`get_medical_terms` answers *"is this already a real
   word, leave it alone?"*. Broad is good here, so it is the union of the generic
   medical wordlist (``src/resources/medical_terms.txt``, ~98k terms) and the
-  curated radiology lexicon. Both ship in-repo and are read from disk only —
+  curated radiology lexicon. Both ship in-repo and are read from disk only:
   nothing here fetches anything, because a workstation that promises dictation
   never touches the network cannot make an exception for its own dictionary.
 
-* **Correction targets** — :func:`get_correction_targets` returns the curated
+* **Correction targets**: :func:`get_correction_targets` returns the curated
   radiology lexicon (``src/resources/radiology_lexicon.txt``), the terms a typo
   should preferentially snap to.
 
 :func:`get_symspell` builds a SymSpell index over the *membership* set (so any
 of the ~98k known terms is a valid correction, not just the curated radiology
-lexicon — terms like "esophageal" or "thyroid" are only in the generic list),
+lexicon: terms like "esophageal" or "thyroid" are only in the generic list),
 with correction-target entries given a large frequency boost so a tied edit
 distance still prefers the clean radiology spelling (e.g. "efusion" ->
 "effusion", not "fusion").
 
 After first load everything is cached in-memory (the SymSpell index is also
-cached to disk — see :func:`get_symspell`).
+cached to disk: see :func:`get_symspell`).
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 # rapidfuzz is only needed by suggest_correction()'s fallback path, which runs
 # only when the SymSpell index is unavailable. Importing it eagerly cost ~1.77s
 # at every cold start (its C-extension pulls in a large module tree) for a path
-# that never executes in the fully-installed config — so it is loaded lazily on
+# that never executes in the fully-installed config: so it is loaded lazily on
 # first use. `_rapidfuzz()` caches the result; None means "not installed".
 _RAPIDFUZZ: "Optional[object]" = None  # (process, fuzz) once loaded; False if absent
 
@@ -93,12 +93,12 @@ def _load_lexicon_from_disk(path: Path) -> List[str]:
     """Read the curated radiology lexicon, sorted shortest-first then alpha.
 
     One term per line; ``#`` comments and blank lines are ignored. A missing
-    file is not fatal — the corrector simply has no snap targets and falls back
+    file is not fatal: the corrector simply has no snap targets and falls back
     to leaving unknown words alone (safe under-correction, never junk).
     """
     if not path.exists():
         logger.warning(
-            "Radiology lexicon missing at %s — spelling correction has no snap "
+            "Radiology lexicon missing at %s: spelling correction has no snap "
             "targets and will leave mis-transcribed terms uncorrected.", path,
         )
         return []
@@ -117,27 +117,27 @@ def _load_lexicon_from_disk(path: Path) -> List[str]:
 
 def _load_and_cache_terms() -> Set[str]:
     global _TERMS, _COMMON_TERMS, _FULL_TERMS_LIST, _CORRECTION_TARGETS
-    # Broad generic wordlist — the membership net, read from disk only.
+    # Broad generic wordlist: the membership net, read from disk only.
     path = medical_wordlist_path()
     logger.info("Loading medical terms from %s", path)
     generic = _load_terms_from_disk(path) if path.exists() else None
     if generic is None or len(generic) < _MIN_VALID_TERMS:
         # No refetch. This list ships in-repo, and reaching out to a public host
         # to refill it would be a network call on a workstation whose whole
-        # promise is that dictation never makes one — silently, from inside the
+        # promise is that dictation never makes one: silently, from inside the
         # correction path, with no consent gate. A short list degrades exactly
         # as a missing lexicon does: fewer words are recognised as already
         # correct, so the corrector leaves more alone. Under-correcting is the
         # safe direction; phoning out is not.
         logger.warning(
-            "Medical wordlist at %s is missing or incomplete (%d terms) — "
+            "Medical wordlist at %s is missing or incomplete (%d terms): "
             "membership checks will be weaker and the fuzzy corrector will "
             "leave more words untouched. Restore the file to fix it.",
             path, 0 if generic is None else len(generic),
         )
     generic = generic or set()
 
-    # Curated radiology lexicon — the clean snap targets (always bundled in-repo).
+    # Curated radiology lexicon: the clean snap targets (always bundled in-repo).
     lexicon = _load_lexicon_from_disk(radiology_lexicon_path())
     _CORRECTION_TARGETS = lexicon
 
@@ -192,9 +192,9 @@ def is_english_word(word: str) -> Optional[bool]:
     global _ENGLISH
     if _ENGLISH is None:
         try:
-            from spellchecker import SpellChecker  # noqa: PLC0415 — optional dep, lazy
+            from spellchecker import SpellChecker  # noqa: PLC0415, optional dep, lazy
             _ENGLISH = SpellChecker()
-        except Exception:  # not installed / failed to load — guard unavailable
+        except Exception:  # not installed / failed to load, guard unavailable
             _ENGLISH = False
             # Loud, once: without this guard the corrector drops to the
             # conservative ratio path and silently leaves the whole class of
@@ -228,7 +228,7 @@ def get_correction_targets() -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# SymSpell index — fast nearest-term lookup over the full membership wordlist
+# SymSpell index: fast nearest-term lookup over the full membership wordlist
 # ---------------------------------------------------------------------------
 # Lexicon entries get a large frequency boost so that when a typo is
 # equidistant from a curated radiology term and a generic-wordlist term
@@ -278,7 +278,7 @@ def get_symspell() -> Optional["SymSpell"]:
     Building this from ~98k terms takes a few seconds, so the result is cached
     on disk (:func:`~src.features.file_manager.medical_dict_cache_path`) and
     rebuilt only when the term counts change (e.g. the bundled wordlist or
-    lexicon is updated). Returns None if symspellpy is not installed — callers
+    lexicon is updated). Returns None if symspellpy is not installed: callers
     fall back to the slower rapidfuzz ratio path.
     """
     global _SYMSPELL, _SYMSPELL_SIGNATURE

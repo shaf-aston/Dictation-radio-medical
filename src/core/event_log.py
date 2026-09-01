@@ -1,18 +1,18 @@
-"""A short, in-memory diary of what the app just did — and how long it took.
+"""A short, in-memory diary of what the app just did: and how long it took.
 
 Why this exists next to :mod:`src.core.perf`: perf answers *"what does this
 stage cost on average?"*; this answers *"what happened, in what order, just
-now?"*. Debugging a slow dictation needs both — the rolling mean says the
+now?"*. Debugging a slow dictation needs both: the rolling mean says the
 decode costs 1.4s, the diary says which decode blew out to 6s and what was
 happening around it.
 
 Deliberately the same shape as the rest of ``src/core``:
 
 * **stdlib only**, no metrics or logging library.
-* **nothing leaves the process** — no file, no socket, no telemetry. The
+* **nothing leaves the process**: no file, no socket, no telemetry. The
   offline-by-default invariant is untouched; the web app only ever serves this
   back to ``127.0.0.1`` on request.
-* **bounded** — a ring buffer, so a long session cannot grow it.
+* **bounded**: a ring buffer, so a long session cannot grow it.
 
 Usage::
 
@@ -39,7 +39,7 @@ from typing import Any, Deque, Dict, Iterator, List, Optional
 from src.core import perf
 
 # How many events are kept. One dictation cycle emits a handful, so a thousand
-# is several minutes of live dictation — long enough to scroll back through the
+# is several minutes of live dictation: long enough to scroll back through the
 # recording you just did, small enough to be free.
 DEFAULT_CAPACITY = 1000
 
@@ -92,7 +92,7 @@ def emit(
 def timed(source: str, message: str, *, stage: Optional[str] = None, **fields: Any) -> Iterator[Dict[str, Any]]:
     """Time the enclosed block, then emit it with ``ms=``.
 
-    Yields a plain dict — put anything you only learn *inside* the block (a
+    Yields a plain dict: put anything you only learn *inside* the block (a
     word count, a result length) into it and it is emitted alongside. The
     event is emitted even when the block raises, marked ``level="error"``, so a
     stage that fails slowly still shows up in the diary.
@@ -144,7 +144,7 @@ class _LoggingBridge(logging.Handler):
     """Mirrors ordinary log records into the diary.
 
     Without this the panel would show only the events this module was told
-    about and miss the ``logger.warning`` that explains them — the two halves
+    about and miss the ``logger.warning`` that explains them: the two halves
     of the story would be in two different places.
     """
 

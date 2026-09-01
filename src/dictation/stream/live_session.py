@@ -1,11 +1,11 @@
-"""Live dictation over a push-fed audio buffer — the front-end-agnostic loop.
+"""Live dictation over a push-fed audio buffer: the front-end-agnostic loop.
 
 The desktop's :class:`src.dictation.worker.LiveTranscribeWorker` runs the same
 chunk rules, but it is a ``QObject`` polling a growing WAV file. A browser has
 neither Qt nor a file, so the loop lives here owning only a buffer, and both
 front-ends keep one set of rules.
 
-Owns no thread, socket, signal, or clock — the caller decides when to call
+Owns no thread, socket, signal, or clock: the caller decides when to call
 :meth:`cycle`. That is what makes it drivable from an async handler and
 testable with a numpy array and no I/O.
 
@@ -53,7 +53,7 @@ class LiveUpdate:
     Two fields, and the difference between them is the whole point: *committed*
     is decoded-once-and-frozen and post-processed, and *preview* is a guess
     about audio still being spoken. A front-end that renders them identically
-    is telling the radiologist that a provisional word is settled — so they are
+    is telling the radiologist that a provisional word is settled: so they are
     handed over separately and the UI shows the preview dimmed.
     """
 
@@ -108,7 +108,7 @@ class LiveSession:
         self._post = IncrementalPostprocessor(accent=accent, cleanup_level=cleanup_level)
 
         # Amortised-doubling buffer: appending a block is O(block), not O(total),
-        # so a long dictation does not get slower the longer it runs — the same
+        # so a long dictation does not get slower the longer it runs: the same
         # rule the rest of this pipeline is built on.
         self._buf = np.zeros(sr * 60, dtype=np.float32)
         self._len = 0
@@ -186,7 +186,7 @@ class LiveSession:
         Takes one snapshot of the buffer and its length up front, and works from
         that alone. The caller runs this on a worker thread while more audio is
         still arriving, so re-reading ``self._len`` part-way through would cut
-        chunks that run past the audio actually sliced — which numpy clamps
+        chunks that run past the audio actually sliced: which numpy clamps
         silently, making two chunks cover the same seconds and the transcript
         repeat itself. :meth:`feed` only ever appends beyond the snapshot, so a
         snapshot stays valid for the whole cycle even if the buffer is replaced.
@@ -251,13 +251,13 @@ class LiveSession:
             if stop > len(tail_audio):
                 # Would decode audio this cycle never sliced. numpy would just
                 # clamp and hand back a short clip, which reads as a plausible
-                # transcript of the wrong seconds — so stop instead and let the
+                # transcript of the wrong seconds: so stop instead and let the
                 # next cycle cut it properly.
                 logger.warning("Chunk runs past the sliced tail; deferring")
                 break
             clip = tail_audio[chunk.start_sample - tail_start : stop]
             if self._noise_floor.is_silence(rms(clip)):
-                # Genuinely silent (a long pause the segmenter force-cut) —
+                # Genuinely silent (a long pause the segmenter force-cut):
                 # nothing to decode, nothing to hallucinate.
                 self._ledger.commit(chunk, "", None)
                 committed_any = True
@@ -279,7 +279,7 @@ class LiveSession:
     ) -> str:
         """Re-decode the still-open portion for a stable preview only.
 
-        Never committed to the ledger — LocalAgreement-2 only shows the word
+        Never committed to the ledger: LocalAgreement-2 only shows the word
         prefix that agreed between this decode and the last one of the same
         open region, so the preview is stable even though the decode is not.
         """
@@ -308,7 +308,7 @@ class LiveSession:
     # -- after Stop -----------------------------------------------------
 
     def committed_text(self) -> str:
-        """The post-processed text decoded so far — usable the moment Stop is
+        """The post-processed text decoded so far: usable the moment Stop is
         pressed, before :meth:`finalize` improves it."""
         raw = self._ledger.committed_text
         return self._post.process(raw, len(raw))[0] if raw else ""
@@ -413,7 +413,7 @@ class LiveSession:
         stage: str,
         condition: bool = False,
     ) -> Optional[AsrResult]:
-        """One transcribe call. ``None`` on failure — never raises at the caller.
+        """One transcribe call. ``None`` on failure: never raises at the caller.
 
         A failed decode must not end the dictation: the audio is still in the
         buffer and the chunk is still open, so the next cycle simply tries

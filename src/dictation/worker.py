@@ -7,22 +7,22 @@ Chunk-once design
 ------------------
 Superseded design: every cycle re-decoded a sliding window of the last few
 seconds, so a long dictation cost several times its own duration in Whisper
-decode time (the old ``window_state.py`` + ``text_diff.py``, both deleted —
+decode time (the old ``window_state.py`` + ``text_diff.py``, both deleted:
 their whole purpose was deduplicating overlapping re-decodes, which cannot
 happen once chunks never overlap). This worker instead:
 
 1. **VAD** (:mod:`src.dictation.stream.vad`) finds silence boundaries in the
-   still-open tail only — never the whole growing recording, which would
+   still-open tail only: never the whole growing recording, which would
    itself become O(n^2) over a long dictation.
 2. **The segmenter** (:mod:`src.dictation.stream.segmenter`) turns those
    boundaries into chunk cuts: never shorter than the configured minimum,
    cut at the latest usable pause, force-cut only as a last resort.
 3. **The ledger** (:mod:`src.dictation.stream.ledger`) decodes each closed
    chunk exactly once and freezes its text permanently.
-4. Only the still-open tail — bounded by ``chunk_policy.force_cut_sec`` — is
+4. Only the still-open tail, bounded by ``chunk_policy.force_cut_sec``, is
    ever re-decoded, and only for a stable live preview via LocalAgreement-2
    (:mod:`src.dictation.stream.tail`); that preview is never committed.
-5. **That preview is dropped when the machine cannot afford it** — see
+5. **That preview is dropped when the machine cannot afford it**: see
    :func:`should_skip_preview`. On a CPU that decodes slower than speech, the
    preview re-decode of a 20-second open tail costs more than the closed chunks
    waiting behind it, so words arrived in late bursts. Skipping it spends every
@@ -38,7 +38,7 @@ re-decodes only the committed chunks whose mean word confidence fell below
 beam width.
 
 Beam widths and the confidence ceiling arrive as constructor arguments (the
-caller reads them from settings — see :mod:`src.ui.recording_session`); this
+caller reads them from settings: see :mod:`src.ui.recording_session`); this
 worker never reads settings itself.
 """
 
@@ -129,7 +129,7 @@ class LiveTranscribeWorker(QObject):
         self.model_size = model_size
         # The fast model that writes what you see while speaking; the accurate
         # model_size engine only runs the post-stop polish. Same split as the
-        # web app's LiveSession — keep the two front-ends together.
+        # web app's LiveSession: keep the two front-ends together.
         self.live_model_size = live_model_size or model_size
         self.language = language
         # VAD is now load-bearing for chunk cutting (not just an engine-side
@@ -160,7 +160,7 @@ class LiveTranscribeWorker(QObject):
         # Every second of audio actually sent to engine.transcribe(), across
         # closed-chunk decodes, open-tail preview decodes, and the polish
         # pass. Divided by the recording's true length at the end to get
-        # stream.decode_ratio — the number M2's exit criterion is judged on
+        # stream.decode_ratio: the number M2's exit criterion is judged on
         # (target: <= 1.4x, versus the old sliding window's ~8x).
         self._decode_sec_total: float = 0.0
         self._audio_sec_total: float = 0.0
@@ -173,7 +173,7 @@ class LiveTranscribeWorker(QObject):
         # a transcribe() call's price barely depends on how much audio it was
         # given -- see rules.should_skip_preview.
         self._preview_cost: float = 0.0
-        # Earliest wall-clock time the next preview may start — see
+        # Earliest wall-clock time the next preview may start: see
         # LiveSession for why previews are capped at half the wall clock.
         self._preview_earliest: float = 0.0
         # The last stable preview shown. Re-shown while previews are being
@@ -185,7 +185,7 @@ class LiveTranscribeWorker(QObject):
 
     @property
     def committed_chunks(self) -> int:
-        """How many chunks the stream froze — the "decode once" count.
+        """How many chunks the stream froze: the "decode once" count.
 
         Exposed for the run log, so it does not have to reach into the ledger.
         """
@@ -205,7 +205,7 @@ class LiveTranscribeWorker(QObject):
     def cancel(self) -> None:
         """Abandon this session: stop the loop and any polish still running.
 
-        Its text is no longer wanted — a newer recording owns the document now.
+        Its text is no longer wanted: a newer recording owns the document now.
         """
         self._cancelled = True
         self._keep_running = False
@@ -222,7 +222,7 @@ class LiveTranscribeWorker(QObject):
             self.progress.emit(STATE_LOADING)
             # Engines load their model lazily, so creating both here is free.
             # A fine-tuned voice model (model_path) only ever replaces the
-            # accurate engine — live text comes from the stock fast model,
+            # accurate engine: live text comes from the stock fast model,
             # exactly as on the web path.
             live_engine = create_engine(model_size=self.live_model_size, device="auto")
             if self.live_model_size == self.model_size and not self.model_path:
@@ -310,7 +310,7 @@ class LiveTranscribeWorker(QObject):
             chunk_audio = tail_audio[local]
             if self._noise_floor.is_silence(rms(chunk_audio)):
                 # Genuinely silent (e.g. a long unspoken pause force-cut by
-                # the segmenter) — nothing to decode, nothing to hallucinate.
+                # the segmenter): nothing to decode, nothing to hallucinate.
                 self._ledger.commit(chunk, "", None)
                 committed_any = True
                 continue
@@ -386,7 +386,7 @@ class LiveTranscribeWorker(QObject):
     ) -> str:
         """Re-decode the still-open portion for a stable live preview only.
 
-        Never committed to the ledger — LocalAgreement-2 (stream/tail.py)
+        Never committed to the ledger: LocalAgreement-2 (stream/tail.py)
         only shows the word-prefix that agreed between this decode and the
         last one of the same open region, so the preview is stable even
         though the underlying decode is provisional.
@@ -444,7 +444,7 @@ class LiveTranscribeWorker(QObject):
         prompt = build_context_prompt()
 
         # This pass can take several seconds per chunk, and it runs after the
-        # radiologist has already pressed Stop — say what it is doing rather
+        # radiologist has already pressed Stop: say what it is doing rather
         # than leaving the window looking hung.
         targets = list(self._ledger.low_confidence_indices(self.polish_confidence_ceiling))
         for done, i in enumerate(targets, start=1):
@@ -534,7 +534,7 @@ class LiveTranscribeWorker(QObject):
         ])
 
     def _audio_length(self) -> Tuple[int, int]:
-        """Return ``(total_frames, samplerate)`` from the header — no decode.
+        """Return ``(total_frames, samplerate)`` from the header: no decode.
 
         ``(0, 0)`` while the file is missing or unreadable (the recorder may not
         have created it yet), which the run loop treats as "wait and retry".
@@ -573,7 +573,7 @@ class LiveTranscribeWorker(QObject):
                 audio, sr = sf.read(self.audio_path, dtype="float32")
                 mono = self._to_mono(audio)
                 # The caller labels the returned chunk as starting at
-                # *from_sample* — slice the full read so segment timestamps
+                # *from_sample*: slice the full read so segment timestamps
                 # stay correct when the seek path failed.
                 if from_sample > 0:
                     mono = mono[from_sample:]

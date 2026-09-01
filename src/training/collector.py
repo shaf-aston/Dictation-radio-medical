@@ -6,7 +6,7 @@ subsystem. It is intentionally one-directional: ``adaptive_learning`` and
 This keeps the offline pipeline free of any cloud dependency.
 
 Everything here is a no-op unless BOTH ``cloud_enabled`` and
-``cloud_training_consent`` are true in settings — so with default settings the
+``cloud_training_consent`` are true in settings: so with default settings the
 app retains no audio and stages no data.
 
 Lifecycle within one dictation session:
@@ -122,7 +122,7 @@ class CorrectionCollector:
 
         The worker only transcribes a sliding window, so each emission covers
         recent audio. We merge by absolute start time (rounded to 0.1s) so the
-        accumulated list spans the whole recording — important for audio
+        accumulated list spans the whole recording: important for audio
         de-identification, where PHI is often spoken near the start.
         """
         if not segments:
@@ -158,7 +158,7 @@ class CorrectionCollector:
 
         Called from ``adaptive_learning.learn_correction`` and the
         ``voice_commands`` correction hook. Safe to call with no active
-        session — it simply returns.
+        session: it simply returns.
         """
         if not self._consent_active():
             return
@@ -190,7 +190,7 @@ class CorrectionCollector:
         )
 
     # ------------------------------------------------------------------
-    # Finalisation — de-identify and persist (two phases)
+    # Finalisation: de-identify and persist (two phases)
     # ------------------------------------------------------------------
 
     def prepare_audio(self) -> None:

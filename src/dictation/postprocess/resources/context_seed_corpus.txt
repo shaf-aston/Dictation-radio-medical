@@ -1,4 +1,4 @@
-# Context seed corpus — cold-start training text for the context n-gram model.
+# Context seed corpus: cold-start training text for the context n-gram model.
 #
 # Plain radiology sentences, one per line. Lines starting with '#' and blank
 # lines are ignored. These provide the initial word-adjacency statistics the
@@ -8,7 +8,7 @@
 # radiologist's own finalized reports over time (learned_context_corpus.txt),
 # so this only has to be good enough to start; it does not have to be complete.
 #
-# Keep sentences natural and correctly spelled — this is the "ground truth" the
+# Keep sentences natural and correctly spelled: this is the "ground truth" the
 # model learns likely word sequences from.
 
 # ── spinal cord ──

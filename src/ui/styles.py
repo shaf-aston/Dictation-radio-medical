@@ -1,6 +1,6 @@
 """Qt stylesheets for the desktop UI.
 
-There is one sheet — `styles/app.qss` — rendered once per theme from the colours
+There is one sheet, `styles/app.qss`, rendered once per theme from the colours
 in `tokens.json`, the same file the web front-end reads (see `src/ui/theme.py`).
 `DARK` and `LIGHT` keep their names so existing callers are unchanged.
 """
@@ -24,7 +24,7 @@ def _set_state(widget, name: str, state: str, allowed: tuple[str, ...]) -> None:
     the active theme instead of staying dark-themed on a light window. This only
     sets the property the stylesheet selects on.
 
-    Qt does not re-evaluate a property selector on its own, hence the repolish —
+    Qt does not re-evaluate a property selector on its own, hence the repolish:
     and only doing it when the state actually changes keeps it off the hot path
     of the level timer, which fires many times a second.
     """

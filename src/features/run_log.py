@@ -1,7 +1,7 @@
 """One record per dictation run: how long it took, and whether it kept up.
 
 ``src.core.perf`` already measures where dictation time goes, but it is
-in-process and resets with every recording — so "did that twenty-minute
+in-process and resets with every recording: so "did that twenty-minute
 dictation behave differently from this two-minute one?" could only ever be
 asserted, never shown. This module is what turns those timings into history,
 and ``/developer`` is where they are read.
@@ -16,7 +16,7 @@ diagnostics rather than an institutional record:
   can least afford it.
 * **The report text is optional.** ``run_log_store_text`` (default on, because
   seeing the output per run is the point) writes the report alongside the
-  numbers. Turning it off keeps every timing and drops only the text — for a
+  numbers. Turning it off keeps every timing and drops only the text: for a
   site that would rather no report body sat in a diagnostics file.
 
 Local only. Nothing here is uploaded, and nothing calls out; the offline
@@ -104,7 +104,7 @@ def finish(record: RunRecord, text: str, settings: Any) -> RunRecord:
 
     Takes the perf snapshot *here* rather than letting the caller pass one,
     because the next run's ``perf.reset()`` is what makes these numbers
-    unrecoverable — capturing them at close is the whole point.
+    unrecoverable: capturing them at close is the whole point.
     """
     record.word_count = len(text.split())
     record.stages = perf.snapshot()
@@ -134,7 +134,7 @@ def write(record: RunRecord, settings: Any) -> None:
 #: How many times a rename may lose a race before the trim is abandoned, and
 #: how long to wait between attempts. Windows refuses a rename onto a path
 #: another process has open, so two front-ends trimming at the same moment make
-#: one of them fail — briefly, and for no reason that will still be true a
+#: one of them fail: briefly, and for no reason that will still be true a
 #: moment later. Abandoning a trim is harmless (the log is merely trimmed on
 #: the next run), so this stays small.
 _REPLACE_ATTEMPTS = 5
@@ -161,12 +161,12 @@ def _rewrite(rows: List[Dict[str, Any]]) -> None:
 
     The sibling's name is unique to this writer. Both front-ends are separate
     processes writing this same file, and a fixed ``<name>.tmp`` would hand two
-    simultaneous trims the same scratch file — one truncating what the other is
+    simultaneous trims the same scratch file: one truncating what the other is
     still writing, then renaming the fragment over the log. Matches
     ``core/json_store.write_json``, which had the same shape.
 
     Stated honestly: unlike the ``json_store`` case, this one was **not**
-    reproduced — a threaded test could not tear the shared temp file, and the
+    reproduced: a threaded test could not tear the shared temp file, and the
     two-process case is not something the suite can drive. This is consistency
     and cheap defence, not a fix for a demonstrated failure.
     """
