@@ -63,8 +63,10 @@ class RunRecord:
     audio_sec: float = 0.0
     #: Wall-clock from pressing record to the final text landing.
     duration_sec: float = 0.0
-    #: How long after the audio ended the final text arrived. The number that
-    #: says whether Stop feels instant or not.
+    #: How long after the audio ended the accuracy-polished text arrived. Both
+    #: front-ends hand the report back the instant Stop is pressed, so this is
+    #: NOT how long anyone waits -- it is how long the polish runs behind them.
+    #: Read it as headroom, not as latency.
     finalise_sec: float = 0.0
     word_count: int = 0
     chunk_count: int = 0
