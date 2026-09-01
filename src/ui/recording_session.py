@@ -201,6 +201,13 @@ def on_start_recording(window: MainWindow) -> None:
     current_text = window.editor.toPlainText()
     if current_text and not current_text.endswith(("\n", " ")):
         anchor.insertText(" ")
+    # Text written AT the anchor must not push it along. Without this, the very
+    # first live update -- which starts exactly at the anchor -- left the anchor
+    # sitting after those words, so every later cycle rewrote the region from
+    # there and the opening fragment was stranded: reports began "The lungs
+    # areThe lungs are clear...". Insertions *before* the anchor still move it,
+    # which is what a template load or a form-field edit relies on.
+    anchor.setKeepPositionOnInsert(True)
     window._dictation_start = anchor
 
     model_size = window.model_combo.currentText()
