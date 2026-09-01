@@ -96,6 +96,9 @@ def postprocess_warmers() -> List[Warmer]:
         ("terminology", _warm_terminology),
         ("context_model", _warm_context_model),
         ("term_lookup", _warm_term_lookup),
+        # The VAD is what decides where a chunk ends, so the live loop cannot
+        # take a step without it. It belongs in the group every front-end runs.
+        ("vad", _warm_vad),
     ]
 
 
@@ -113,6 +116,21 @@ def transcriber_warmer(model_size: str, model_path: Optional[str] = None) -> War
 
     label = f"whisper_model[{model_path or model_size}]"
     return (label, _warm)
+
+
+def _warm_vad() -> None:
+    """Load and run the Silero VAD once, off the dictation path.
+
+    Left cold it loads inside the FIRST cycle of the first dictation after a
+    restart, which measured at 2.4 seconds of the opening cycle: spent before
+    any audio has been decoded, so the radiologist is watching an empty report
+    while it happens.
+    """
+    import numpy as np
+
+    from src.dictation.stream.vad import SAMPLE_RATE, detect_speech
+
+    detect_speech(np.zeros(SAMPLE_RATE, dtype=np.float32))
 
 
 def _run_warmer(name: str, fn: Callable[[], object]) -> None:

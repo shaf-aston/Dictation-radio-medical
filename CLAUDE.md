@@ -214,11 +214,17 @@ dictation used to get slower the longer it ran:
    (`ledger.py`): nothing ever re-decodes committed audio. Only the still-open
    tail (bounded by `ChunkPolicy.force_cut_sec`, default 20s) is re-decoded
    cycle to cycle, purely for a stable live preview via LocalAgreement-2
-   (`tail.py`). **That preview never takes a word back**: two agreeing decodes
-   confirm a word and it then stays until the chunk closes, because text
-   that un-writes itself mid-sentence reads as the app losing the
-   dictation. Measured as rare (once in four recorded runs) but free to
-   remove: the confirmed prefix reached the same length either way. **The preview is priced per call, not per second of audio.**
+   (`tail.py`). **The first decode is shown at once and may be corrected
+   exactly once; after that the preview never takes a word back.** Text that
+   un-writes itself mid-sentence reads as the app losing the dictation, so
+   confirmed words are pinned until the chunk closes. But requiring agreement
+   before showing anything means the earliest words possible are the SECOND
+   decode, and a decode costs over a second whatever it is handed: measured end
+   to end in the browser, that put the first words of a dictation 13.8 seconds
+   after the button was pressed. The first decode is therefore shown
+   provisionally, the next decode may revise it, and the pin applies from then
+   on. One bounded correction at the very start is not the failure this rule
+   exists to prevent. **The preview is priced per call, not per second of audio.**
    Measured on this machine, one `transcribe()` on the live model costs about
    the same whatever it is handed, 1.33s for a 3s clip, 1.36s for 6s, 1.52s
    for 25s, because Whisper pads every clip to a 30-second window, so the
@@ -268,6 +274,15 @@ severity in this app, and a slow decode is neither.
 Nothing here weakens the offline rule: both endpoints read in-process buffers
 and are served on loopback. Nothing is written to disk and nothing is sent
 anywhere.
+
+**The first words arrive in about three seconds, and three things had to
+change to get there** (all measured in the browser, not estimated). The Silero
+VAD was loading lazily inside the first cycle of the first dictation after a
+restart, costing 11 seconds cold: it is a startup warmer now
+(`warmup._warm_vad`). The opening cycle spent a whole decode on 0.048s of
+audio, because a decode costs the same whatever it is handed, so nothing under
+`preview_min_tail_sec` (default 1.0s) is decoded at all. And the agreement rule
+above threw the first decode away. Together: 13.8s to 2.1s.
 
 **A long pause ends the sentence.** A silence at or beyond `pause_threshold`
 breaks the paragraph, and `stream/ledger.close_sentence` puts a full stop on the

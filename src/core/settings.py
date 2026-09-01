@@ -51,6 +51,12 @@ _DEFAULTS: dict = {
     # committed, so this trades early sight of a few words for the committed
     # chunks arriving on time. 0 keeps the preview no matter how far behind.
     "preview_max_lag_sec": 3.0,
+    # A preview decode costs the same whatever it is handed, because Whisper
+    # pads every clip to a 30-second window. So decoding a tail that is barely
+    # started spends a full decode to show almost nothing, and delays the first
+    # real preview by that much. Measured: the opening cycle decoded 0.048s of
+    # audio for 1.15s of machine. Below this many seconds of open tail, wait.
+    "preview_min_tail_sec": 1.0,
     # committed chunks below this mean word confidence get one re-decode after stop
     "polish_confidence_ceiling": 0.75,
     # A single word below this confidence gets a faint underline in the report.

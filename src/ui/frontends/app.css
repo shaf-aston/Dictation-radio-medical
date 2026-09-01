@@ -234,7 +234,7 @@ body {
 .menu {
     position: absolute; right: 0; top: calc(100% + .45rem);
     z-index: 20;
-    min-width: 12.5rem;
+    min-width: 15.5rem;   /* wide enough that a label and its shortcut sit on one line */
     padding: .3rem;
     display: flex; flex-direction: column;
     background: var(--room-2);
@@ -256,7 +256,7 @@ body {
 .menu button:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 9%, transparent); }
 .menu button:disabled { opacity: .4; cursor: not-allowed; }
 .menu button .fas { color: var(--text-dim); flex: none; }
-.menu button span { flex: 1; }
+.menu button span { flex: 1; white-space: nowrap; }
 .menu-kbd {
     font: 600 .66rem var(--mono);
     color: var(--text-dim);
@@ -515,7 +515,12 @@ body {
 /* The provisional tail: still being decoded, so it is dimmed rather than shown
    as settled text. It lives in the marks underlay, never in the textarea, so it
    cannot reach an export. */
-.editor-marks .preview { color: var(--text-dim); opacity: .72; }
+/* The words you are still saying. Dimmer than the settled text, because it is
+   still provisional, but not dimmed twice: --text-dim at 72% opacity measures
+   3.4:1 on the film in dark and 3.2:1 in light, under the 4.5:1 floor, and it
+   was faint enough that the first word of a dictation could be missed
+   altogether. The token on its own is 5.3:1 and still clearly quieter. */
+.editor-marks .preview { color: var(--text-dim); }
 
 .hint { margin: 0; font-size: .76rem; color: var(--text-dim); }
 

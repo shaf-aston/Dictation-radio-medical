@@ -85,6 +85,7 @@ class LiveSession:
         silence_rms_floor: float = 0.0005,
         silence_rms_margin: float = 2.5,
         preview_max_lag_sec: float = 3.0,
+        preview_min_tail_sec: float = 1.0,
         polish_confidence_ceiling: float = 0.85,
         uncertain_word_confidence: float = 0.6,
         initial_prompt: str = "",
@@ -98,6 +99,7 @@ class LiveSession:
         self.final_beam_size = final_beam_size
         self._noise_floor = AdaptiveFloor(silence_rms_floor, silence_rms_margin)
         self.preview_max_lag_sec = preview_max_lag_sec
+        self.preview_min_tail_sec = preview_min_tail_sec
         self.polish_confidence_ceiling = polish_confidence_ceiling
         self.uncertain_word_confidence = uncertain_word_confidence
         self.initial_prompt = initial_prompt
@@ -290,6 +292,12 @@ class LiveSession:
         clip = tail_audio[
             open_chunk.start_sample - tail_start : open_chunk.end_sample - tail_start
         ]
+        # Too little audio to be worth a decode yet. A decode costs the same
+        # whatever it is given, so spending one on a fraction of a second buys
+        # almost no words and pushes the first real preview a decode further
+        # out. Keep whatever is already shown rather than clearing it.
+        if len(clip) < self.preview_min_tail_sec * self.sr:
+            return self._agreement.stable()
         if self._noise_floor.is_silence(rms(clip)):
             return self._agreement.update("")
 

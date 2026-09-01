@@ -926,6 +926,9 @@ def _live_session(settings, prefs: dict) -> LiveSession:
         live_beam_size=int(settings.get("live_beam_size")),
         final_beam_size=int(settings.get("final_beam_size")),
         preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
+        preview_min_tail_sec=float(
+            settings.get("preview_min_tail_sec", get_default("preview_min_tail_sec"))
+        ),
     )
     return LiveSession(
         _get_engine(live_model),

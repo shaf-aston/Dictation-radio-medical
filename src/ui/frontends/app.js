@@ -317,7 +317,11 @@ function pushUndoState() {
 function updateWordCount() {
     const el = document.getElementById('wordCount');
     if (!el) return;
-    const words = editor.value.trim() ? editor.value.trim().split(/\s+/).length : 0;
+    // What is on screen, which while recording includes the dimmed tail. A
+    // count that ignores the words you can plainly read says "0 words" at the
+    // very moment the app is proving it heard you.
+    const shown = [editor.value, isRecording ? previewText : ''].join(' ').trim();
+    const words = shown ? shown.split(/\s+/).length : 0;
     el.textContent = words === 1 ? '1 word' : `${words} words`;
 }
 
@@ -483,7 +487,7 @@ async function reloadMacros() {
         populateMacroRegions();
         macroRegionSelect.value = result.selected_region || macroRegionSelect.value;
         renderMacros(currentMacroRegion());
-        showStatus('Macros reloaded', 'is-ok', 1500);
+        showStatus('Phrases reloaded', 'is-ok', 1500);
     } catch (err) {
         showError('Macros could not be reloaded: ' + err.message);
     } finally {
@@ -638,7 +642,7 @@ async function downloadReport(kind) {
         const blob = await response.blob();
         const filename = parseDownloadFilename(response.headers.get('content-disposition'), fallbackName);
         triggerDownload(blob, filename);
-        showStatus(kind === 'word' ? 'Word export ready' : 'TXT download ready', 'is-ok', 1800);
+        showStatus(kind === 'word' ? 'Word file ready' : 'Text file ready', 'is-ok', 1800);
     } catch (err) {
         showError('Report export failed: ' + err.message);
     } finally {
@@ -668,7 +672,7 @@ async function loadSelectedTemplate() {
 
     try {
         setTemplateLoadingState(true);
-        showStatus(`Loading template: ${name}`, 'is-busy');
+        showStatus('Loading template', 'is-busy');
 
         const response = await fetch(`/api/templates/${encodeURIComponent(name)}/load`, {
             method: 'POST',
@@ -691,7 +695,7 @@ async function loadSelectedTemplate() {
         editor.focus();
         undoStack = [editor.value];
         undoIndex = 0;
-        showStatus(`Template loaded: ${result.name}`, 'is-ok', 2000);
+        showStatus('Template loaded', 'is-ok', 2000);
     } catch (err) {
         showError('Template load failed: ' + err.message);
     } finally {
@@ -897,6 +901,10 @@ function renderLiveText() {
     editor.value = settled;
     editor.scrollTop = editor.scrollHeight;
     paintPreview(settled);
+    // The count is the only thing on screen saying the report is growing while
+    // you speak. It is one split of the text, unlike the marks and findings
+    // scans, which is why it runs every cycle and they do not.
+    updateWordCount();
 }
 
 // The dimmed tail is painted by the existing marks underlay rather than a
@@ -918,6 +926,9 @@ function paintPreview(settled) {
     syncMarksScroll();
 }
 
+//: Kept from the markup so the prompt is written down once, in the HTML.
+const EDITOR_PLACEHOLDER = editor.getAttribute('placeholder') || '';
+
 function setRecordingUi(on) {
     dictateBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
     dictateBtn.classList.toggle('is-recording', on);
@@ -925,6 +936,11 @@ function setRecordingUi(on) {
     dictateBtn.setAttribute('aria-label', on ? 'Stop recording' : 'Start recording');
     recMeter.hidden = !on;
     cancelBtn.hidden = !on;
+    // The live preview is painted in the underlay BEHIND the textarea, and an
+    // empty textarea still paints its placeholder on top of it. The two drew
+    // over each other as "Predsictherpmicrophone and start speaking." for the
+    // first seconds of every dictation, which is the first thing you see.
+    editor.placeholder = on ? '' : EDITOR_PLACEHOLDER;
     if (!on) setLevel(0);
 }
 
@@ -969,8 +985,8 @@ function openSocket() {
             renderLiveText();
             showStatus(
                 msg.state === 'catching_up'
-                    ? 'Catching up with you…'
-                    : 'Listening: text appears as you speak',
+                    ? 'Catching up'
+                    : 'Listening',
                 'is-rec',
             );
         } else if (msg.type === 'stopped') {
@@ -984,7 +1000,7 @@ function openSocket() {
             renderLiveText();
             handedOverText = editor.value;
             finishSession(null);
-            showStatus('Ready to edit · improving accuracy in the background', 'is-busy');
+            showStatus('Yours to edit · polishing', 'is-busy');
         } else if (msg.type === 'final') {
             devMark('browser', 'accuracy pass arrived', { words: devWordsIn(msg.text) },
                 { ms: stopPressedAt ? performance.now() - stopPressedAt : null });
@@ -994,14 +1010,14 @@ function openSocket() {
                 // You edited while it was working. Your words win: silently
                 // replacing them with the machine's would be the worst possible
                 // outcome for a clinical report.
-                showStatus('Kept your edits: the improved version was discarded', 'is-ok', 4000);
+                showStatus('Kept your edits', 'is-ok', 4000);
             } else {
                 committedText = improved;
                 uncertainWords = new Set(msg.uncertain || []);
                 renderLiveText();
                 pushUndoState();
                 announceReportChanged();
-                showStatus('Accuracy pass complete', 'is-ok', 2500);
+                showStatus('Polished', 'is-ok', 2000);
             }
             handedOverText = null;
         } else if (msg.type === 'error') {
@@ -1102,7 +1118,7 @@ async function startRecording() {
     setRecordingUi(true);
     startTimer();
     devMark('browser', 'recording started', {}, { ms: performance.now() - dev.recordStart });
-    showStatus('Listening: text appears as you speak', 'is-rec');
+    showStatus('Listening', 'is-rec');
 }
 
 async function stopRecording() {
@@ -1112,7 +1128,7 @@ async function stopRecording() {
     await teardownMic();
     setRecordingUi(false);
     stopTimer();
-    showStatus('Improving the transcript…', 'is-busy');
+    showStatus('Finishing', 'is-busy');
     if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
         liveSocket.send(JSON.stringify({ command: 'stop' }));
     } else {
