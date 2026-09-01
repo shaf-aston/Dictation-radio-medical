@@ -120,6 +120,95 @@ score the change as noise. **Record the `own` set first, then this is measurable
 Adding faster-whisper's `hotwords` argument would not help: `get_prompt()` spends
 hotwords and the prompt from the *same* 223-token budget, so they compete.
 
+## Update 2026-09-01 — the desktop was writing live text with the accurate model
+
+The web path had used a fast model for live text since 2026-08-22
+(`web_live_model_size`). The desktop had never been given that split: it decoded
+every live chunk AND every preview with `model_size` (`small.en`). The setting is
+now shared as `live_model_size` and both front-ends read it.
+
+### What one decode call costs here
+
+Measured directly, best of three per length, same clip:
+
+| clip | `tiny.en` | `small.en` |
+|---|---|---|
+| 3 s | **0.70 s** | 4.17 s |
+| 6 s | 0.84 s | 3.77 s |
+| 10 s | 2.49 s | 4.24 s |
+| 15 s | 1.84 s | 4.81 s |
+| 20 s | 1.75 s | 5.60 s |
+| 25 s | 2.26 s | 8.09 s |
+
+`small.en` costs ~4 s a call whatever it is handed — a 3-second clip costs more
+than the audio it contains. That is why the desktop could never catch up: the
+preview skipper switched previews off, and committed chunks queued behind them.
+
+### What the split bought, measured on a real 30 s dictation
+
+Replayed at true speaking pace, timestamping every update the screen would show:
+
+| | live = `small.en` (before) | live = `tiny.en` (after) |
+|---|---|---|
+| first words on screen | 15.9 s | **4.7 s** |
+| updates during the 30 s | 5 | **33** |
+| words shown when the audio ended | 22 of 33 | **29 of 33** |
+
+## Update 2026-09-01 — shortening the chunks: still refuted, on new numbers
+
+The earlier refutation rested on `small.en`'s ~4 s fixed call cost, which the
+live path no longer pays, so it was re-measured rather than assumed. 18 `tts`
+clips, `tiny.en` live + `small.en` polish, same clips both rows:
+
+| policy (min/soft/force) | WER | medical-term error | chunks/clip | decode | RTF |
+|---|---|---|---|---|---|
+| **6 / 15 / 20 (shipped)** | **6.66 %** | **7.11 %** | 2.2 | 216 s | **0.55** |
+| 3 / 6 / 8 | 7.31 % | 7.56 % | 4.2 | 358 s | 0.92 |
+
+**Verdict: keep 6/15/20.** Halving the chunk length raised decode by 66 % and
+moved both accuracy metrics the wrong way. RTF 0.92 is the number that settles
+it: above 1.0 the machine cannot keep up with live speech at all, so 0.92 leaves
+no headroom for a slower machine, a longer report, or anything else running. The
+accuracy gap is inside the noise (an 8-clip run had the two the other way round),
+but nothing here *pays* for the cost, and the mechanism the original note named —
+halving chunk length nearly doubles total decode — is confirmed on the fast model
+too.
+
+## Update 2026-09-01 — Stop no longer waits, on either front-end
+
+Verified end to end by driving the shipped code, not a stand-in: the web through
+a real WebSocket against a running server, the desktop through the real
+`MainWindow` with a file in place of the microphone. Quiet machine, same 30 s clip:
+
+| | web | desktop |
+|---|---|---|
+| first text on screen | 4.9 s | 6.9 s |
+| report handed back after Stop | **+0.0 s** | **+0.0 s** |
+| accuracy pass lands (background) | +16.1 s | +17.2 s |
+
+`finalise_sec` in the run log therefore no longer measures a wait anyone sits
+through. It is relabelled in `/developer` as background time; read it as headroom.
+
+**One thing the polish did not fix, worth knowing.** On the web run it corrected
+`hemothorax` → `pneumothorax` and `cardiomedius inal` → `cardiomediastinal`. On
+the desktop run of the *same audio* it left both standing, because the polish
+only re-decodes chunks whose mean word confidence fell below
+`polish_confidence_ceiling` — and the fast model was confident about a word it
+got wrong. That is the same weakness already recorded in
+[dictation-accuracy.md](dictation-accuracy.md): Whisper's confidence does not
+separate "heard correctly" from "heard wrong". Raising the ceiling re-decodes
+more chunks and costs the Stop headroom above; it has not been changed.
+
+## A measurement trap that cost an hour (2026-09-01)
+
+The bench and `tts` clips are **22050 Hz**; the live path is 16 kHz throughout.
+Resampling them by picking nearest samples (`audio[indices]`, no anti-alias
+filter) aliases them badly enough to send WER from ~10 % to ~62 % and make every
+clip look like it was truncated — it reads exactly like a corrupt gold set, and
+was very nearly reported as one. `run_eval` never hits this because it hands the
+engine a *path* and the library resamples properly. Any harness that feeds arrays
+must use `faster_whisper.audio.decode_audio(path, sampling_rate=16000)`.
+
 ## Acted on
 
 `perf.log_summary` logged stage timings only and never read `gauges()`, so
