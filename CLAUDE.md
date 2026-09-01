@@ -206,7 +206,11 @@ dictation used to get slower the longer it ran:
    (`ledger.py`) — nothing ever re-decodes committed audio. Only the still-open
    tail (bounded by `ChunkPolicy.force_cut_sec`, default 20s) is re-decoded
    cycle to cycle, purely for a stable live preview via LocalAgreement-2
-   (`tail.py`). **The preview is priced per call, not per second of audio.**
+   (`tail.py`). **That preview never takes a word back**: two agreeing decodes
+   confirm a word and it then stays until the chunk closes, because text
+   that un-writes itself mid-sentence reads as the app losing the
+   dictation. Measured as rare (once in four recorded runs) but free to
+   remove — the confirmed prefix reached the same length either way. **The preview is priced per call, not per second of audio.**
    Measured on this machine, one `transcribe()` on the live model costs about
    the same whatever it is handed — 1.33s for a 3s clip, 1.36s for 6s, 1.52s
    for 25s — because Whisper pads every clip to a 30-second window, so the
