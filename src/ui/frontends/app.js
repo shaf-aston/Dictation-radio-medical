@@ -311,7 +311,18 @@ function pushUndoState() {
  * listening for typing never sees a dictated report, a loaded template or an
  * undo — which is exactly the text the findings strip exists to check. Every
  * programmatic write calls this; the `input` listeners cover the typing. */
+// The count is on the report's own head strip, so it has to be refreshed
+// everywhere the text can change -- typing, a template load, a live update, a
+// suggestion applied. announceReportChanged() already runs on all of those.
+function updateWordCount() {
+    const el = document.getElementById('wordCount');
+    if (!el) return;
+    const words = editor.value.trim() ? editor.value.trim().split(/\s+/).length : 0;
+    el.textContent = words === 1 ? '1 word' : `${words} words`;
+}
+
 function announceReportChanged() {
+    updateWordCount();
     scheduleMarks();
     scheduleFindings();
 }
@@ -686,6 +697,7 @@ async function loadSelectedTemplate() {
 
 // Track text changes for undo and persist patient fields locally.
 editor.addEventListener('input', pushUndoState);
+editor.addEventListener('input', updateWordCount);
 [patientName, patientId, patientDob, patientStudyDate, patientReferrer, patientAccession].forEach((field) => {
     field.addEventListener('input', () => {
         savePatientDraft();
@@ -837,6 +849,10 @@ let baseText = '';            // whatever was in the editor before recording
 let recordStartedAt = 0;
 let timerHandle = null;
 let handedOverText = null;  // what Stop handed back, to detect edits since
+// When Stop was pressed, so the developer console can price the two things
+// that follow it separately: the hand-back (should be instant) and the
+// accuracy pass behind it (allowed to take as long as it needs).
+let stopPressedAt = 0;
 
 // The worklet only forwards frames. Every decision stays on the main thread, so
 // UI work can never block the audio thread.
@@ -942,6 +958,7 @@ function openSocket() {
         const msg = safeParseJson(event.data, null);
         if (!msg) return;
         if (msg.type === 'partial') {
+            devUpdateArrived(msg);
             committedText = msg.committed || '';
             previewText = msg.preview || '';
             uncertainWords = new Set(msg.uncertain || []);
@@ -953,6 +970,8 @@ function openSocket() {
                 'is-rec',
             );
         } else if (msg.type === 'stopped') {
+            devMark('browser', 'report handed back', { words: devWordsIn(msg.text) },
+                { ms: stopPressedAt ? performance.now() - stopPressedAt : null });
             // The report is yours now. The accurate re-decode is still running,
             // but you can read and edit while it does.
             previewText = '';
@@ -963,6 +982,9 @@ function openSocket() {
             finishSession(null);
             showStatus('Ready to edit · improving accuracy in the background', 'is-busy');
         } else if (msg.type === 'final') {
+            devMark('browser', 'accuracy pass arrived', { words: devWordsIn(msg.text) },
+                { ms: stopPressedAt ? performance.now() - stopPressedAt : null });
+            stopPressedAt = 0;
             const improved = msg.text || '';
             if (editor.value !== handedOverText) {
                 // You edited while it was working. Your words win — silently
@@ -979,6 +1001,7 @@ function openSocket() {
             }
             handedOverText = null;
         } else if (msg.type === 'error') {
+            devMark('browser', msg.message || 'dictation failed', {}, { level: 'error' });
             showError(msg.message || 'Dictation failed.');
             finishSession(null);
         }
@@ -1016,15 +1039,20 @@ async function teardownMic() {
 // -- start / stop / cancel --------------------------------------------------
 
 async function startRecording() {
+    devRecordingStarted();
+    const micAskedAt = performance.now();
     try {
         micStream = await navigator.mediaDevices.getUserMedia({
             audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
         });
     } catch (err) {
+        devMark('browser', 'microphone refused', {}, { level: 'error' });
         console.error('Microphone access denied:', err);
         showError('Microphone access denied. Allow microphone permissions in your browser settings, then try again.');
         return;
     }
+
+    devMark('browser', 'microphone granted', {}, { ms: performance.now() - micAskedAt });
 
     try {
         // Asking the context for 16 kHz makes the browser resample for us, so
@@ -1034,18 +1062,22 @@ async function startRecording() {
         await audioContext.audioWorklet.addModule(workletUrl);
         URL.revokeObjectURL(workletUrl);
 
+        const socketAskedAt = performance.now();
         liveSocket = openSocket();
         await new Promise((resolve, reject) => {
             liveSocket.addEventListener('open', resolve, { once: true });
             liveSocket.addEventListener('error', reject, { once: true });
         });
+        devMark('browser', 'dictation socket open', {}, { ms: performance.now() - socketAskedAt });
 
         micNode = new AudioWorkletNode(audioContext, 'pcm-tap');
         micNode.port.onmessage = (event) => {
             const frame = event.data;
             setLevel(peakLevel(frame));
             if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
-                liveSocket.send(floatToPcm16(frame).buffer);
+                const pcm = floatToPcm16(frame).buffer;
+                devAudioSent(pcm.byteLength);
+                liveSocket.send(pcm);
             }
         };
         audioContext.createMediaStreamSource(micStream).connect(micNode);
@@ -1065,11 +1097,14 @@ async function startRecording() {
     isRecording = true;
     setRecordingUi(true);
     startTimer();
+    devMark('browser', 'recording started', {}, { ms: performance.now() - dev.recordStart });
     showStatus('Listening — text appears as you speak', 'is-rec');
 }
 
 async function stopRecording() {
     if (!isRecording) return;
+    stopPressedAt = performance.now();
+    devMark('browser', 'stop pressed', { updates: dev.updates });
     await teardownMic();
     setRecordingUi(false);
     stopTimer();
@@ -1083,6 +1118,7 @@ async function stopRecording() {
 
 // Cancel means cancel: the report goes back to exactly what it was.
 async function cancelRecording() {
+    devMark('browser', 'recording discarded', { updates: dev.updates });
     if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
         liveSocket.send(JSON.stringify({ command: 'cancel' }));
     }
@@ -1386,7 +1422,10 @@ function paintMarks(spans) {
             + (lookupUses < lookupHintUses ? ' — highlight one to see alternatives' : ''));
     }
     if (unsure) {
-        parts.push(`${unsure} the machine wasn't sure of`);
+        // A whole phrase, not a tail. When there are no suspect terms this is
+        // the only part there is, and "4 the machine wasn't sure of" on its
+        // own is not a sentence anyone can read.
+        parts.push(`${unsure} ${unsure === 1 ? 'word' : 'words'} the machine wasn't sure of`);
     }
     marksHint.textContent = parts.join(' · ');
     marksHint.hidden = false;
@@ -1673,3 +1712,333 @@ initDisclaimer();
 initTermPop();
 initTermMarks();
 initFindingMarks();
+
+// ---------------------------------------------------------------------------
+// Developer console
+//
+// Two clocks, one stream. The server's diary (src/core/event_log.py) says what
+// the machine did and how long each decode took; the browser's own marks say
+// when the text actually reached the screen. Both are needed, because the
+// complaint "it feels slow" is about the second one and the cause is nearly
+// always in the first.
+//
+// It polls rather than opening a second socket: the dictation socket must
+// never share a connection with diagnostics, and a poll that only asks for
+// events newer than the last one it printed costs almost nothing.
+//
+// Everything here is local. The endpoints read in-process buffers and are
+// served on loopback; nothing is written to disk and nothing leaves the device.
+// ---------------------------------------------------------------------------
+
+const DEV_STORAGE_KEY = 'radio-dictate-web-dev';
+const DEV_POLL_MS = 700;          // how often the server diary is drained
+const DEV_PERF_MS = 2500;         // the rolling averages move slowly
+const DEV_MAX_LINES = 800;        // scroll-back, matched to the server's ring
+const DEV_SLOW_MS = 1500;         // a decode over this is worth the eye landing on
+
+const devDrawer = document.getElementById('devDrawer');
+const devConsole = document.getElementById('devConsole');
+const devFilterInput = document.getElementById('devFilter');
+
+const dev = {
+    open: false,
+    paused: false,
+    lastSeq: 0,
+    pollTimer: null,
+    perfTimer: null,
+    entries: [],
+    filter: '',
+    dirty: false,
+    // What this browser measured about the recording in progress.
+    recordStart: 0,
+    firstWordsMs: null,
+    lastUpdateAt: 0,
+    updates: 0,
+    bytesSent: 0,
+};
+
+function devSetStat(id, text, over = false) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('over', Boolean(over));
+}
+
+// One entry. `source` is a short subsystem name; `fields` is whatever numbers
+// make the line readable. Recorded whether or not the drawer is open, so
+// opening it after a slow dictation still shows that dictation.
+function devMark(source, message, fields = {}, { level = 'info', ms = null } = {}) {
+    devPush({ t: Date.now() / 1000, source, message, ms, fields, level, browser: true });
+}
+
+function devPush(entry) {
+    const last = dev.entries[dev.entries.length - 1];
+    // The server's diary arrives in batches, so one of its lines can reach the
+    // page after a browser line that happened later. A console whose clock runs
+    // backwards reads as a broken console, so the order is repaired and the
+    // stream redrawn once the batch has landed.
+    const outOfOrder = Boolean(last) && entry.t < last.t;
+    dev.entries.push(entry);
+    if (outOfOrder) {
+        dev.entries.sort((a, b) => a.t - b.t);
+        dev.dirty = true;
+    }
+    if (dev.entries.length > DEV_MAX_LINES) {
+        dev.entries.splice(0, dev.entries.length - DEV_MAX_LINES);
+        dev.dirty = true;
+    }
+    if (!dev.dirty && dev.open && !dev.paused) devAppend(entry);
+}
+
+function devMatches(entry) {
+    if (!dev.filter) return true;
+    const hay = `${entry.source} ${entry.message} ${JSON.stringify(entry.fields || {})}`.toLowerCase();
+    return hay.includes(dev.filter);
+}
+
+function devClock(t) {
+    const d = new Date(t * 1000);
+    const pad = (n, w = 2) => String(n).padStart(w, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+}
+
+function devAppend(entry) {
+    if (!devMatches(entry)) return;
+    const atBottom = devConsole.scrollTop + devConsole.clientHeight >= devConsole.scrollHeight - 24;
+
+    const line = document.createElement('span');
+    line.className = 'dev-line';
+    if (entry.level === 'error' || entry.level === 'critical') line.classList.add('is-error');
+    if (entry.browser) line.classList.add('is-browser');
+
+    const add = (cls, text) => {
+        const el = document.createElement('span');
+        el.className = cls;
+        el.textContent = text;
+        line.appendChild(el);
+        line.appendChild(document.createTextNode(' '));
+    };
+
+    add('t', devClock(entry.t));
+    add('src', entry.browser ? 'browser' : entry.source);
+    add('msg', entry.message);
+
+    const fields = entry.fields || {};
+    const pairs = Object.keys(fields).map((k) => `${k}=${fields[k]}`).join(' ');
+    if (pairs) add('kv', pairs);
+
+    if (entry.ms !== null && entry.ms !== undefined) {
+        const el = document.createElement('span');
+        el.className = entry.ms >= DEV_SLOW_MS ? 'ms over' : 'ms';
+        el.textContent = `${Math.round(entry.ms)}ms`;
+        line.appendChild(el);
+    }
+
+    devConsole.appendChild(line);
+    while (devConsole.childElementCount > DEV_MAX_LINES) {
+        devConsole.removeChild(devConsole.firstChild);
+    }
+    // Follow the tail only if you were already at the tail. Scrolling up to
+    // read a line and being yanked back down is how a console becomes useless.
+    if (atBottom) devConsole.scrollTop = devConsole.scrollHeight;
+}
+
+function devRedraw() {
+    dev.dirty = false;
+    devConsole.innerHTML = '';
+    dev.entries.forEach(devAppend);
+    devConsole.scrollTop = devConsole.scrollHeight;
+}
+
+async function devPoll() {
+    if (!dev.open || dev.paused) return;
+    try {
+        const response = await fetch(`/api/debug/events?after=${dev.lastSeq}`);
+        if (!response.ok) return;
+        const data = await response.json();
+        (data.events || []).forEach((event) => {
+            dev.lastSeq = Math.max(dev.lastSeq, event.seq);
+            devPush(Object.assign({}, event, { browser: false }));
+        });
+        if (dev.dirty && dev.open && !dev.paused) devRedraw();
+    } catch (err) {
+        // The console failing must never be louder than what it reports on.
+        console.warn('Developer console poll failed:', err);
+    }
+}
+
+async function devPollPerf() {
+    if (!dev.open || dev.paused) return;
+    try {
+        const response = await fetch('/api/debug/perf');
+        if (!response.ok) return;
+        const data = await response.json();
+        const stages = data.stages || {};
+        const names = Object.keys(stages);
+        const rows = document.getElementById('devPerfRows');
+        const empty = document.getElementById('devPerfEmpty');
+        rows.innerHTML = '';
+        empty.hidden = names.length > 0;
+        names.slice(0, 14).forEach((name) => {
+            const stat = stages[name];
+            const tr = document.createElement('tr');
+            [name, stat.count, `${Math.round(stat.mean_ms)}ms`, `${Math.round(stat.p95_ms)}ms`]
+                .forEach((value, index) => {
+                    const td = document.createElement('td');
+                    if (index > 0) td.className = 'num';
+                    td.textContent = value;
+                    tr.appendChild(td);
+                });
+            rows.appendChild(tr);
+        });
+    } catch (err) {
+        console.warn('Developer perf read failed:', err);
+    }
+}
+
+function devSetOpen(open) {
+    dev.open = open;
+    devDrawer.hidden = !open;
+    const btn = document.getElementById('devBtn');
+    if (btn) btn.setAttribute('aria-pressed', String(open));
+    try {
+        localStorage.setItem(DEV_STORAGE_KEY, open ? '1' : '0');
+    } catch (err) {
+        console.warn('Could not remember the console state:', err);
+    }
+
+    clearInterval(dev.pollTimer);
+    clearInterval(dev.perfTimer);
+    if (!open) return;
+
+    devRedraw();
+    devPoll();
+    devPollPerf();
+    dev.pollTimer = setInterval(devPoll, DEV_POLL_MS);
+    dev.perfTimer = setInterval(devPollPerf, DEV_PERF_MS);
+}
+
+// -- what the browser itself measures ---------------------------------------
+
+function devRecordingStarted() {
+    dev.recordStart = performance.now();
+    dev.firstWordsMs = null;
+    dev.lastUpdateAt = 0;
+    dev.updates = 0;
+    dev.bytesSent = 0;
+    devSetStat('devFirstWords', '–');
+    devSetStat('devLastUpdate', '–');
+    devSetStat('devBehind', '–');
+    devSetStat('devUpdates', '0');
+    devSetStat('devAudioSent', '0.0s');
+}
+
+function devAudioSent(byteLength) {
+    dev.bytesSent += byteLength;
+    // 16-bit samples at the live rate: two bytes is one sample.
+    const seconds = dev.bytesSent / 2 / LIVE_SAMPLE_RATE;
+    if (dev.open) devSetStat('devAudioSent', `${seconds.toFixed(1)}s`);
+}
+
+function devWordsIn(text) {
+    const trimmed = (text || '').trim();
+    return trimmed ? trimmed.split(/\s+/).length : 0;
+}
+
+// Called for every 'partial' the socket delivers -- the moment the radiologist
+// actually sees new words, which is the only latency they feel.
+function devUpdateArrived(msg) {
+    const now = performance.now();
+    const sinceStart = now - dev.recordStart;
+    const gap = dev.lastUpdateAt ? now - dev.lastUpdateAt : null;
+    dev.lastUpdateAt = now;
+    dev.updates += 1;
+
+    const words = devWordsIn(msg.committed);
+    const previewWords = devWordsIn(msg.preview);
+    if (dev.firstWordsMs === null && (words || previewWords)) {
+        dev.firstWordsMs = sinceStart;
+        devMark('browser', 'first words on screen', {}, { ms: sinceStart });
+    }
+
+    // How far the text on screen is behind the microphone: wall time since the
+    // button was pressed, minus how much audio the server says it has read.
+    const behind = Math.max(0, sinceStart / 1000 - (msg.audioSec || 0));
+
+    devSetStat(
+        'devFirstWords',
+        dev.firstWordsMs === null ? '–' : `${(dev.firstWordsMs / 1000).toFixed(1)}s`,
+        dev.firstWordsMs !== null && dev.firstWordsMs > 6000,
+    );
+    devSetStat('devLastUpdate', gap === null ? '–' : `${(gap / 1000).toFixed(1)}s`, gap !== null && gap > 4000);
+    devSetStat('devBehind', `${behind.toFixed(1)}s`, behind > 5);
+    devSetStat('devUpdates', String(dev.updates));
+
+    devMark('browser', 'text on screen', {
+        words,
+        preview_words: previewWords,
+        audio_sec: msg.audioSec,
+        behind_sec: behind.toFixed(1),
+        state: msg.state,
+    }, { ms: gap });
+}
+
+function initDevConsole() {
+    const btn = document.getElementById('devBtn');
+    if (btn) btn.addEventListener('click', () => devSetOpen(!dev.open));
+
+    document.getElementById('devCloseBtn').addEventListener('click', () => devSetOpen(false));
+
+    const pauseBtn = document.getElementById('devPauseBtn');
+    pauseBtn.addEventListener('click', () => {
+        dev.paused = !dev.paused;
+        pauseBtn.textContent = dev.paused ? 'Resume' : 'Pause';
+        pauseBtn.setAttribute('aria-pressed', String(dev.paused));
+        // Resuming prints what was missed rather than silently skipping it --
+        // a gap you cannot see is worse than no console at all.
+        if (!dev.paused) { devRedraw(); devPoll(); }
+    });
+
+    document.getElementById('devClearBtn').addEventListener('click', () => {
+        dev.entries = [];
+        devConsole.innerHTML = '';
+    });
+
+    document.getElementById('devCopyBtn').addEventListener('click', async () => {
+        const text = dev.entries.filter(devMatches).map((entry) => {
+            const pairs = Object.entries(entry.fields || {}).map(([k, v]) => `${k}=${v}`).join(' ');
+            const ms = (entry.ms === null || entry.ms === undefined) ? '' : ` ${Math.round(entry.ms)}ms`;
+            const who = entry.browser ? 'browser' : entry.source;
+            return `${devClock(entry.t)} ${who} ${entry.message} ${pairs}${ms}`.trim();
+        }).join('\n');
+        try {
+            await navigator.clipboard.writeText(text);
+            showStatus('Console copied', 'is-ok', 1800);
+        } catch (err) {
+            showError('Could not copy the console.');
+        }
+    });
+
+    devFilterInput.addEventListener('input', () => {
+        dev.filter = devFilterInput.value.trim().toLowerCase();
+        devRedraw();
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.ctrlKey && event.shiftKey && (event.key === 'D' || event.key === 'd')) {
+            event.preventDefault();
+            devSetOpen(!dev.open);
+        }
+    });
+
+    let wasOpen = false;
+    try {
+        wasOpen = localStorage.getItem(DEV_STORAGE_KEY) === '1';
+    } catch (err) {
+        console.warn('Could not read the console state:', err);
+    }
+    if (wasOpen) devSetOpen(true);
+}
+
+initDevConsole();
+updateWordCount();

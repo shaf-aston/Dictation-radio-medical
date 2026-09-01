@@ -35,7 +35,13 @@ src/
 │                  json_store.py (shared atomic JSON + JSONL read/write) ·
 │                  keychain.py (OS-keychain secret helpers, wraps keyring) ·
 │                  patient_schema.py (the patient-info fields, declared once) ·
-│                  perf.py (stage timings — rolling count/mean/p95/max, local only)
+│                  perf.py (stage timings — rolling count/mean/p95/max, local only) ·
+│                  event_log.py (the diary: a bounded ring of what just happened,
+│                    with a duration on anything that took time. perf answers
+│                    "what does this stage usually cost"; this answers "what
+│                    happened just now, in what order" — the developer console
+│                    needs both. Mirrors ordinary log lines in too, so the
+│                    warning and the timing that explains it sit together)
 ├── dictation/   the offline pipeline — has NO cloud dependency
 │   ├── audio.py          microphone capture
 │   ├── worker.py         live transcription QThread (chunk-once; reads only
@@ -68,7 +74,9 @@ src/
 │   ├── postprocess_worker.py  runs the pipeline OFF the UI thread, latest-only
 │   ├── web_app.py        FastAPI single-page app (host/port from settings),
 │   │                       plus /developer — the local diagnostics table of
-│   │                       recorded runs (unlisted; no link from the report UI)
+│   │                       recorded runs (unlisted; no link from the report UI),
+│   │                       and GET /api/debug/events + /api/debug/perf, which
+│   │                       are what the in-page developer console reads
 │   ├── term_popup.py · term_marks.py   highlight a word → suggestions; and the
 │   │                       marks saying which word to highlight. Both are view
 │   │                       overlays (ExtraSelection / an underlay div) — never
@@ -236,6 +244,30 @@ dictation used to get slower the longer it ran:
 when a recording ends and served at `GET /api/debug/perf`. It is in-process
 only — nothing is persisted or sent anywhere, so it does not weaken the
 offline invariant.
+
+**The developer console** (`Ctrl`+`Shift`+`D` in the browser, or the overflow
+menu) is where both of those are read while dictating. It is a drawer under the
+app rather than a page you navigate to, because the question it answers — *why
+was that slow?* — is asked mid-dictation. It shows two clocks in one stream:
+
+* the **server's diary** (`core/event_log.py`) — every decode with its own
+  duration, every chunk commit, stop, hand-back and accuracy pass, plus any
+  ordinary log line, drained by polling `GET /api/debug/events?after=<seq>` so a
+  poll never re-sends a line already printed;
+* the **browser's own marks** — microphone granted, socket open, and one per
+  *"text actually appeared on screen"*, which is the only latency a radiologist
+  feels. These are drawn in a different colour: the two clocks belong to two
+  different processes and must never be read as one.
+
+The five numbers on its bar are the ones a slow dictation is judged on: time to
+first words, gap since the last update, how far the text is behind the
+microphone, update count, and seconds of audio sent. Anything over budget turns
+amber (`--warn-text`), never red — `--rec` means recording and clinical
+severity in this app, and a slow decode is neither.
+
+Nothing here weakens the offline rule: both endpoints read in-process buffers
+and are served on loopback. Nothing is written to disk and nothing is sent
+anywhere.
 
 **A long pause ends the sentence.** A silence at or beyond `pause_threshold`
 breaks the paragraph, and `stream/ledger.close_sentence` puts a full stop on the

@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.core import perf
+from src.core import event_log, perf
 from src.core.patient_schema import PATIENT_KEYS, empty_patient_info
 from src.core.settings import Settings, get_default
 from src.dictation.postprocess.pipeline import (
@@ -371,6 +371,11 @@ def _download_filename(patient: dict, ext: str) -> str:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Prepare the app state on startup."""
+    # Start the diary first, so the warm-up lines below are the first thing the
+    # developer panel can show. A panel that only starts recording once you
+    # open it can never explain the slow start you opened it to look at.
+    event_log.configure(int(_settings().get("event_log_max", get_default("event_log_max"))))
+    event_log.attach_to_logging()
     logger.info("Preparing web app state...")
     asr_engines.clear()
     # Same startup housekeeping as the desktop GUI (temp files, old
@@ -736,6 +741,16 @@ def _record_web_run(
         record.decode_ratio = round(elapsed / audio_sec, 3)
     record.text = text if bool(settings.get("run_log_store_text", True)) else ""
     run_log.write(record, settings)
+    # The one line that summarises the whole recording, so the console ends
+    # with the verdict rather than leaving it to be added up by eye.
+    event_log.emit(
+        "run", "recording finished",
+        audio_sec=round(audio_sec, 1), wall_sec=round(elapsed, 1),
+        polish_sec=round(finalise_sec, 1), words=record.word_count,
+        chunks=chunk_count,
+        words_per_min=round(record.word_count / (audio_sec / 60), 1) if audio_sec > 1 else None,
+        wall_per_audio_sec=record.decode_ratio,
+    )
 
 
 @app.post("/api/terms/suspect")
@@ -788,6 +803,20 @@ async def perf_endpoint():
     at rather than guessed at.
     """
     return {"stages": perf.snapshot(), "gauges": perf.gauges()}
+
+
+@app.get("/api/debug/events")
+async def events_endpoint(after: int = 0, limit: int = 500):
+    """The live diary: what happened since event *after*, oldest first.
+
+    The developer panel passes back the last sequence number it printed, so a
+    poll only ever carries what is new. Local only — this reads a buffer in
+    this process and serves it on loopback; nothing is stored or sent out.
+    """
+    return {
+        "events": event_log.events(after=max(0, int(after)), limit=max(1, min(int(limit), 2000))),
+        "latest": event_log.latest_seq(),
+    }
 
 
 @app.post("/transcribe")
@@ -885,6 +914,19 @@ def _live_session(settings, prefs: dict) -> LiveSession:
     """Build a session from saved settings — the only place the knobs are read."""
     live_model = resolve_model(settings.get("live_model_size", get_default("live_model_size")))
     final_model = resolve_model(prefs.get("model_size") or settings.get("model_size"))
+    # The knobs are read here and nowhere else, so this is the one honest place
+    # to say which of them a recording actually ran with.
+    event_log.emit(
+        "live", "dictation session configured",
+        live_model=live_model, final_model=final_model,
+        language=prefs["language"], accent=prefs["accent"], cleanup=prefs["cleanup_level"],
+        chunk_min_sec=float(settings.get("chunk_min_sec")),
+        chunk_soft_max_sec=float(settings.get("chunk_soft_max_sec")),
+        chunk_force_cut_sec=float(settings.get("chunk_force_cut_sec")),
+        live_beam_size=int(settings.get("live_beam_size")),
+        final_beam_size=int(settings.get("final_beam_size")),
+        preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
+    )
     return LiveSession(
         _get_engine(live_model),
         _get_engine(final_model),
@@ -922,6 +964,12 @@ async def dictate_socket(ws: WebSocket) -> None:
 
     started = time.time()
     last_cycle = 0.0
+    # Everything below feeds the developer panel's console. The one number a
+    # radiologist actually feels is "how long from speaking to seeing it", so
+    # it is measured explicitly rather than inferred from a rolling mean.
+    first_words_at: Optional[float] = None
+    cycles = 0
+    event_log.emit("live", "dictation socket open", cycle_sec=cycle_sec)
     # A decode (the preview or a closing chunk) costs whole seconds on this
     # machine (see should_skip_preview's docstring) — awaiting it here before
     # looping back to receive() would stall reading the socket for that long,
@@ -939,8 +987,32 @@ async def dictate_socket(ws: WebSocket) -> None:
             pass  # the page navigated away mid-send; the finally block cleans up
 
     async def run_cycle() -> None:
-        update = await anyio.to_thread.run_sync(session.cycle)
-        if update is not None:
+        nonlocal first_words_at, cycles
+        with event_log.timed("live", "decode cycle", stage="web.cycle") as note:
+            update = await anyio.to_thread.run_sync(session.cycle)
+            cycles += 1
+            note["cycle"] = cycles
+            if update is None:
+                note["result"] = "nothing new"
+                return
+            words = len(update.committed.split())
+            note.update(
+                audio_sec=round(update.audio_sec, 1),
+                # How far the text on screen is behind the microphone. This is
+                # the lag the radiologist sees; the decode cost above is only
+                # the reason for it.
+                behind_sec=round(max(0.0, time.time() - started - update.audio_sec), 1),
+                committed_words=words,
+                preview_words=len(update.preview.split()),
+                unsure_words=len(update.uncertain),
+                state=update.state,
+            )
+            if first_words_at is None and (words or update.preview):
+                first_words_at = time.time()
+                event_log.emit(
+                    "live", "first words on screen",
+                    ms=(first_words_at - started) * 1000,
+                )
             await send({
                 "type": "partial",
                 "committed": update.committed,
@@ -978,10 +1050,16 @@ async def dictate_socket(ws: WebSocket) -> None:
             except (ValueError, AttributeError):
                 continue
             if command == "stop":
+                stop_at = time.time()
+                event_log.emit(
+                    "live", "stop pressed",
+                    audio_sec=round(session.audio_sec, 1), chunks=session.chunks_decoded,
+                )
                 # A cycle may still be decoding a chunk the ledger hasn't
                 # committed yet — finalize() must see that commit, not race it.
                 if cycle_task is not None and not cycle_task.done():
-                    await cycle_task
+                    with event_log.timed("live", "waited for the in-flight decode"):
+                        await cycle_task
                 # Hand back what is already decoded first. The radiologist has
                 # been reading this text as they spoke it, so it is theirs to
                 # edit now — the accurate re-decode below is an upgrade, not a
@@ -992,7 +1070,15 @@ async def dictate_socket(ws: WebSocket) -> None:
                     "uncertain": list(session.uncertain_words),
                 })
                 audio_ended = time.time()
-                text_out = await anyio.to_thread.run_sync(session.finalize)
+                event_log.emit(
+                    "live", "report handed back",
+                    ms=(audio_ended - stop_at) * 1000,
+                    words=len(session.committed_text().split()),
+                )
+                with event_log.timed("live", "accuracy pass", stage="web.finalize") as note:
+                    text_out = await anyio.to_thread.run_sync(session.finalize)
+                    note["words"] = len(text_out.split())
+                    note["unsure_words"] = len(session.uncertain_words)
                 await send({
                     "type": "final",
                     "text": text_out,
@@ -1007,11 +1093,13 @@ async def dictate_socket(ws: WebSocket) -> None:
                 )
                 return
             if command == "cancel":
+                event_log.emit("live", "recording discarded", audio_sec=round(session.audio_sec, 1))
                 return
     except WebSocketDisconnect:
         return
     except Exception as exc:
         logger.error("Live dictation failed: %s", exc, exc_info=True)
+        event_log.emit("live", f"dictation failed: {exc}", level="error")
         await send({"type": "error", "message": "Dictation failed. Your audio is still in the browser — press Retry."})
     finally:
         if cycle_task is not None and not cycle_task.done():

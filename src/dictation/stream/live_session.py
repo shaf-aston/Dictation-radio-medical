@@ -22,7 +22,7 @@ from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
-from src.core import perf
+from src.core import event_log
 from src.dictation.asr import AsrEngine, TranscribeContext
 from src.dictation.asr.types import AsrResult
 from src.dictation.postprocess.incremental import IncrementalPostprocessor
@@ -381,7 +381,12 @@ class LiveSession:
         making.
         """
         try:
-            with perf.stage(f"stream.{stage}"):
+            # perf keeps the rolling average of this stage; event_log keeps the
+            # individual call, which is what shows *which* decode blew out.
+            with event_log.timed(
+                "asr", f"{stage} decode", stage=f"stream.{stage}",
+                clip_sec=round(len(clip) / self.sr, 1), beam=beam_size,
+            ) as note:
                 result = engine.transcribe(
                     clip,
                     TranscribeContext(
@@ -395,6 +400,7 @@ class LiveSession:
                         temperature=0.0,
                     ),
                 )
+                note["words"] = len(result.text.split())
         except Exception as exc:
             logger.warning("Decode failed (%s): %s", stage, exc)
             return None

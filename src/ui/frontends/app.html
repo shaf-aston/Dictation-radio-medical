@@ -16,7 +16,7 @@
 
     <header class="bar">
         <span class="mark" aria-hidden="true"><i class="fas fa-stethoscope"></i></span>
-        <span class="wordmark">Radio Dictate</span>
+        <h1 class="wordmark">Radio Dictate</h1>
 
         <div id="statusIndicator" class="status" aria-live="polite" aria-label="Status">
             <span id="statusDot" class="dot" aria-hidden="true"></span>
@@ -53,6 +53,11 @@
                         <span>Export to Word</span>
                     </button>
                     <hr>
+                    <button id="devBtn" type="button" role="menuitem" aria-pressed="false">
+                        <i class="fas fa-sliders" aria-hidden="true"></i>
+                        <span>Developer console</span>
+                        <kbd class="menu-kbd">Ctrl+Shift+D</kbd>
+                    </button>
                     <button id="themeBtn" type="button" role="menuitem" aria-pressed="false">
                         <i id="themeIcon" class="fas fa-moon" aria-hidden="true"></i>
                         <span id="themeText">Dark</span>
@@ -77,6 +82,15 @@
                  underlay holding a transparent copy of the text, with the
                  suspect words underlined. Nothing is inserted into what the
                  radiologist typed, so every export is byte-for-byte unmarked. -->
+            <!-- The report needs a head of its own. Without it the count and
+                 the "words to check" line were orphans floating under the
+                 editor, right-aligned against nothing. -->
+            <div class="stage-head">
+                <h2 class="stage-title">Report</h2>
+                <p id="marksHint" class="marks-hint" hidden></p>
+                <span id="wordCount" class="stage-count" aria-live="polite">0 words</span>
+            </div>
+
             <div class="editor-wrap">
                 <!-- One tick per critical or urgent finding, in a strip of its
                      own beside the text. A finding is a statement about the
@@ -89,8 +103,6 @@
                 <textarea id="editor" class="editor" spellcheck="true"
                           placeholder="Press the microphone and start speaking."></textarea>
             </div>
-            <p id="marksHint" class="marks-hint" hidden></p>
-
             <!-- Highlight a word and its neighbourhood appears here: terms that
                  look like it above, terms that go with it below. Nothing is
                  applied until the radiologist clicks one. -->
@@ -258,6 +270,67 @@
         </div>
     </div>
 </div>
+
+<!-- The developer console. A drawer rather than a separate page, because the
+     question it answers ("why was that slow?") is asked while dictating, and a
+     page you have to navigate to is a page you check after the fact.
+
+     Everything in here is read from this process over loopback: the server's
+     own event diary (src/core/event_log.py) and its rolling stage timings
+     (src/core/perf.py), plus what the browser itself measured. Nothing is
+     stored and nothing is sent anywhere -- the offline rule is untouched. -->
+<section id="devDrawer" class="dev-drawer" aria-label="Developer console" hidden>
+    <header class="dev-drawer-bar">
+        <span class="dev-drawer-title">Developer console</span>
+
+        <!-- The five numbers a slow dictation is judged on. Each carries the
+             sentence that says what it means, because "behind mic" is only
+             readable to someone who already knows the answer. -->
+        <div class="dev-stat-row" id="devStats" aria-live="off">
+            <span class="dev-stat" title="How long from pressing record to the first words appearing.">
+                <b id="devFirstWords">–</b><i>first words</i></span>
+            <span class="dev-stat" title="Gap since the previous time new text appeared.">
+                <b id="devLastUpdate">–</b><i>last update</i></span>
+            <span class="dev-stat" title="How far the text on screen is behind the microphone right now.">
+                <b id="devBehind">–</b><i>behind mic</i></span>
+            <span class="dev-stat" title="How many times new text has appeared this recording.">
+                <b id="devUpdates">0</b><i>updates</i></span>
+            <span class="dev-stat" title="Seconds of audio this browser has sent to the server.">
+                <b id="devAudioSent">0.0s</b><i>audio sent</i></span>
+        </div>
+
+        <div class="dev-drawer-actions">
+            <label class="dev-filter">
+                <span class="sr-only">Filter the console</span>
+                <input id="devFilter" type="text" placeholder="filter…" autocomplete="off">
+            </label>
+            <button id="devPauseBtn" class="btn btn-quiet" type="button" aria-pressed="false">Pause</button>
+            <button id="devCopyBtn" class="btn btn-quiet" type="button">Copy</button>
+            <button id="devClearBtn" class="btn btn-quiet" type="button">Clear</button>
+            <a class="btn btn-quiet" href="/developer" target="_blank" rel="noopener">Run history</a>
+            <button id="devCloseBtn" class="btn btn-quiet" type="button" aria-label="Close the developer console">Close</button>
+        </div>
+    </header>
+
+    <div class="dev-drawer-body">
+        <!-- The stream, newest at the bottom, exactly like a terminal. -->
+        <div id="devConsole" class="dev-console" role="log" aria-live="off" tabindex="0"></div>
+
+        <!-- The rolling averages beside it: the console says which decode was
+             slow, this says whether that is normal. -->
+        <aside class="dev-perf" tabindex="0">
+            <h3 class="dev-perf-h">Where the time goes</h3>
+            <table class="dev-perf-table">
+                <thead>
+                    <tr><th scope="col">Stage</th><th scope="col" class="num">n</th>
+                        <th scope="col" class="num">mean</th><th scope="col" class="num">p95</th></tr>
+                </thead>
+                <tbody id="devPerfRows"></tbody>
+            </table>
+            <p id="devPerfEmpty" class="dev-perf-empty">Nothing measured yet — dictate something.</p>
+        </aside>
+    </div>
+</section>
 
 <script>__BOOTSTRAP_SCRIPT__</script>
 <script src="/static/app.js"></script>

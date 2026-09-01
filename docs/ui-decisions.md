@@ -9,6 +9,58 @@ is the picture; this file is the record.
 
 ---
 
+## 2026-09-01 — The developer console, and the four things the rail got wrong (built)
+
+**Chosen: a drawer under the app, not a second page.** `Ctrl`+`Shift`+`D` (or the
+overflow menu) opens a console row beneath the whole app. It is a row rather than an
+overlay so it can never cover the microphone button, which is the one control you
+still need while reading why the last decode was slow.
+
+It shows two clocks in one stream, told apart by colour: the server's diary
+(`src/core/event_log.py`, polled from `GET /api/debug/events?after=<seq>`) and the
+browser's own marks. Both are needed. "It feels slow" is a statement about the second
+one — when text actually landed on screen — and the cause is nearly always in the
+first. Reading either alone gets the wrong answer, which is exactly how a session
+earlier that day ended up blaming a Stop button nobody had pressed.
+
+Five numbers sit on the bar: time to first words, gap since the last update, how far
+the text is behind the microphone, updates so far, seconds of audio sent. Over budget
+they turn amber, never red — `--rec` means recording and clinical severity in this
+app, and a slow decode is neither. That needed a new token, `warnText`: `warn` is
+tuned to be seen as a filled level bar, and at 12px on the light theme's chrome it
+measures 3.6:1, under the 4.5:1 floor. Dimming an already-dim token is how contrast
+failures get written; the token file is the contrast contract.
+
+**Rejected: a second WebSocket for diagnostics.** The dictation socket carries the
+audio and must not share a connection with anything. A poll that only ever asks for
+events newer than the last one it printed costs almost nothing, and the server keeps a
+bounded ring anyway — so opening the console after a slow dictation still shows that
+dictation, which a socket opened on demand could not.
+
+**Four front-end defects the same pass fixed**, all of them visible only by opening
+the app and looking at it:
+
+1. **Quick phrases had no styling at all.** `renderMacros` set `class="macro-chip"`
+   and no such rule existed, so a phrase fell through to the generic 999px pill: label
+   and sentence run together, centred, wrapped over three ragged lines —
+   *"Rotator cuff intactRotator cuff tendons are…"*. They are cards now: name on one
+   line, the sentence it inserts quietly under it, clipped to two lines.
+2. **The wide-screen `min-height: 0` on the report was losing to the base rule.** Same
+   specificity, defined later in the file, so the stage kept a 30rem floor it could not
+   shrink below and clipped the microphone row whenever anything else took height.
+3. **The report had no head.** The word count did not exist and the "words to check"
+   line hung under the editor, right-aligned against nothing.
+4. **No `<h1>` on the page**, and the wordmark was `display: none` on phones, so a
+   screen reader had nothing to announce the app by at any width.
+
+**How it is held.** `axe-core` over both themes at desktop and phone widths reports
+zero violations; `tests/test_event_log.py` covers the three ways the diary could lie
+without looking broken (a poll re-sending a line, an unbounded buffer, a block that
+fails without recording the time it burned). Neither replaces opening it — every one
+of the four defects above was invisible in the code and obvious in a screenshot.
+
+---
+
 ## 2026-07-28 — One colour source for both front-ends (built)
 
 **Chosen: one token file, two renderers.** `src/ui/tokens.json` holds 11 named

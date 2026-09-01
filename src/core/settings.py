@@ -98,6 +98,10 @@ _DEFAULTS: dict = {
     # The report text alongside the numbers — that output is the point of the
     # page. Turn off to keep every timing and drop only the body.
     "run_log_store_text": True,
+    # --- Live event diary (core/event_log.py, shown in the developer panel) ---
+    # How many recent events the in-memory diary keeps. It is a ring buffer, so
+    # this is the scroll-back length of the developer console, nothing more.
+    "event_log_max": 1000,
     "last_template": "",
     "last_macro_region": "Knee",
     "window_width": 1200,
