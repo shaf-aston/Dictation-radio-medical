@@ -6,26 +6,6 @@ default **no audio or text leaves the device**. Two front-ends share one
 dictation core: a PySide6 desktop GUI and a FastAPI web app.
 
 Read this first. For conventions, see [CODING_STANDARDS.md](CODING_STANDARDS.md).
-For project-specific automation, see **Tooling** below: check it before doing
-manual multi-file work that an existing agent/skill/workflow already covers.
-
-## Tooling: `.claude/` (check this before manual multi-step work)
-
-```
-.claude/
-├── agents/      sub-agents, delegate research/review here to keep the
-│                 main context clean (separate context window, returns a summary)
-├── skills/      on-demand procedures, loaded only when their description
-│                 matches the task; no cost until triggered
-└── workflows/   multi-step pipelines composing the above
-```
-
-If a task matches an existing agent/skill/workflow's stated purpose, use it
-instead of re-deriving the steps inline. If something here *should* trigger
-but doesn't, the fix is almost always the `description` field in that item's
-own frontmatter (too vague → never fires; too narrow → only fires for an exact
-phrasing): not this file. New session required after adding/editing a skill
-or agent for it to be picked up.
 
 ## Module map
 
@@ -245,35 +225,10 @@ dictation used to get slower the longer it ran:
    seeks from the ledger's open-tail frontier; it never re-decodes the entire
    growing WAV.
 
-`core/perf.py` is the evidence for all of the above: stage timings (count / mean
-/ p95 / max) plus point-in-time gauges like `stream.decode_ratio` are logged
-when a recording ends and served at `GET /api/debug/perf`. It is in-process
-only: nothing is persisted or sent anywhere, so it does not weaken the
-offline invariant.
-
-**The developer console** (`Ctrl`+`Shift`+`D` in the browser, or the overflow
-menu) is where both of those are read while dictating. It is a drawer under the
-app rather than a page you navigate to, because the question it answers, *why
-was that slow?*, is asked mid-dictation. It shows two clocks in one stream:
-
-* the **server's diary** (`core/event_log.py`): every decode with its own
-  duration, every chunk commit, stop, hand-back and accuracy pass, plus any
-  ordinary log line, drained by polling `GET /api/debug/events?after=<seq>` so a
-  poll never re-sends a line already printed;
-* the **browser's own marks**: microphone granted, socket open, and one per
-  *"text actually appeared on screen"*, which is the only latency a radiologist
-  feels. These are drawn in a different colour: the two clocks belong to two
-  different processes and must never be read as one.
-
-The five numbers on its bar are the ones a slow dictation is judged on: time to
-first words, gap since the last update, how far the text is behind the
-microphone, update count, and seconds of audio sent. Anything over budget turns
-amber (`--warn-text`), never red: `--rec` means recording and clinical
-severity in this app, and a slow decode is neither.
-
-Nothing here weakens the offline rule: both endpoints read in-process buffers
-and are served on loopback. Nothing is written to disk and nothing is sent
-anywhere.
+`core/perf.py` and the in-app developer console are the evidence for all of
+the above. Both are in-process only, read on loopback, and persist nothing, so
+they do not weaken the offline invariant. What they show and how to read them:
+[src/ui/CLAUDE.md](src/ui/CLAUDE.md).
 
 **The first words arrive in about three seconds, and three things had to
 change to get there** (all measured in the browser, not estimated). The Silero
@@ -300,26 +255,16 @@ clicked. The confidence-targeted polish after Stop replaces a chunk's flagged
 words along with its text, so nothing stays underlined that the accurate model
 has since settled.
 
-The pipeline (`dictation/postprocess/pipeline.py`) runs, in order: hallucination
-removal → voice commands → punctuation → measurements → terminology →
-accent-specific → fuzzy medical-dictionary match → learned corrections →
-capitalization. Each stage owns one file; the pipeline only sequences them.
+The 10-stage correction pipeline and the two wordlists behind the fuzzy stage
+are described in [src/dictation/postprocess/CLAUDE.md](src/dictation/postprocess/CLAUDE.md),
+which loads when work touches that folder.
 
-The fuzzy stage (`medical_dict_match.py`) is where mis-transcribed medical terms
-get fixed, and it leans on **two** wordlists with distinct jobs (`medical_dict.py`):
-the broad generic list answers *"is this already a real word? leave it alone"*
-(membership), while the **curated `radiology_lexicon.txt`** is the only thing a
-typo is *snapped to* (correction targets). Keeping snap targets radiology-only is
-what stops a misspelling from being pulled toward the generic list's chemistry /
-drug / obscure-procedure junk. To improve correction of a term, add it to the
-lexicon (the spelling authority) or add a precise rule to `corrections.yaml`.
-Never feed PDF/OCR-extracted text into the lexicon: extraction noise (ligature
-splits, hyphenation artefacts) pollutes the snap targets.
-
-**Three subsystems keep their guidance in their own folder**: each loads only
-when work touches that folder: cloud fine-tuning (`src/cloud/CLAUDE.md`, opt-in),
-the scan assistant (`src/imaging/CLAUDE.md`, opt-in), and the accuracy-measuring
-harness (`scripts/eval/CLAUDE.md`). Any change to transcription or
+**Five folders keep their guidance in their own `CLAUDE.md`**: each loads only
+when work touches that folder: the front-ends and their diagnostics
+(`src/ui/CLAUDE.md`), the correction pipeline
+(`src/dictation/postprocess/CLAUDE.md`), cloud fine-tuning (`src/cloud/CLAUDE.md`,
+opt-in), the scan assistant (`src/imaging/CLAUDE.md`, opt-in), and the
+accuracy-measuring harness (`scripts/eval/CLAUDE.md`). Any change to transcription or
 post-processing is judged by that harness's numbers, not by reading a sample:
 read `scripts/eval/CLAUDE.md` and [docs/dictation-accuracy.md](docs/dictation-accuracy.md)
 before proposing an accuracy change; several obvious ones are already refuted
