@@ -165,6 +165,13 @@ class MainWindow(QMainWindow):
         # Sequence number of the one authoritative full-document pass submitted
         # after recording stops; None while no such pass is outstanding.
         self._final_seq: Optional[int] = None
+        # Sequence number of the pass that hands the live text straight back at
+        # Stop, ahead of the polish. Applying it is what re-enables Record.
+        self._handback_seq: Optional[int] = None
+        # The report exactly as it was handed back at Stop. If the editor no
+        # longer matches it when the polish lands, the radiologist has edited
+        # it and the polished version is dropped rather than overwriting them.
+        self._handed_over_text: Optional[str] = None
         # Where the dictated region starts. A QTextCursor, not an integer: Qt
         # moves it along when text is inserted before it, so loading a template
         # or typing into a form field mid-recording can no longer leave the

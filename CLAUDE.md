@@ -158,9 +158,16 @@ both:     → asr/ (AsrEngine port → transcriber.py/Whisper) → postprocess/ 
 
 Both front-ends use two models: `live_model_size` (fast) decodes what appears
 while you speak, and `model_size` re-decodes the low-confidence chunks after
-Stop. On the web, Stop hands the live text back immediately and the accuracy
-pass upgrades it in the background; the desktop still waits through that
-polish before Record re-enables.
+Stop. **Stop never waits on that second pass in either front-end**: the live
+text is handed back at once and the polish upgrades it in the background.
+Which makes one rule load-bearing, and it is written in both places — if the
+report has been edited since it was handed over, the polished version is
+dropped rather than applied. Overwriting a clinical report someone has already
+corrected is the worst outcome the feature could have. Because Record comes
+back before the polish ends, a second recording can start on top of an
+unfinished one: the desktop disconnects the old worker's signals before the new
+session exists (`recording_session._abandon_unfinished_session`), so a stale
+pass cannot reach the new document.
 
 Front-end files are cached in memory keyed on the file's modification time
 (`web_app._frontend_cache`), and every page and asset is served `no-store`. Both

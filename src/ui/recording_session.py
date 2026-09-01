@@ -106,12 +106,74 @@ def finalize_training_capture() -> None:
         logger.debug("Training capture finalize failed: %s", exc)
 
 
+def _abandon_unfinished_session(window: MainWindow) -> None:
+    """Cut the previous session loose, if its polish is still running.
+
+    Record now comes back before the polish finishes, so this is reachable:
+    Stop, then Record again a few seconds later. The old worker must not be
+    able to write into the new recording's document, so its signals are
+    disconnected *before* anything of the new session exists — that, not a
+    flag checked later, is what makes it impossible. The parts of the shutdown
+    that still matter for the abandoned run (its audio, its log record) are
+    done here, since ``_complete_finish`` will never run for it.
+    """
+    # Both are cleared by _complete_finish, so either one still set is the
+    # signal that a session is outstanding. Checked before touching the worker:
+    # after a normal finish it has been deleteLater'd, and every call on the
+    # dead wrapper — including disconnect — raises.
+    if window._final_seq is None and window._handback_seq is None:
+        return
+
+    worker = getattr(window, "live_worker", None)
+    if worker is not None:
+        try:
+            for signal, slot in (
+                (worker.partial, window._on_partial_text),
+                (worker.progress, window._on_worker_progress),
+                (worker.finished, window._on_transcription_finished),
+                (worker.segments, _on_segments),
+            ):
+                try:
+                    signal.disconnect(slot)
+                except (RuntimeError, TypeError):
+                    pass  # that one was already disconnected
+            # Its thread still quits itself: finished -> quit stays connected.
+            worker.cancel()
+        except RuntimeError as exc:
+            logger.debug("Previous worker already gone: %s", exc)
+
+    pp_worker = getattr(window, "pp_worker", None)
+    if pp_worker is not None:
+        try:
+            pp_worker.processed.disconnect(window._on_processed_text)
+        except (RuntimeError, TypeError):
+            pass
+    thread = getattr(window, "pp_thread", None)
+    if thread is not None:
+        thread.quit()
+        thread.wait(2000)
+    window.pp_worker = None
+    window.pp_thread = None
+
+    window._handback_seq = None
+    window._handed_over_text = None
+    window._final_seq = None
+    window._post_dictation_snapshot = window.editor.toPlainText()
+    _prepare_training_audio()
+    _record_the_run(window)   # reads live_worker for its chunk count: before the clear
+    cleanup_temp_audio(window)
+    window.live_worker = None
+
+
 def on_start_recording(window: MainWindow) -> None:
     """Start a new recording session."""
     if window.recorder.is_recording:
         return
     # Log any edits to the previous dictation before this one overwrites it.
     window.flush_dictation_edits()
+    # Anything still finishing from the last dictation stops owning the
+    # document here — Record is available before the polish is done.
+    _abandon_unfinished_session(window)
     path = create_temp_wav()
     window.current_wav_path = path
     try:
@@ -176,6 +238,8 @@ def on_start_recording(window: MainWindow) -> None:
     window._partial_seq = 0
     window._applied_seq = 0
     window._final_seq = None
+    window._handback_seq = None
+    window._handed_over_text = None
     window.pp_thread = QThread()
     window.pp_worker = PostprocessWorker()
     window.pp_worker.moveToThread(window.pp_thread)
@@ -228,13 +292,39 @@ def on_stop_recording(window: MainWindow) -> None:
         window._level_timer.stop()
         window._level_bar.setValue(0)
         set_level_state(window._level_bar, "healthy")
-        # Record stays disabled through the final pass — see
-        # on_transcription_finished — and is re-enabled by _complete_finish.
         window.btn_stop.setEnabled(False)
-        window._status.last_progress = ("Processing final pass...", "busy")
-        window._show_status("Processing final pass...", state="busy")
     if window.live_worker is not None:
         window.live_worker.finalize()
+    _hand_back_live_text(window)
+
+
+def _hand_back_live_text(window: MainWindow) -> None:
+    """Give the radiologist the text they have been reading, now.
+
+    The confidence-targeted polish runs for seconds after Stop, and the desktop
+    used to sit on the finished report until it returned. But the live text is
+    already on screen and already theirs to edit — the polish is an *upgrade*,
+    not a gate. So the whole-document pass runs on the live transcript straight
+    away, Record comes back as soon as it lands, and the polished text replaces
+    it later under a higher sequence number (the same "never rewind" rule every
+    other pass obeys). This is the web path's behaviour, brought across.
+    """
+    raw = getattr(window, "_last_raw_transcript", "")
+    if window.pp_worker is None or not raw.strip():
+        # Nothing decoded yet: there is no text to hand back, so the ordinary
+        # wait for the worker to finish is also the short one.
+        window._status.last_progress = ("Processing final pass...", "busy")
+        window._show_status("Processing final pass...", state="busy")
+        return
+    window._partial_seq += 1
+    window._handback_seq = window._partial_seq
+    window.pp_worker.submit(
+        raw,
+        0,  # whole document: the handback must be a complete report, not a tail
+        getattr(window, "_active_accent", "neutral"),
+        getattr(window, "_active_cleanup_level", "medium"),
+        window._handback_seq,
+    )
 
 
 def on_partial_text(
@@ -275,6 +365,24 @@ def on_processed_text(
         return
     window._applied_seq = seq
 
+    # The polish arrives *after* the report was handed back, so the radiologist
+    # may have been editing it the whole time it ran. Their words win: silently
+    # replacing a clinical report someone has already corrected is the worst
+    # outcome this feature could have. Same rule as the web front-end — a rule
+    # written into only one of the two is a rule that is missing from one.
+    # Every pass after the handback is guarded, not just the final one: the
+    # polish emits its own update on the way through, and that one would reach
+    # the editor first. The marker is left standing so each later pass is
+    # refused too — it is cleared only when the session closes.
+    handed_over = getattr(window, "_handed_over_text", None)
+    if handed_over is not None and window.editor.toPlainText() != handed_over:
+        if seq == window._final_seq:
+            window._show_status(
+                "Kept your edits - the improved version was discarded", 4000, state="ok"
+            )
+            _complete_finish(window)
+        return
+
     if changes:
         # Accumulate unique corrections for the post-recording banner.
         seen = getattr(window, "_corrections_seen", None)
@@ -287,6 +395,18 @@ def on_processed_text(
             _replace_dictation_region(window, processed)
         if seq != window._final_seq:
             window._show_status("Receiving...", 800, state="rec")
+
+    # The handback has landed: the report is readable and editable, so Record
+    # comes back now rather than after the polish. The session is NOT closed
+    # here — the polish is still running and still owns the teardown.
+    if seq == window._handback_seq:
+        window._handback_seq = None
+        # What the radiologist was handed. Anything different when the polish
+        # lands means they have edited it since, and it is no longer replaceable.
+        window._handed_over_text = window.editor.toPlainText()
+        window.btn_record.setEnabled(True)
+        window._status.last_progress = ("Improving accuracy...", "busy")
+        window._show_status("Improving accuracy...", state="busy")
 
     # The authoritative full-document pass has landed — the text on screen is
     # now the finished report, so the rest of the shutdown can run.
@@ -420,6 +540,8 @@ def _complete_finish(window: MainWindow) -> None:
         window.pp_thread = None
     window.pp_worker = None
     window._final_seq = None
+    window._handback_seq = None
+    window._handed_over_text = None
     window._last_raw_transcript = ""
 
     # The 'hard' cleanup level's AI polish runs here, once, on the finished

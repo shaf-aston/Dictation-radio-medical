@@ -150,6 +150,11 @@ class LiveTranscribeWorker(QObject):
         self._agreement = LocalAgreement2()
         self._keep_running = True
         self._final_requested = False
+        # Set when the session is abandoned (the radiologist started a new
+        # recording before the polish finished). The polish loop checks it
+        # between chunks so an abandoned pass stops at the next boundary
+        # instead of holding the model for the recording that replaced it.
+        self._cancelled = False
         self._last_emitted: str = ""
         self._prev_total_samples: int = 0
         # Every second of audio actually sent to engine.transcribe(), across
@@ -196,6 +201,15 @@ class LiveTranscribeWorker(QObject):
     def finalize(self) -> None:
         """Request one final confidence-targeted polish after recording stops."""
         self._final_requested = True
+
+    def cancel(self) -> None:
+        """Abandon this session: stop the loop and any polish still running.
+
+        Its text is no longer wanted — a newer recording owns the document now.
+        """
+        self._cancelled = True
+        self._keep_running = False
+        self._final_requested = False
 
     # ------------------------------------------------------------------
     # Main loop
@@ -434,6 +448,8 @@ class LiveTranscribeWorker(QObject):
         # than leaving the window looking hung.
         targets = list(self._ledger.low_confidence_indices(self.polish_confidence_ceiling))
         for done, i in enumerate(targets, start=1):
+            if self._cancelled:
+                return
             self.progress.emit(f"Polishing chunk {done}/{len(targets)}...")
             c = self._ledger.committed[i]
             clip = audio[c.start_sample:c.end_sample]
@@ -460,6 +476,8 @@ class LiveTranscribeWorker(QObject):
 
         # Whatever never closed before the recording stopped gets its only
         # decode here, at final quality.
+        if self._cancelled:
+            return
         tail = audio[self._ledger.open_start_sample:]
         if len(tail) and not self._noise_floor.is_silence(rms(tail)):
             self.progress.emit("Polishing final section...")
