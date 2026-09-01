@@ -680,10 +680,14 @@ async function loadSelectedTemplate() {
 
         editor.value = result.content || '';
         announceReportChanged();
+        // The top of the template, not the bottom. A freshly loaded report is
+        // something you read down from the first heading; dropping the caret at
+        // the end scrolled the first line half out of view and left the
+        // radiologist looking at "IMPRESSION: 1." before they had read anything.
         if (typeof editor.setSelectionRange === 'function') {
-            const end = editor.value.length;
-            editor.setSelectionRange(end, end);
+            editor.setSelectionRange(0, 0);
         }
+        editor.scrollTop = 0;
         editor.focus();
         undoStack = [editor.value];
         undoIndex = 0;
@@ -1535,6 +1539,11 @@ function paintFindings(data) {
         // "No findings", never a red zero: a warning shown on every clear
         // report is one that stops being read on the report that has one.
         findingsPill.textContent = 'No findings';
+        // A phone bar has no room for the sentence, so the pill carries a
+        // count the stylesheet can show instead. The full wording stays as the
+        // tooltip -- a number nobody can expand is not a warning.
+        findingsPill.dataset.short = '0';
+        findingsPill.title = 'No critical or urgent findings in this report';
         return;
     }
     const outstanding = findings.filter((f) => f.outstanding).length;
@@ -1543,6 +1552,8 @@ function paintFindings(data) {
     findingsPill.textContent = outstanding
         ? `${shown} ${noun} to communicate`
         : `${shown} ${noun} acknowledged`;
+    findingsPill.dataset.short = String(shown);
+    findingsPill.title = findingsPill.textContent;
 }
 
 async function rescanFindings() {

@@ -1060,10 +1060,17 @@ async def dictate_socket(ws: WebSocket) -> None:
                 if cycle_task is not None and not cycle_task.done():
                     with event_log.timed("live", "waited for the in-flight decode"):
                         await cycle_task
-                # Hand back what is already decoded first. The radiologist has
-                # been reading this text as they spoke it, so it is theirs to
-                # edit now — the accurate re-decode below is an upgrade, not a
-                # gate, and blocking on it would put the old wait straight back.
+                # Close the still-open tail with the fast model first. Without
+                # this the hand-back is everything except the last chunk, and
+                # the last chunk is where the impression lives — a report that
+                # says "ready to edit" while a third of it is still missing is
+                # worse than one that took a second longer to arrive.
+                with event_log.timed("live", "closing the last section", stage="web.stop_tail"):
+                    await anyio.to_thread.run_sync(session.close_open_tail_fast)
+                # Now hand it back. The radiologist has been reading this text
+                # as they spoke it, so it is theirs to edit — the accurate
+                # re-decode below is an upgrade, not a gate, and blocking on it
+                # would put the old wait straight back.
                 await send({
                     "type": "stopped",
                     "text": session.committed_text(),

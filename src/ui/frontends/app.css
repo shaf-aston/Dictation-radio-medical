@@ -153,7 +153,12 @@ body {
     background: color-mix(in srgb, var(--text-dim) 12%, transparent);
     font-size: .8rem;
     color: var(--text-dim);
-    min-width: 0;
+    /* Takes the leftover width when the bar is cramped, but never grows past
+       its own text -- otherwise "Ready" became an empty pill a thousand pixels
+       wide. max-content is the ceiling; the ellipsis handles the floor. */
+    flex: 1 1 auto;
+    max-width: max-content;
+    min-width: 3.5rem;
 }
 /* min-width:0 is what makes the ellipsis actually work. Without it this span's
    automatic minimum size is the whole un-wrapped message, so it refuses to
@@ -921,6 +926,15 @@ select:disabled, input:disabled { opacity: .5; }
    -------------------------------------------------------------------------- */
 
 @media (max-width: 34rem) {
+    /* The bar cannot hold two sentences at 390px. The findings pill drops to
+       its count -- still red, still a tick in the gutter, full wording in the
+       tooltip -- so the status keeps enough room to say something. Before this
+       the status read "Te…", which is not a status. */
+    .findings-pill { font-size: 0; padding-inline: .5rem; }
+    .findings-pill::before {
+        content: attr(data-short);
+        font: 600 .8rem var(--mono);
+    }
     /* Hidden from the eye, kept for a screen reader: display:none on the only
        <h1> left the page with no heading at all on a phone. */
     .wordmark {

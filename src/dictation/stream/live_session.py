@@ -131,6 +131,10 @@ class LiveSession:
         # chunk's doubts along with its text instead of leaving marks behind
         # on words the accurate model has since settled.
         self._uncertain: dict = {}
+        # The chunk closed by close_open_tail_fast(), if any. It was decoded by
+        # the FAST model purely to get the report complete in time for Stop, so
+        # finalize() must re-decode it whatever its confidence says.
+        self._forced_polish_index: Optional[int] = None
 
     # -- audio in -------------------------------------------------------
 
@@ -310,6 +314,38 @@ class LiveSession:
         return self._post.process(raw, len(raw))[0] if raw else ""
 
 
+    def close_open_tail_fast(self) -> None:
+        """Decode whatever never closed into a chunk, using the FAST model.
+
+        Called the moment Stop is pressed, before the report is handed back.
+        Without it the hand-back is everything *except* the last chunk -- and
+        the last chunk is where the impression lives. Measured on the synthetic
+        set: 20 of 48 words handed back, the missing 28 arriving up to 25
+        seconds later behind a status that already said "ready to edit". A
+        radiologist could copy or export half a report and nothing would say so.
+
+        One fast decode is about a second and a half on this machine, so this
+        buys a complete report for a fraction of what the accurate pass costs.
+        The chunk it commits is deliberately re-decoded by :meth:`finalize`
+        regardless of confidence -- speed was the reason it was decoded by the
+        fast model, so it has not earned the benefit of the doubt.
+        """
+        end = self._len
+        tail = self._buf[self._ledger.open_start_sample:end]
+        if not len(tail) or self._noise_floor.is_silence(rms(tail)):
+            return
+        result = self._decode(
+            self.live_engine, tail, self.live_beam_size,
+            want_confidence=True, stage="stop.tail", condition=True,
+        )
+        if result is None or not (text := result.text.strip()):
+            return
+        closing = Chunk(self._ledger.open_start_sample, end, closed=True)
+        self._ledger.commit(closing, text, mean_confidence(result))
+        self._note_uncertain(result)
+        self._chunks_decoded += 1
+        self._forced_polish_index = len(self._ledger.committed) - 1
+
     def finalize(self, on_progress: Optional[Callable[[str], None]] = None) -> str:
         """Re-decode what is worth re-decoding, with the accurate engine.
 
@@ -321,7 +357,11 @@ class LiveSession:
         t0 = time.time()
         say = on_progress or (lambda _msg: None)
 
-        targets = self._ledger.low_confidence_indices(self.polish_confidence_ceiling)
+        targets = list(self._ledger.low_confidence_indices(self.polish_confidence_ceiling))
+        # The tail closed at Stop was decoded fast on purpose; a confident fast
+        # decode is still a fast decode, so it is re-done here either way.
+        if self._forced_polish_index is not None and self._forced_polish_index not in targets:
+            targets.append(self._forced_polish_index)
         for done, i in enumerate(targets, start=1):
             say(f"Improving section {done} of {len(targets)}")
             c = self._ledger.committed[i]
