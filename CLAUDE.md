@@ -204,7 +204,9 @@ dictation used to get slower the longer it ran:
    after the button was pressed. The first decode is therefore shown
    provisionally, the next decode may revise it, and the pin applies from then
    on. One bounded correction at the very start is not the failure this rule
-   exists to prevent. **The preview is priced per call, not per second of audio.**
+   exists to prevent. **Corrected 2026-09-02, read this before trusting the paragraph below.** The flat-cost premise holds only while the cores are idle. Measured again on a loaded machine: wall time still looks flat (0.98s at 1s of audio, 1.47s at 25s) but CPU-seconds double (6.81 to 13.80), because the encoder is flat at a 30s pad while the decoder is linear in tokens. On a busy box the linear half surfaces as wall time and the throttle switches previews off on long tails, which is the failure it exists to prevent. Full measurements and what else turned out false: [docs/lag-map-2026-09-02.md](docs/lag-map-2026-09-02.md).
+
+**The preview is priced per call, not per second of audio.**
    Measured on this machine, one `transcribe()` on the live model costs about
    the same whatever it is handed, 1.33s for a 3s clip, 1.36s for 6s, 1.52s
    for 25s, because Whisper pads every clip to a 30-second window, so the
