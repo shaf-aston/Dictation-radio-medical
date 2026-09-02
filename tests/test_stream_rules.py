@@ -130,15 +130,18 @@ def test_the_live_loop_still_cuts_at_the_same_sample_when_the_speaker_resumes():
     assert closed and closed[0].end_sample == int(7.0 * SR)
 
 
-def test_a_whole_file_call_prefers_the_later_pause_and_that_is_deliberate():
-    # Handed the whole recording at once, the policy takes the LATEST pause up
-    # to soft_max_sec, because fewer longer chunks amortise the fixed cost of a
-    # decode. The trailing candidate is one more pause to choose from, so an
-    # offline call cuts at 14s where it used to cut at 7s. This is why an
-    # offline harness does not measure the live path's chunk lengths.
+def test_the_trailing_pause_never_moves_a_cut_that_would_have_happened_anyway():
+    # The load-bearing property. A trailing pause is a FALLBACK, not another
+    # candidate: the policy prefers the latest pause up to soft_max_sec, and a
+    # trailing candidate is always the latest, so as a peer it would have
+    # pushed every cut later than an ordinary pause would have. Measured on
+    # pause-heavy audio, that cancelled the whole gain.
+    #
+    # Two marks with a gap, whole file. The first cut stays at 7s, exactly
+    # where it was before this feature existed. What is new is the SECOND
+    # chunk: it closes at 14s on the trailing pause instead of staying open.
     chunks = cut_chunks(int(20.0 * SR), _marks((0.0, 7.0), (9.0, 14.0)))
-    closed = [c for c in chunks if c.closed]
-    assert closed and closed[0].end_sample == int(14.0 * SR)
+    assert [c.end_sample for c in chunks if c.closed] == [int(7.0 * SR), int(14.0 * SR)]
 
 
 def test_a_trailing_pause_is_refused_when_the_knob_is_not_positive():

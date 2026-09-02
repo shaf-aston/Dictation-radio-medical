@@ -18,7 +18,7 @@ committed prefix).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 from src.dictation.stream.vad import SAMPLE_RATE, SpeechMark
 
@@ -88,16 +88,23 @@ def cut_chunks(
 
     A cut point is the end of a speech mark that is followed by real silence:
     that sample is guaranteed to be silence, so cutting there cannot split a
-    word. Silence is proven two ways. Either the next mark starts later, or
-    this is the last mark and at least ``policy.trailing_silence_sec`` of
-    audio has arrived since it ended. The second case is what lets a chunk
-    close while the speaker is still thinking; without it the last thing said
-    before a pause waits for them to start talking again. Among the pauses that
-    fall in ``[min_sec, soft_max_sec]`` after the current chunk start, the
-    latest one is chosen (fewer, longer chunks amortise decode overhead
-    better than many short ones); if none exists there, the earliest pause in
-    ``(soft_max_sec, force_cut_sec)`` is used instead; if no pause exists at
-    all before ``force_cut_sec``, the chunk is force-cut exactly there.
+    word. Among the pauses that fall in ``[min_sec, soft_max_sec]`` after the
+    current chunk start, the latest one is chosen (fewer, longer chunks
+    amortise decode overhead better than many short ones); if none exists
+    there, the earliest pause in ``(soft_max_sec, force_cut_sec)`` is used
+    instead.
+
+    Only if none of those can close the chunk does the *trailing* pause apply:
+    the last mark has no successor to prove the silence after it is real, so
+    the clock proves it instead, once ``policy.trailing_silence_sec`` of audio
+    has arrived with no speech in it. That is what lets a chunk close while
+    the speaker is still thinking; without it the last thing said before a
+    pause waits for them to start talking again. It is deliberately a fallback
+    and not another candidate: being always the latest, as a peer it won the
+    "prefer the latest pause" rule every time and pushed cuts later.
+
+    If nothing at all can close a chunk before ``force_cut_sec``, and the
+    region contains speech, it is force-cut exactly there.
 
     The final region, from the last cut to ``total_samples``, is always
     returned as the open tail (``closed=False``), even if empty-length is
@@ -118,12 +125,17 @@ def cut_chunks(
 
     # The last mark has no successor to prove the silence after it is real, so
     # the clock proves it instead: enough audio has arrived with no speech in
-    # it. Appended last, which also keeps the list sorted.
+    # it. Kept SEPARATE from the ordinary candidates, and used only when none
+    # of them can close the chunk. Measured on pause-heavy audio: as a peer it
+    # is always the latest candidate, so the "prefer the latest pause" rule
+    # picked it every time and pushed the cut later than an ordinary pause
+    # would have. As a fallback it can only ever close a chunk that would
+    # otherwise have stayed open, which is the whole point of it.
+    trailing_cut: Optional[int] = None
     if marks:
-        trailing_s = int(policy.trailing_silence_sec * sr)
         last_end = marks[-1].end_sample
-        if total_samples - last_end >= trailing_s:
-            cut_candidates.append(last_end)
+        if total_samples - last_end >= int(policy.trailing_silence_sec * sr):
+            trailing_cut = last_end
 
     chunks: List[Chunk] = []
     chunk_start = 0
@@ -139,6 +151,9 @@ def cut_chunks(
             cut = within_soft[-1]
         elif in_range:
             cut = in_range[0]
+        elif trailing_cut is not None and min_pt <= trailing_cut < force_pt:
+            # Nothing else can close this chunk, and the speaker has stopped.
+            cut = trailing_cut
         elif force_pt < total_samples and any(m.end_sample > chunk_start for m in marks):
             # The force cut is the safety valve for an unbroken monologue with
             # no silence in it, so it may only fire on a region that actually
@@ -152,6 +167,8 @@ def cut_chunks(
         chunks.append(Chunk(chunk_start, cut, closed=True))
         chunk_start = cut
         cut_candidates = [c for c in cut_candidates if c > chunk_start]
+        if trailing_cut is not None and trailing_cut <= chunk_start:
+            trailing_cut = None
 
     chunks.append(Chunk(chunk_start, total_samples, closed=False))
     return chunks

@@ -161,6 +161,16 @@ class LiveSession:
         return self._len / self.sr
 
     @property
+    def committed_sec(self) -> float:
+        """Audio time of the last permanent sample: the committed frontier.
+
+        ``audio_sec`` minus this is how far the kept text trails the
+        microphone, which is the number a radiologist is describing when they
+        say dictation feels slow. Read by scripts/eval/replay.py.
+        """
+        return self._ledger.open_start_sample / self.sr
+
+    @property
     def chunks_decoded(self) -> int:
         return self._chunks_decoded
 
