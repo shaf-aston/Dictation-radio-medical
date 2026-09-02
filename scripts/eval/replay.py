@@ -39,6 +39,8 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+from scripts.eval import corpus
+from scripts.eval.metrics import term_error_rate, word_error_rate
 from src.core.settings import Settings
 from src.dictation.asr.factory import DEFAULT_ENGINE, create_engine, model_kwargs
 from src.dictation.stream.live_session import LiveSession
@@ -59,6 +61,8 @@ class ReplayResult:
     commit_lag: List[float] = field(default_factory=list)
     wall_sec: float = 0.0
     first_word_sec: Optional[float] = None
+    wer: Optional[float] = None
+    term_error: Optional[float] = None
 
     def percentile(self, p: float) -> float:
         if not self.commit_lag:
@@ -216,6 +220,22 @@ def _clips(args: argparse.Namespace) -> List[Path]:
     return clips[: args.limit] if args.limit else clips
 
 
+def _references(set_name: str) -> Dict[str, str]:
+    """Ground truth by clip stem, empty when the set has none to offer.
+
+    A latency number on its own is worth nothing here: a chunk policy can
+    always commit sooner by cutting mid-word, and the whole reason this
+    project measures at all is that a report can post a good WER while
+    mangling every anatomical word. So the harness refuses to report speed
+    without reporting what it cost, whenever a reference exists.
+    """
+    try:
+        return {c.audio_path.stem: c.reference for c in corpus.load_set(set_name)}
+    except Exception as exc:  # a missing or unreviewed manifest is not fatal
+        print(f"(no references for set {set_name!r}: {exc})")
+        return {}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--set", default="tts", help="gold set under data/eval/")
@@ -250,6 +270,12 @@ def main() -> None:
           f"force={policy.force_cut_sec} trailing={policy.trailing_silence_sec}")
     print(f"mode={'realtime' if args.realtime else 'flat out (audio-seconds lag)'}\n")
 
+    references = {} if args.audio else _references(args.set)
+    lexicon = []
+    if references:
+        from src.medical.medical_dict import get_correction_targets
+        lexicon = list(get_correction_targets())
+
     results = []
     for clip in _clips(args):
         res = replay(
@@ -259,9 +285,15 @@ def main() -> None:
         )
         results.append(res)
         s = res.summary()
+        ref = references.get(res.name, "")
+        if ref:
+            res.wer = word_error_rate(ref, res.final_text).wer
+            res.term_error = term_error_rate(ref, res.final_text, lexicon).error_rate
+        scored = (f"  wer {res.wer:.1%}  term {res.term_error:.1%}"
+                  if res.wer is not None else "")
         print(f"{res.name:<16} audio {s['audio_sec']:>6.2f}s  chunks {s['chunks']:>2}  "
               f"first {s['first_word_sec']}  p50 {s['lag_p50']}  p90 {s['lag_p90']}  "
-              f"max {s['lag_max']}")
+              f"max {s['lag_max']}{scored}")
 
     if not results:
         return
@@ -273,6 +305,14 @@ def main() -> None:
         print(f"commit lag  p50 {statistics.median(ordered):.2f}s  "
               f"p90 {ordered[int(0.9 * len(ordered))]:.2f}s  max {max(ordered):.2f}s")
     print(f"mean chunk  {sum(r.audio_sec for r in results) / max(1, sum(r.chunks for r in results)):.2f}s")
+    scored_runs = [r for r in results if r.term_error is not None]
+    if scored_runs:
+        # The veto metric. A latency win that moves this up is not a win.
+        print(f"accuracy    wer {statistics.mean(r.wer for r in scored_runs):.2%}  "
+              f"medical-term error {statistics.mean(r.term_error for r in scored_runs):.2%}"
+              f"   ({len(scored_runs)} scored)")
+    else:
+        print("accuracy    NOT SCORED: no reference for this audio")
 
     out = Path("data") / "eval" / "reports"
     out.mkdir(parents=True, exist_ok=True)
@@ -289,7 +329,8 @@ def main() -> None:
             "force_cut_sec": policy.force_cut_sec,
             "trailing_silence_sec": policy.trailing_silence_sec,
         },
-        "clips": [{"name": r.name, **r.summary(), "text": r.final_text} for r in results],
+        "clips": [{"name": r.name, **r.summary(), "wer": r.wer,
+                   "term_error": r.term_error, "text": r.final_text} for r in results],
     }, indent=2), encoding="utf-8")
     print(f"\nwrote {dest}")
 
