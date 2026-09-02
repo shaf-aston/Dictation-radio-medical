@@ -39,6 +39,13 @@ _DEFAULTS: dict = {
     "chunk_min_sec": 6.0,
     "chunk_soft_max_sec": 15.0,
     "chunk_force_cut_sec": 20.0,
+    # The last thing said before a pause used to wait for the speaker to start
+    # talking again, because a cut point had to be a pause with more speech
+    # after it to prove the silence was real. Now the clock proves it instead:
+    # once this much audio has arrived with no speech in it, the pause counts.
+    # Raise it if a mid-sentence breath is closing chunks; lower it to commit
+    # sooner when someone stops to read the film.
+    "chunk_trailing_silence_sec": 0.6,
     # --- Live transcription decode quality (see src/dictation/worker.py) ---
     "live_beam_size": 2,        # beam=1 caused repetition; beam=2 still real-time
     # Every decode that is not the live loop: the desktop's post-stop polish and

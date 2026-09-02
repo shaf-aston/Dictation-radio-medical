@@ -266,6 +266,7 @@ def on_start_recording(window: MainWindow) -> None:
             min_sec=float(window.settings.get("chunk_min_sec")),
             soft_max_sec=float(window.settings.get("chunk_soft_max_sec")),
             force_cut_sec=float(window.settings.get("chunk_force_cut_sec")),
+            trailing_silence_sec=float(window.settings.get("chunk_trailing_silence_sec")),
         ),
         silence_rms_floor=float(window.settings.get("silence_rms_floor")),
         silence_rms_margin=float(window.settings.get("silence_rms_margin")),

@@ -30,14 +30,24 @@ class ChunkPolicy:
     min_sec: float = 6.0          # never cut a chunk shorter than this at a pause
     soft_max_sec: float = 15.0    # prefer cutting by here if a pause is available
     force_cut_sec: float = 20.0   # hard ceiling: cut here even mid-speech
+    # How much silence must sit after the LAST speech mark before that mark's
+    # end counts as a cut point. Without this the final mark can never be a
+    # cut (there is no following mark to prove the silence is real), so a
+    # radiologist who stops to read the film gets nothing committed until they
+    # speak again. Measured: 7s of speech then 1s of continuing silence closed
+    # no chunk at all; 32ms of resumed speech closed it instantly.
+    # 0.6s, not the 0.3s the VAD splits on: detect_speech pads every mark end
+    # by speech_pad_ms, so apparent trailing silence understates the real gap,
+    # and a breath mid-sentence must not read as the end of a thought.
+    trailing_silence_sec: float = 0.6
 
     def __post_init__(self) -> None:
         """Reject lengths that are out of order or not positive.
 
-        These three come straight from user-editable settings, so they are
-        checked here rather than trusted. Out-of-order values break the
-        "never shorter than min_sec" promise below, and a force_cut_sec of 0
-        makes cut_chunks() loop forever on a zero-length chunk. Raising at
+        These come straight from user-editable settings, so they are checked
+        here rather than trusted. Out-of-order values break the "never shorter
+        than min_sec" promise below, and a force_cut_sec of 0 makes
+        cut_chunks() loop forever on a zero-length chunk. Raising at
         record-start with a readable message beats a hung recording.
         """
         if not 0 < self.min_sec <= self.soft_max_sec <= self.force_cut_sec:
@@ -45,6 +55,11 @@ class ChunkPolicy:
                 "chunk lengths must be 0 < min_sec <= soft_max_sec <= force_cut_sec, "
                 f"got min={self.min_sec} soft_max={self.soft_max_sec} "
                 f"force_cut={self.force_cut_sec}"
+            )
+        if self.trailing_silence_sec <= 0:
+            raise ValueError(
+                "trailing_silence_sec must be positive, got "
+                f"{self.trailing_silence_sec}"
             )
 
 
@@ -71,9 +86,13 @@ def cut_chunks(
 ) -> List[Chunk]:
     """Cut ``[0, total_samples)`` into closed chunks plus one open tail.
 
-    A cut point is the end of a speech mark that is followed by real silence
-    (i.e. the next mark, if any, starts later): that sample is guaranteed to
-    be silence, so cutting there cannot split a word. Among the pauses that
+    A cut point is the end of a speech mark that is followed by real silence:
+    that sample is guaranteed to be silence, so cutting there cannot split a
+    word. Silence is proven two ways. Either the next mark starts later, or
+    this is the last mark and at least ``policy.trailing_silence_sec`` of
+    audio has arrived since it ended. The second case is what lets a chunk
+    close while the speaker is still thinking; without it the last thing said
+    before a pause waits for them to start talking again. Among the pauses that
     fall in ``[min_sec, soft_max_sec]`` after the current chunk start, the
     latest one is chosen (fewer, longer chunks amortise decode overhead
     better than many short ones); if none exists there, the earliest pause in
@@ -97,6 +116,15 @@ def cut_chunks(
         if marks[i].end_sample < marks[i + 1].start_sample
     ]
 
+    # The last mark has no successor to prove the silence after it is real, so
+    # the clock proves it instead: enough audio has arrived with no speech in
+    # it. Appended last, which also keeps the list sorted.
+    if marks:
+        trailing_s = int(policy.trailing_silence_sec * sr)
+        last_end = marks[-1].end_sample
+        if total_samples - last_end >= trailing_s:
+            cut_candidates.append(last_end)
+
     chunks: List[Chunk] = []
     chunk_start = 0
     while True:
@@ -111,7 +139,12 @@ def cut_chunks(
             cut = within_soft[-1]
         elif in_range:
             cut = in_range[0]
-        elif force_pt < total_samples:
+        elif force_pt < total_samples and any(m.end_sample > chunk_start for m in marks):
+            # The force cut is the safety valve for an unbroken monologue with
+            # no silence in it, so it may only fire on a region that actually
+            # contains speech. Without the guard, closing on a trailing pause
+            # leaves a silent tail that gets force-cut into a silent chunk and
+            # decoded for nothing.
             cut = force_pt
         else:
             break

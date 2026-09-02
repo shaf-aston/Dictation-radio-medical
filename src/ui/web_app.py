@@ -940,6 +940,7 @@ def _live_session(settings, prefs: dict) -> LiveSession:
             min_sec=float(settings.get("chunk_min_sec")),
             soft_max_sec=float(settings.get("chunk_soft_max_sec")),
             force_cut_sec=float(settings.get("chunk_force_cut_sec")),
+            trailing_silence_sec=float(settings.get("chunk_trailing_silence_sec")),
         ),
         pause_threshold=float(settings.get("pause_threshold", 2.5)),
         live_beam_size=int(settings.get("live_beam_size")),
