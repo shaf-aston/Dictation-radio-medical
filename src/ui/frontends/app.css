@@ -522,6 +522,65 @@ body {
    altogether. The token on its own is 5.3:1 and still clearly quieter. */
 .editor-marks .preview { color: var(--text-dim); }
 
+/* ---- the session timeline ------------------------------------------------
+   Time is the dimension the old single status label threw away: it said what
+   was happening and forgot it a second later. Everything here is drawn from
+   numbers the session already reports (audio read, text committed, how far
+   behind), so nothing new is asked of the server. */
+
+.timeline { align-self: stretch; display: flex; flex-direction: column; gap: .4rem; }
+
+.tl-ribbon {
+    position: relative;
+    height: 2.1rem;
+    border: 1px solid var(--edge);
+    border-radius: 3px;
+    background: var(--film);
+    overflow: hidden;
+}
+
+.tl-seg { position: absolute; top: 0; bottom: 0; }
+/* Saved is the machine's voice, not severity: --glow, never --rec. */
+/* The divider is the point, not decoration: it is where one saved sentence
+   ends and the next begins, which is what "is my dictation safe" is read from. */
+.tl-seg.is-saved {
+    background: color-mix(in srgb, var(--glow) 42%, transparent);
+    border-right: 2px solid var(--film);
+}
+.tl-seg.is-open { background: color-mix(in srgb, var(--glow) 13%, transparent); }
+/* Fell behind: a warning, one step below severity. */
+.tl-seg.is-behind {
+    background: repeating-linear-gradient(45deg,
+        transparent 0 4px,
+        color-mix(in srgb, var(--warn) 55%, transparent) 4px 5px);
+}
+
+/* The pulse: how far the text trails the voice, over the same time axis as the
+   ribbon, so a climb sits directly under the sentence it happened during.
+   Thin and half-faded on purpose. */
+.tl-pulse { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.tl-now { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--rec); }
+
+.tl-live { margin: 0; display: flex; flex-wrap: wrap; gap: .4rem; font-size: .78rem; }
+.tl-live b { font-weight: 600; color: var(--text); }
+.tl-live span { color: var(--text-dim); }
+
+.tl-trail { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.tl-trail li {
+    display: grid;
+    grid-template-columns: 2.9rem 1fr auto;
+    gap: .5rem;
+    padding: .1rem 0;
+    font-size: .74rem;
+    color: var(--text-dim);
+}
+/* The newest step is the one you are living through, so it is the readable one. */
+.tl-trail li:last-child { color: var(--text); }
+.tl-t, .tl-dur { font: 500 .71rem var(--mono); font-variant-numeric: tabular-nums; }
+.tl-dur.is-slow { color: var(--warn-text); }
+.tl-dur.is-good { color: var(--ok); }
+
 .hint { margin: 0; font-size: .76rem; color: var(--text-dim); }
 
 kbd {

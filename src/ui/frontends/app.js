@@ -17,6 +17,13 @@ const micIcon = document.getElementById('micIcon');
 const cancelBtn = document.getElementById('cancelBtn');
 const recMeter = document.getElementById('recMeter');
 const recTimer = document.getElementById('recTimer');
+const sessionTimeline = document.getElementById('sessionTimeline');
+const tlRibbon = document.getElementById('tlRibbon');
+const tlPulse = document.getElementById('tlPulse');
+const tlNow = document.getElementById('tlNow');
+const tlLiveMsg = document.getElementById('tlLiveMsg');
+const tlLiveSub = document.getElementById('tlLiveSub');
+const tlTrail = document.getElementById('tlTrail');
 const editor = document.getElementById('editor');
 const newReportBtn = document.getElementById('newReportBtn');
 const saveTxtBtn = document.getElementById('saveTxtBtn');
@@ -957,6 +964,9 @@ function startTimer() {
         const mm = String(Math.floor(secs / 60)).padStart(2, '0');
         const ss = String(secs % 60).padStart(2, '0');
         recTimer.textContent = `${mm}:${ss}`;
+        // The ribbon's "now" edge rides this tick rather than a second timer:
+        // it is the same clock, and one clock cannot disagree with itself.
+        tlRender();
     };
     tick();
     timerHandle = setInterval(tick, 500);
@@ -965,6 +975,161 @@ function startTimer() {
 function stopTimer() {
     if (timerHandle) clearInterval(timerHandle);
     timerHandle = null;
+}
+
+// -- the session timeline ---------------------------------------------------
+// A dictation is a duration, but the status label could only ever say what was
+// true this instant and then overwrite itself, so a slow decode and a dead one
+// looked identical. This draws the session along time instead: the ribbon is
+// the shape of the audio, a hairline inside it is how far the text trails the
+// microphone, and the trail says the same in words for anyone who would rather
+// read than look. Every number here is one the session already had.
+
+const TL_TRAIL_MAX = 4;        // steps kept on screen; older ones fall off
+const TL_MIN_SPAN_SEC = 20;    // the ribbon never looks emptier than this
+const TL_BEHIND_SEC = 2.5;     // past this the text is visibly trailing
+
+const tl = {
+    startedAt: 0, steps: [], saved: [], lag: [], stalls: [],
+    savedTo: 0, audioSec: 0, behind: 0, sentences: 0, phase: 'idle',
+};
+
+function tlBegin() {
+    tl.startedAt = performance.now();
+    tl.steps = []; tl.saved = []; tl.lag = []; tl.stalls = [];
+    tl.savedTo = 0; tl.audioSec = 0; tl.behind = 0; tl.sentences = 0;
+    tl.phase = 'starting';
+    sessionTimeline.hidden = false;
+    tlStep('Opening the microphone');
+}
+
+function tlElapsed() {
+    return tl.startedAt ? (performance.now() - tl.startedAt) / 1000 : 0;
+}
+
+//: *tone* colours the duration only: 'good' for a step that beat its budget,
+//: 'slow' for one the radiologist waited on.
+function tlStep(label, seconds = null, tone = '') {
+    tl.steps.push({ at: tlElapsed(), label, seconds, tone });
+    if (tl.steps.length > 24) tl.steps.shift();
+    tlRender();
+}
+
+// Fed from devUpdateArrived, which already computes these for every partial:
+// one formula, two readers, so the console and the ribbon can never disagree.
+function tlUpdate(msg, stats) {
+    tl.audioSec = msg.audioSec || 0;
+    tl.behind = stats.behind;
+    tl.lag.push({ at: stats.sinceStart / 1000, behind: stats.behind });
+
+    // A sentence is saved the moment the committed text grows: the server
+    // never has to tell us separately.
+    if (stats.words > tl.sentences) {
+        tl.sentences = stats.words;
+        if (tl.audioSec > tl.savedTo) {
+            tl.saved.push({ from: tl.savedTo, to: tl.audioSec });
+            tl.savedTo = tl.audioSec;
+        }
+    }
+
+    // The stretch where the live preview was switched off, held open until the
+    // state changes back, so it draws as one band rather than a dotted mess.
+    const stalling = msg.state === 'catching_up';
+    const open = tl.stalls.length && tl.stalls[tl.stalls.length - 1].to === null;
+    if (stalling && !open) {
+        tl.stalls.push({ from: stats.sinceStart / 1000, to: null });
+        tlStep('Catching up');
+    } else if (!stalling && open) {
+        tl.stalls[tl.stalls.length - 1].to = stats.sinceStart / 1000;
+    }
+
+    tl.phase = stalling ? 'behind' : (tl.sentences ? 'writing' : 'listening');
+    tlRender();
+}
+
+// What the phase means in plain words. The lag is in here, said as work still
+// to do rather than as a number to watch: "about 4s still to write" is the
+// same fact as "4s behind" without asking anyone to read it as a metric.
+function tlSay() {
+    const behindSec = Math.round(tl.behind);
+    switch (tl.phase) {
+        case 'starting':   return ['Opening the microphone', 'One moment.'];
+        case 'listening':  return ['Listening', 'Your first words appear in a few seconds.'];
+        case 'writing':    return ['Writing what you say',
+            tl.sentences ? `${tl.sentences} sentence${tl.sentences === 1 ? '' : 's'} saved.` : ''];
+        case 'behind':     return ['Still hearing you',
+            `About ${Math.max(1, behindSec)}s of speech still to write. Nothing is lost.`];
+        case 'finishing':  return ['Finishing the last sentence', ''];
+        case 'polishing':  return ['Yours to edit', 'Still checking the least certain sentences.'];
+        case 'kept':       return ['Kept your edits', 'The polish was dropped rather than overwrite you.'];
+        case 'done':       return ['Finished',
+            `${tl.sentences} sentence${tl.sentences === 1 ? '' : 's'} saved.`];
+        default:           return ['Ready', ''];
+    }
+}
+
+function tlRender() {
+    if (sessionTimeline.hidden) return;
+    const now = tlElapsed();
+    // A little headroom past the live edge, so the "now" line always has room
+    // to draw inside the ribbon instead of being clipped against its end, and
+    // so the session visibly has somewhere left to run.
+    const span = Math.max(TL_MIN_SPAN_SEC, now * 1.06);
+    const pct = (s) => Math.max(0, Math.min(100, (s / span) * 100));
+    const band = (from, to, cls) =>
+        `<span class="tl-seg ${cls}" style="left:${pct(from).toFixed(2)}%;width:${(pct(to) - pct(from)).toFixed(2)}%"></span>`;
+
+    const bands = tl.saved.map((s) => band(s.from, s.to, 'is-saved'));
+    // The sentence still being written: from the last saved word up to the
+    // last audio the server has read.
+    if (tl.audioSec > tl.savedTo) bands.push(band(tl.savedTo, tl.audioSec, 'is-open'));
+    for (const s of tl.stalls) bands.push(band(s.from, s.to === null ? now : s.to, 'is-behind'));
+
+    tlRibbon.querySelectorAll('.tl-seg').forEach((n) => n.remove());
+    tlRibbon.insertAdjacentHTML('afterbegin', bands.join(''));
+    tlNow.style.left = pct(now).toFixed(2) + '%';
+    tlDrawPulse(span);
+
+    const [msg, sub] = tlSay();
+    tlLiveMsg.textContent = msg;
+    tlLiveSub.textContent = sub;
+
+    tlTrail.replaceChildren(...tl.steps.slice(-TL_TRAIL_MAX).map((s) => {
+        const li = document.createElement('li');
+        const t = document.createElement('span');
+        t.className = 'tl-t';
+        t.textContent = fmtClock(s.at);
+        const label = document.createElement('span');
+        label.textContent = s.label;
+        const dur = document.createElement('span');
+        dur.className = 'tl-dur' + (s.tone ? ` is-${s.tone}` : '');
+        dur.textContent = s.seconds === null ? '' : `${s.seconds.toFixed(1)}s`;
+        li.append(t, label, dur);
+        return li;
+    }));
+}
+
+function fmtClock(seconds) {
+    const s = Math.max(0, Math.floor(seconds));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function tlDrawPulse(span) {
+    if (!tl.lag.length) { tlPulse.replaceChildren(); return; }
+    const W = 1000, H = 40;
+    const peak = Math.max(3, ...tl.lag.map((p) => p.behind));
+    const d = tl.lag.map((p, i) =>
+        `${i ? 'L' : 'M'}${((p.at / span) * W).toFixed(1)} ${(H - 2 - (p.behind / peak) * (H - 8)).toFixed(1)}`
+    ).join(' ');
+    // Built as markup rather than nodes because it is one path, redrawn whole.
+    tlPulse.innerHTML = `<path d="${d}" fill="none" stroke="${
+        tl.behind > TL_BEHIND_SEC ? 'var(--warn-text)' : 'var(--glow)'
+    }" stroke-width="1.25" stroke-linejoin="round" vector-effect="non-scaling-stroke" opacity=".55" />`;
+}
+
+function tlPhase(phase) {
+    tl.phase = phase;
+    tlRender();
 }
 
 // -- the socket -------------------------------------------------------------
@@ -978,7 +1143,7 @@ function openSocket() {
         const msg = safeParseJson(event.data, null);
         if (!msg) return;
         if (msg.type === 'partial') {
-            devUpdateArrived(msg);
+            tlUpdate(msg, devUpdateArrived(msg));
             committedText = msg.committed || '';
             previewText = msg.preview || '';
             uncertainWords = new Set(msg.uncertain || []);
@@ -1000,16 +1165,22 @@ function openSocket() {
             renderLiveText();
             handedOverText = editor.value;
             finishSession(null);
+            tlStep('Yours to edit',
+                stopPressedAt ? (performance.now() - stopPressedAt) / 1000 : null, 'good');
+            tlPhase('polishing');
             showStatus('Yours to edit · polishing', 'is-busy');
         } else if (msg.type === 'final') {
             devMark('browser', 'accuracy pass arrived', { words: devWordsIn(msg.text) },
                 { ms: stopPressedAt ? performance.now() - stopPressedAt : null });
+            const polishSec = stopPressedAt ? (performance.now() - stopPressedAt) / 1000 : null;
             stopPressedAt = 0;
             const improved = msg.text || '';
             if (editor.value !== handedOverText) {
                 // You edited while it was working. Your words win: silently
                 // replacing them with the machine's would be the worst possible
                 // outcome for a clinical report.
+                tlStep('Kept your edits', polishSec);
+                tlPhase('kept');
                 showStatus('Kept your edits', 'is-ok', 4000);
             } else {
                 committedText = improved;
@@ -1017,6 +1188,8 @@ function openSocket() {
                 renderLiveText();
                 pushUndoState();
                 announceReportChanged();
+                tlStep('Checked and polished', polishSec, 'good');
+                tlPhase('done');
                 showStatus('Polished', 'is-ok', 2000);
             }
             handedOverText = null;
@@ -1060,6 +1233,11 @@ async function teardownMic() {
 
 async function startRecording() {
     devRecordingStarted();
+    // Before this, the button, the timer and the status all stayed idle while
+    // the microphone permission, the audio graph and the socket were awaited:
+    // press record, and for a second or more nothing on screen moved at all.
+    tlBegin();
+    showStatus('Opening the microphone', 'is-busy');
     const micAskedAt = performance.now();
     try {
         micStream = await navigator.mediaDevices.getUserMedia({
@@ -1069,10 +1247,13 @@ async function startRecording() {
         devMark('browser', 'microphone refused', {}, { level: 'error' });
         console.error('Microphone access denied:', err);
         showError('Microphone access denied. Allow microphone permissions in your browser settings, then try again.');
+        tlStep('Microphone refused');
+        sessionTimeline.hidden = true;
         return;
     }
 
     devMark('browser', 'microphone granted', {}, { ms: performance.now() - micAskedAt });
+    tlStep('Microphone ready', (performance.now() - micAskedAt) / 1000);
 
     try {
         // Asking the context for 16 kHz makes the browser resample for us, so
@@ -1089,6 +1270,7 @@ async function startRecording() {
             liveSocket.addEventListener('error', reject, { once: true });
         });
         devMark('browser', 'dictation socket open', {}, { ms: performance.now() - socketAskedAt });
+        tlStep('Connected', (performance.now() - socketAskedAt) / 1000);
 
         micNode = new AudioWorkletNode(audioContext, 'pcm-tap');
         micNode.port.onmessage = (event) => {
@@ -1118,6 +1300,8 @@ async function startRecording() {
     setRecordingUi(true);
     startTimer();
     devMark('browser', 'recording started', {}, { ms: performance.now() - dev.recordStart });
+    tlStep('Listening');
+    tlPhase('listening');
     showStatus('Listening', 'is-rec');
 }
 
@@ -1128,6 +1312,8 @@ async function stopRecording() {
     await teardownMic();
     setRecordingUi(false);
     stopTimer();
+    tlStep('Stopped');
+    tlPhase('finishing');
     showStatus('Finishing', 'is-busy');
     if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
         liveSocket.send(JSON.stringify({ command: 'stop' }));
@@ -1149,6 +1335,10 @@ async function cancelRecording() {
     paintPreview('');
     stopTimer();
     setRecordingUi(false);
+    // Discard means discard: the session it described is gone, so its timeline
+    // goes with it rather than sitting under a report it no longer describes.
+    sessionTimeline.hidden = true;
+    tl.phase = 'idle';
     hideStatus();
 }
 
@@ -1660,8 +1850,17 @@ async function lookupSelectedTerm() {
         hideTermPop();
         return;
     }
-    const range = { start: editor.selectionStart, end: editor.selectionEnd };
-    const selected = editor.value.slice(range.start, range.end).trim();
+    // A double-click word-select in a textarea can include the trailing
+    // space (Chrome does this at some word boundaries). Trim the range
+    // itself, not just the text sent to the lookup, so applying a
+    // suggestion replaces only the word and never eats the space next to it.
+    const raw = editor.value;
+    let start = editor.selectionStart;
+    let end = editor.selectionEnd;
+    while (start < end && /\s/.test(raw[start])) start += 1;
+    while (end > start && /\s/.test(raw[end - 1])) end -= 1;
+    const range = { start, end };
+    const selected = raw.slice(start, end);
     if (!selected) {
         hideTermPop();
         return;
@@ -1986,6 +2185,10 @@ function devUpdateArrived(msg) {
     if (dev.firstWordsMs === null && (words || previewWords)) {
         dev.firstWordsMs = sinceStart;
         devMark('browser', 'first words on screen', {}, { ms: sinceStart });
+        // The wait everyone feels. Budget is the measured 3s; past that it is
+        // worth the radiologist knowing the start was slow, not just that it
+        // eventually arrived.
+        tlStep('First words', sinceStart / 1000, sinceStart > 3000 ? 'slow' : 'good');
     }
 
     // How far the text on screen is behind the microphone: wall time since the
@@ -2008,6 +2211,10 @@ function devUpdateArrived(msg) {
         behind_sec: behind.toFixed(1),
         state: msg.state,
     }, { ms: gap });
+
+    // The same three numbers the console just printed, handed to the timeline
+    // rather than computed a second time and drifting.
+    return { sinceStart, behind, gap, words };
 }
 
 function initDevConsole() {

@@ -135,6 +135,26 @@
                         <span class="rec-level" aria-hidden="true"><i></i></span>
                     </div>
                 </div>
+
+                <!-- What has happened since you pressed record, drawn along
+                     time instead of replaced in place. The ribbon is the shape
+                     of the audio: solid is a sentence saved, faint is the one
+                     still being written, hatched is where the machine fell
+                     behind. The hairline inside it is how far the text trails
+                     your voice, deliberately faint: it is there to be looked
+                     for, not to be watched. The trail underneath says the same
+                     thing in words, so nothing depends on reading a graph. -->
+                <div id="sessionTimeline" class="timeline" hidden>
+                    <div id="tlRibbon" class="tl-ribbon" role="img"
+                         aria-label="Progress of this dictation over time">
+                        <svg id="tlPulse" class="tl-pulse" viewBox="0 0 1000 40"
+                             preserveAspectRatio="none" aria-hidden="true"></svg>
+                        <span id="tlNow" class="tl-now"></span>
+                    </div>
+                    <p class="tl-live"><b id="tlLiveMsg">Ready</b><span id="tlLiveSub"></span></p>
+                    <ol id="tlTrail" class="tl-trail" aria-label="Recent steps"></ol>
+                </div>
+
                 <p class="hint"><kbd>Space</kbd> to record · <kbd>Ctrl</kbd>+<kbd>Z</kbd> to undo</p>
             </div>
         </section>
