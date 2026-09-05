@@ -31,7 +31,14 @@ src/
 │   │                       (Protocol) · types.py (Word/AsrSegment/AsrResult/
 │   │                       TranscribeContext, confidence is part of the
 │   │                       contract) · factory.py (create_engine, the only
-│   │                       name→engine mapping) · engines/faster_whisper_engine.py
+│   │                       name→engine mapping; default is a 3-tier chain:
+│   │                       deepgram → parakeet (if installed) → faster-whisper)
+│   │                       · engines/deepgram_engine.py (cloud, nova-2-medical,
+│   │                       key in OS keychain, the only network-dependent
+│   │                       engine here — see the invariants note below) ·
+│   │                       engines/fallback_engine.py (ChainEngine: tries each
+│   │                       provider in order, degrades past any that raises) ·
+│   │                       engines/faster_whisper_engine.py
 │   ├── stream/             chunk-once streaming, vad.py (Silero VAD, bundled
 │   │                       with faster-whisper, no new dep) · segmenter.py
 │   │                       (pure VAD-marks→chunk-cuts policy) · live_session.py
@@ -274,8 +281,18 @@ there.
 
 ## Invariants (do not break)
 
-- **Offline by default.** No network call unless cloud training is explicitly
-  enabled *and* consented. Dictation never imports cloud.
+- **Offline by default, one named exception.** No network call unless cloud
+  training is explicitly enabled *and* consented, or dictation itself is using
+  the `deepgram` ASR engine (the current `DEFAULT_ENGINE` in
+  `dictation/asr/factory.py`): that engine sends raw audio to Deepgram's cloud
+  API for transcription, a deliberate, explicit product decision (2026-09-05),
+  not a leak. It has no PHI-scrubbing step of its own — audio can't be
+  de-identified before it's transcribed — so treat this the same as any other
+  BAA/compliance question before using it on real patient dictation. Falls
+  back to the local Parakeet/Whisper chain on any network or auth failure
+  (`engines/fallback_engine.py`), so a Deepgram outage degrades quality, not
+  uptime. Every other engine and everything else in `dictation/` stays
+  offline; cloud training itself never imports cloud.
 - **PHI is scrubbed before anything leaves the device** via `DeIdentifier` +
   `validate_clean()` (raises `PrivacyError`); a record that still contains a
   known identifier is dropped, not uploaded.
