@@ -233,6 +233,15 @@ dictation used to get slower the longer it ran:
 4. **Only the un-decoded tail is ever read off disk.** `worker._read_audio(from_sample)`
    seeks from the ledger's open-tail frontier; it never re-decodes the entire
    growing WAV.
+5. **A cloud engine holds its connection open.** `deepgram_engine._http_client`
+   is one `httpx.Client` for the life of the process, built in `preload()`.
+   A fresh connection per call put a TLS handshake in front of every decode:
+   measured against the live API, 1.29s for a 2s clip and 1.36s for a 6s one,
+   against 0.18s and 0.16s over a kept-alive connection. Since rule 3 holds the
+   next preview back for as long as the last one took, that handshake alone
+   stretched live updates to about five seconds apart and tripped
+   `preview_max_lag_sec`, so the report arrived in one lump at Stop. Never call
+   `httpx.post` directly from an engine.
 
 `core/perf.py` and the in-app developer console are the evidence for all of
 the above. Both are in-process only, read on loopback, and persist nothing, so

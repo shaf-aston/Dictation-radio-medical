@@ -76,8 +76,14 @@ class DeepgramEngine:
     # -- port -----------------------------------------------------------
 
     def preload(self) -> None:
-        """No-op: there is no local model to warm, only the per-call network cost."""
-        return None
+        """Build the shared HTTPS client. No model to warm, only the connection.
+
+        Done here, on the main thread at startup, rather than lazily inside the
+        first decode: the loop calls :meth:`transcribe` from a worker thread,
+        and two threads racing to build the singleton would leave one client
+        holding sockets nobody closes.
+        """
+        _http_client()
 
     def capabilities(self) -> EngineCaps:
         # Deepgram reports real per-word confidence; this REST endpoint has
@@ -96,8 +102,6 @@ class DeepgramEngine:
                 "deepgram_engine.store_api_key() first"
             )
 
-        import httpx  # already a hard dependency (web app / Lightning REST)
-
         params: List[Tuple[str, Any]] = [
             ("model", self.model_name),
             ("language", self.language),
@@ -114,7 +118,7 @@ class DeepgramEngine:
         ]
         params.extend(("keywords", kw) for kw in _boosted_keywords())
 
-        response = httpx.post(
+        response = _http_client().post(
             _LISTEN_URL,
             params=params,
             headers={
@@ -122,13 +126,39 @@ class DeepgramEngine:
                 "Content-Type": "audio/l16",
             },
             content=pcm,
-            timeout=_TIMEOUT,
         )
         response.raise_for_status()
         return _to_result(response.json())
 
 
 # -- internals ------------------------------------------------------------
+
+@lru_cache(maxsize=1)
+def _http_client() -> Any:
+    """One HTTPS connection, kept open for the life of the process.
+
+    The live loop calls this engine once per cycle, so a decode's cost is what
+    the radiologist waits on. Measured against the live API on this machine, a
+    fresh connection per call costs 1.29s for a 2s clip and 1.36s for a 6s one
+    -- almost all of it the TLS handshake, not the transcription. Over a
+    kept-alive connection the same two calls cost 0.18s and 0.16s.
+
+    That 1.2s of handshake per decode is what made dictation trail the
+    microphone: the preview pacing rule holds the next preview back for as
+    long as the last one took, so paying it every cycle stretched updates to
+    about five seconds apart, and the ones that ran slow tripped
+    ``preview_max_lag_sec`` and switched the preview off outright.
+    """
+    import httpx  # already a hard dependency (web app / Lightning REST)
+
+    return httpx.Client(
+        timeout=_TIMEOUT,
+        # A dictation is a burst of calls seconds apart with quiet in between;
+        # the expiry has to outlast the quiet or the handshake comes straight
+        # back on the first word of the next report.
+        limits=httpx.Limits(max_keepalive_connections=4, keepalive_expiry=300.0),
+    )
+
 
 @lru_cache(maxsize=1)
 def _boosted_keywords() -> Tuple[str, ...]:
