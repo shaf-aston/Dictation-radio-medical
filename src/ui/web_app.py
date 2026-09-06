@@ -1023,6 +1023,12 @@ async def dictate_socket(ws: WebSocket) -> None:
                 "preview": update.preview,
                 "state": update.state,
                 "audioSec": round(update.audio_sec, 1),
+                # Where the frozen text ends, in audio seconds. The ribbon
+                # draws one block per chunk from this: without it the browser
+                # had to guess a chunk had closed from the word count growing,
+                # which drew every update as another block and turned the
+                # session's shape into one flat slab.
+                "savedSec": round(session.committed_sec, 1),
                 "uncertain": list(update.uncertain),
             })
 

@@ -986,18 +986,22 @@ function stopTimer() {
 // read than look. Every number here is one the session already had.
 
 const TL_TRAIL_MAX = 4;        // steps kept on screen; older ones fall off
-const TL_MIN_SPAN_SEC = 20;    // the ribbon never looks emptier than this
+// The floor stops the ribbon rescaling wildly over the first second. Set to 20
+// it did the opposite of its job: a 9-second dictation drew into the left half
+// and left the right half blank, which reads as a session that stalled rather
+// than one that is short.
+const TL_MIN_SPAN_SEC = 10;
 const TL_BEHIND_SEC = 2.5;     // past this the text is visibly trailing
 
 const tl = {
     startedAt: 0, steps: [], saved: [], lag: [], stalls: [],
-    savedTo: 0, audioSec: 0, behind: 0, sentences: 0, phase: 'idle',
+    savedTo: 0, audioSec: 0, behind: 0, words: 0, phase: 'idle',
 };
 
 function tlBegin() {
     tl.startedAt = performance.now();
     tl.steps = []; tl.saved = []; tl.lag = []; tl.stalls = [];
-    tl.savedTo = 0; tl.audioSec = 0; tl.behind = 0; tl.sentences = 0;
+    tl.savedTo = 0; tl.audioSec = 0; tl.behind = 0; tl.words = 0;
     tl.phase = 'starting';
     sessionTimeline.hidden = false;
     tlStep('Opening the microphone');
@@ -1021,15 +1025,17 @@ function tlUpdate(msg, stats) {
     tl.audioSec = msg.audioSec || 0;
     tl.behind = stats.behind;
     tl.lag.push({ at: stats.sinceStart / 1000, behind: stats.behind });
+    tl.words = stats.words;
 
-    // A sentence is saved the moment the committed text grows: the server
-    // never has to tell us separately.
-    if (stats.words > tl.sentences) {
-        tl.sentences = stats.words;
-        if (tl.audioSec > tl.savedTo) {
-            tl.saved.push({ from: tl.savedTo, to: tl.audioSec });
-            tl.savedTo = tl.audioSec;
-        }
+    // One block per chunk the server actually froze, read from where the frozen
+    // text now ends. Inferring it instead from "the word count grew" drew a
+    // block per update -- half a second each, butted end to end -- so the
+    // ribbon came out as one flat bar with no boundaries in it, and the
+    // boundaries are the whole reason to look at it.
+    const saved = msg.savedSec || 0;
+    if (saved > tl.savedTo) {
+        tl.saved.push({ from: tl.savedTo, to: saved });
+        tl.savedTo = saved;
     }
 
     // The stretch where the live preview was switched off, held open until the
@@ -1043,7 +1049,7 @@ function tlUpdate(msg, stats) {
         tl.stalls[tl.stalls.length - 1].to = stats.sinceStart / 1000;
     }
 
-    tl.phase = stalling ? 'behind' : (tl.sentences ? 'writing' : 'listening');
+    tl.phase = stalling ? 'behind' : (tl.words ? 'writing' : 'listening');
     tlRender();
 }
 
@@ -1055,17 +1061,21 @@ function tlSay() {
     switch (tl.phase) {
         case 'starting':   return ['Opening the microphone', 'One moment.'];
         case 'listening':  return ['Listening', 'Your first words appear in a few seconds.'];
-        case 'writing':    return ['Writing what you say',
-            tl.sentences ? `${tl.sentences} sentence${tl.sentences === 1 ? '' : 's'} saved.` : ''];
+        // Words, not sentences: the count is a split of the committed text, so
+        // saying "sentences" put "12 sentences saved" under a twelve-word line.
+        case 'writing':    return ['Writing what you say', tlWords()];
         case 'behind':     return ['Still hearing you',
             `About ${Math.max(1, behindSec)}s of speech still to write. Nothing is lost.`];
         case 'finishing':  return ['Finishing the last sentence', ''];
         case 'polishing':  return ['Yours to edit', 'Still checking the least certain sentences.'];
         case 'kept':       return ['Kept your edits', 'The polish was dropped rather than overwrite you.'];
-        case 'done':       return ['Finished',
-            `${tl.sentences} sentence${tl.sentences === 1 ? '' : 's'} saved.`];
+        case 'done':       return ['Finished', tlWords()];
         default:           return ['Ready', ''];
     }
+}
+
+function tlWords() {
+    return tl.words ? `${tl.words} word${tl.words === 1 ? '' : 's'} written.` : '';
 }
 
 function tlRender() {
@@ -1165,6 +1175,9 @@ function openSocket() {
             renderLiveText();
             handedOverText = editor.value;
             finishSession(null);
+            // The hand-back is the last word count the trail will quote, so it
+            // has to be this text's, not the last partial's.
+            tl.words = devWordsIn(msg.text);
             tlStep('Yours to edit',
                 stopPressedAt ? (performance.now() - stopPressedAt) / 1000 : null, 'good');
             tlPhase('polishing');
@@ -1188,6 +1201,7 @@ function openSocket() {
                 renderLiveText();
                 pushUndoState();
                 announceReportChanged();
+                tl.words = devWordsIn(improved);
                 tlStep('Checked and polished', polishSec, 'good');
                 tlPhase('done');
                 showStatus('Polished', 'is-ok', 2000);
@@ -1200,9 +1214,32 @@ function openSocket() {
         }
     };
 
-    socket.onerror = () => showError('Lost the connection to the dictation service.');
+    // Only meaningful once recording has actually started: startRecording()
+    // has its own one-time 'error' listener for the connect attempt itself,
+    // and both firing on the same failure raced to set the status text.
+    socket.onerror = () => { if (isRecording) showError('Lost the connection to the dictation service.'); };
     socket.onclose = () => { if (isRecording) teardownMic(); };
     return socket;
+}
+
+// A connect to our own loopback server has been observed to error out
+// immediately under load, then succeed on the very next attempt with no
+// other change: transient, not a broken route. One retry absorbs it instead
+// of surfacing a scary error for something that would have worked a moment
+// later.
+async function connectDictationSocket(attemptsLeft = 2) {
+    const socket = openSocket();
+    try {
+        await new Promise((resolve, reject) => {
+            socket.addEventListener('open', resolve, { once: true });
+            socket.addEventListener('error', reject, { once: true });
+        });
+        return socket;
+    } catch {
+        socket.close();
+        if (attemptsLeft > 1) return connectDictationSocket(attemptsLeft - 1);
+        throw new Error('Could not reach the dictation service. Check that it is running and try again.');
+    }
 }
 
 // One undo entry per dictation and one scan of the finished report: not one of
@@ -1264,11 +1301,7 @@ async function startRecording() {
         URL.revokeObjectURL(workletUrl);
 
         const socketAskedAt = performance.now();
-        liveSocket = openSocket();
-        await new Promise((resolve, reject) => {
-            liveSocket.addEventListener('open', resolve, { once: true });
-            liveSocket.addEventListener('error', reject, { once: true });
-        });
+        liveSocket = await connectDictationSocket();
         devMark('browser', 'dictation socket open', {}, { ms: performance.now() - socketAskedAt });
         tlStep('Connected', (performance.now() - socketAskedAt) / 1000);
 
@@ -1286,7 +1319,7 @@ async function startRecording() {
     } catch (err) {
         console.error('Could not start live dictation:', err);
         await teardownMic();
-        showError('Could not start dictation: ' + err.message);
+        showError('Could not start dictation: ' + (err.message || 'unknown error'));
         return;
     }
 
@@ -1347,9 +1380,6 @@ dictateBtn.addEventListener('click', () => {
 });
 cancelBtn.addEventListener('click', cancelRecording);
 
-dictateBtn.setAttribute('aria-pressed', 'false');
-dictateBtn.setAttribute('role', 'button');
-dictateBtn.setAttribute('aria-label', 'Start or stop recording');
 renderTheme(document.documentElement.dataset.theme || 'dark', false);
 syncCachedTheme();
 applyBootstrapState();
