@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any, List, Sequence, Tuple
 
-from src.dictation.asr.types import AsrResult, EngineCaps, TranscribeContext
+from src.dictation.asr.types import AsrResult, EngineCaps, ProviderUnavailable, TranscribeContext
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +45,19 @@ class ChainEngine:
 
     def transcribe(self, audio: Any, ctx: TranscribeContext) -> AsrResult:
         last_exc: Exception = RuntimeError("ChainEngine has no providers")
-        for name, engine in self._providers:
+        for entry in list(self._providers):
+            name, engine = entry
             try:
                 return engine.transcribe(audio, ctx)
+            except ProviderUnavailable as exc:
+                # Permanent until restart: drop it, or every later decode waits
+                # on the same rejection first. The last provider is kept so its
+                # error still reaches the caller.
+                if len(self._providers) > 1:
+                    # A fresh list, not remove(): the live and polish threads may share this chain.
+                    self._providers = [p for p in self._providers if p is not entry]
+                    logger.warning("ASR provider %r unavailable (%s); skipped until restart", name, exc)
+                last_exc = exc
             except Exception as exc:
                 logger.warning("ASR provider %r failed (%s); trying next", name, exc)
                 last_exc = exc

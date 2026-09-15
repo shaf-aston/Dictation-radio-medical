@@ -89,3 +89,12 @@ class TranscribeContext:
     want_word_confidence: bool = False
     # Reserved for M5 (lexicon-biased decoding); unused engines ignore it.
     hotwords: Optional[Sequence[str]] = None
+
+
+class ProviderUnavailable(RuntimeError):
+    """This engine cannot work until something outside the app changes.
+
+    A missing or rejected key, not a dropped connection: retrying it on the
+    next decode would only add a wasted round trip in front of every decode.
+    A chain skips such a provider until the app restarts.
+    """

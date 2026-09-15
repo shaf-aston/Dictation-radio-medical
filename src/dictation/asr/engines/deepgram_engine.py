@@ -28,7 +28,14 @@ from typing import Any, List, Optional, Tuple
 import numpy as np
 
 from src.core.keychain import clear_secret, get_secret, store_secret
-from src.dictation.asr.types import AsrResult, AsrSegment, EngineCaps, TranscribeContext, Word
+from src.dictation.asr.types import (
+    AsrResult,
+    AsrSegment,
+    EngineCaps,
+    ProviderUnavailable,
+    TranscribeContext,
+    Word,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +56,7 @@ _MAX_KEYWORDS = 100
 _KEYWORD_INTENSIFIER = 2.5
 
 
-class DeepgramMissingKeyError(RuntimeError):
+class DeepgramMissingKeyError(ProviderUnavailable):
     """No Deepgram API key in the OS keychain."""
 
 
@@ -127,6 +134,11 @@ class DeepgramEngine:
             },
             content=pcm,
         )
+        if response.status_code in (401, 403):
+            raise ProviderUnavailable(
+                f"Deepgram rejected the stored API key ({response.status_code}); "
+                "store a working one with deepgram_engine.store_api_key()"
+            )
         response.raise_for_status()
         return _to_result(response.json())
 
