@@ -12,14 +12,14 @@ be papered over:
   ``ctx.initial_prompt`` and ``ctx.hotwords`` are ignored and
   :meth:`capabilities` says ``hotwords=False``. Parakeet meets medical
   vocabulary with nothing but what it learned in training.
-* **Greedy decoding only.** ``ctx.beam_size`` is ignored — onnx-asr ships
+* **Greedy decoding only.** ``ctx.beam_size`` is ignored: onnx-asr ships
   greedy search for every architecture it supports.
 * **Its own VAD is not used.** ``ctx.vad_filter`` is ignored; the app's
   streaming layer (``dictation/stream/``) already owns segmentation.
 
 Word confidence *is* real here. Parakeet emits sub-word pieces with a log
-probability each, which merge into per-word probabilities — the same quantity
-faster-whisper reports — so :meth:`capabilities` honestly says
+probability each, which merge into per-word probabilities, the same quantity
+faster-whisper reports, so :meth:`capabilities` honestly says
 ``word_confidence=True``.
 
 Everything heavy is imported lazily: with ``onnx-asr`` absent the rest of the
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "nemo-parakeet-tdt-0.6b-v3"
 
 #: int8 by default: the fp32 encoder alone is 2.4 GB against 652 MB quantised,
-#: and faster-whisper already runs int8 on this CPU — matching the quantisation
+#: and faster-whisper already runs int8 on this CPU: matching the quantisation
 #: is what makes an engine comparison measure the engine.
 DEFAULT_QUANTIZATION = "int8"
 
@@ -126,7 +126,7 @@ def _as_input(audio: Any) -> Any:
     """Normalise the port's audio argument into something onnx-asr accepts.
 
     Returns ``None`` for empty audio so the caller can skip the model
-    entirely — a zero-length waveform crashes the log-mel preprocessor rather
+    entirely: a zero-length waveform crashes the log-mel preprocessor rather
     than transcribing to nothing.
     """
     if isinstance(audio, (str, Path)):
@@ -156,7 +156,7 @@ def _merge_pieces(
 
     Parakeet timestamps a piece's *start* only. A word therefore ends where the
     next one starts; the last word ends at its own start. Good enough to order
-    and locate words, not to measure the pause between them — which is why the
+    and locate words, not to measure the pause between them: which is why the
     streaming layer keeps owning segmentation.
     """
     if not tokens or not timestamps or not logprobs:

@@ -1,4 +1,4 @@
-"""Stages 1–2 — voice-edit commands and spoken punctuation.
+"""Stages 1–2: voice-edit commands and spoken punctuation.
 
 * ``apply_correction_commands`` handles ``"<word> correct word <new>"``
   and the bare ``"correct word <new>"`` forms.

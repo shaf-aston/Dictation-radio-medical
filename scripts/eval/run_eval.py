@@ -10,11 +10,11 @@
 Transcribes every clip in the chosen sets, runs the post-processing pipeline on
 the result, and scores three things the project could not previously see:
 
-* **WER** — the general yardstick.
-* **medical-term error rate** — WER restricted to curated radiology-lexicon
+* **WER**: the general yardstick.
+* **medical-term error rate**: WER restricted to curated radiology-lexicon
   terms. A report can post a decent WER while mangling every anatomical word
   in it, and this is the number that catches that.
-* **false-correction rate** — of the edits the post-processing pipeline made,
+* **false-correction rate**: of the edits the post-processing pipeline made,
   the share that took a *correct* word and made it wrong. The pipeline's own
   scoreboard, and the reason raw and processed text are both kept per clip.
 
@@ -49,7 +49,7 @@ from src.features.file_manager import eval_reports_dir
 
 logger = logging.getLogger(__name__)
 
-#: Metrics where a *lower* number is better — drives the direction of the
+#: Metrics where a *lower* number is better: drives the direction of the
 #: baseline delta arrows so a regression can never read as an improvement.
 _LOWER_IS_BETTER = {"wer", "term_error_rate", "false_correction_rate", "rtf",
                     "rtf_median", "rtf_p95", "decode_sec_total"}
@@ -108,7 +108,7 @@ class EngineRunner:
     Deliberately narrow: ``transcribe(path) -> (text, confidences, seconds)``.
     Routing through :func:`create_engine` rather than any concrete wrapper is
     what lets this one class evaluate a second engine (M3's ``parakeet``) by
-    changing only ``engine_name`` — and :func:`model_kwargs` keeps the
+    changing only ``engine_name``: and :func:`model_kwargs` keeps the
     engine-specific constructor argument names out of here.
     """
 
@@ -216,7 +216,7 @@ def summarise(results: List[ClipResult]) -> Dict[str, float]:
     """Aggregate clip results into the headline numbers.
 
     WER and term error rate are pooled over total word counts rather than
-    averaged per clip — a one-sentence clip must not carry the same weight as a
+    averaged per clip: a one-sentence clip must not carry the same weight as a
     ninety-word report. The real-time factor *is* a per-clip mean (plus p95),
     because that is how latency is actually experienced.
     """
@@ -247,7 +247,7 @@ def summarise(results: List[ClipResult]) -> Dict[str, float]:
         "false_corrections": false_corrections,
         "net_gain": true_fixes - false_corrections,
         "vetoed_spans": sum(len(r.vetoed_spans) for r in results),
-        # Wall-clock speed on this machine is genuinely noisy — the same 30
+        # Wall-clock speed on this machine is genuinely noisy: the same 30
         # clips have measured a 0.74 and a 1.00 mean RTF on consecutive runs,
         # with single clips ranging 0.5-2.4. The median is the number to compare
         # across milestones; the mean and p95 are kept because a long tail is
@@ -285,7 +285,7 @@ def evaluate_sets(
             # one is exactly the kind of flattering number this harness exists to
             # prevent.
             logger.warning(
-                "Set '%s': --limit %d of %d clip(s) — a PARTIAL score, not "
+                "Set '%s': --limit %d of %d clip(s): a PARTIAL score, not "
                 "comparable with a full run", name, limit, len(clips),
             )
             clips = clips[:limit]
@@ -430,7 +430,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--no-text", action="store_true",
                         help="omit per-clip transcripts from the report (smaller file)")
     parser.add_argument("--limit", type=int, default=0,
-                        help="score only the first N clips of each set — a fast, "
+                        help="score only the first N clips of each set: a fast, "
                              "PARTIAL run for comparing two configurations; never "
                              "quote its numbers as a set's score")
     args = parser.parse_args(argv)

@@ -1,8 +1,8 @@
-"""The patient-information schema — declared once.
+"""The patient-information schema: declared once.
 
 The same six fields were hand-listed in four places (desktop form reader, web
 API model, the de-identifier's PHI field set, and the report header). Adding a
-seventh field meant remembering all four — and the one that is easiest to
+seventh field meant remembering all four: and the one that is easiest to
 forget is the de-identifier, where an omission means an identifier is *not*
 scrubbed before upload. So the list lives here, and everything derives from it.
 
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
-# (key, human label) — the label is what a report header prints.
+# (key, human label): the label is what a report header prints.
 PATIENT_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("name", "Patient"),
     ("id", "Patient ID"),

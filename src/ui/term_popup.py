@@ -3,7 +3,7 @@
 Highlight a term in the report editor and a small panel appears beside it with
 two tiers: terms that could be what the word should have been (prominent), and
 terms that merely travel with it (quieter, below). Clicking one replaces the
-highlighted text. That is the only thing it can do to the report — nothing is
+highlighted text. That is the only thing it can do to the report: nothing is
 ever applied on its own.
 
 Both lists and their order come from :mod:`src.medical.term_lookup`, the same
@@ -14,7 +14,7 @@ decides nothing.
 Two behaviours matter as much as the lists:
 
 * **It never takes focus.** A tool window with ``WindowDoesNotAcceptFocus``
-  plus ``WA_ShowWithoutActivating`` — the radiologist keeps typing into the
+  plus ``WA_ShowWithoutActivating``: the radiologist keeps typing into the
   editor with the panel open.
 * **It never opens during dictation.** While a recording session still owns the
   region the text is being rewritten every second, and a panel pinned to moving

@@ -3,27 +3,27 @@
 When the radiologist highlights a term in the report, both front-ends ask this
 module for two short lists and show them side by side:
 
-* **similar spelling** — curated radiology terms within a small edit distance of
+* **similar spelling**: curated radiology terms within a small edit distance of
   the highlighted word, found with the SymSpell index the fuzzy corrector
   already builds (:mod:`src.medical.medical_dict`). Only terms from
   ``src/resources/radiology_lexicon.txt`` are ever offered, for the same reason
   the corrector only snaps to that file: the broad 98k generic wordlist is full
   of chemistry and drug-name junk.
-* **related** — terms that travel with it. Two layers, both offline:
-  1. *stem families mined from the lexicon itself* — the shared prefix/suffix
+* **related**: terms that travel with it. Two layers, both offline:
+  1. *stem families mined from the lexicon itself*: the shared prefix/suffix
      inventory is counted from the file at load time, never hardcoded, so
      ``pneumothorax`` finds ``haemothorax`` and ``pneumomediastinum`` without
      anyone writing that pair down;
   2. *curated relations* (``src/resources/related_terms.json``) for the pairs a
-     stem cannot reach — ``pneumothorax`` -> ``chest drain``. That file is the
+     stem cannot reach: ``pneumothorax`` -> ``chest drain``. That file is the
      place to extend this, and it holds the tuning knobs too.
 
-**Related terms are associative hints for finding a word — not clinical
+**Related terms are associative hints for finding a word: not clinical
 guidance.** They are not a differential, not advice, and nothing here is ever
 applied to the report on its own; the front-ends only offer them, the
 radiologist chooses.
 
-Layer rules: pure — no Qt, no HTTP, no settings. It never raises into a caller
+Layer rules: pure: no Qt, no HTTP, no settings. It never raises into a caller
 either; any internal failure is logged and returns empty lists, because a
 lookup panel that cannot answer must not be able to interrupt dictation.
 """
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 #: ("ground-glass", "full-thickness").
 _WORD = re.compile(r"[a-z]+(?:-[a-z]+)*")
 
-#: The same shape, but over the report as written — a scan needs the offsets of
+#: The same shape, but over the report as written: a scan needs the offsets of
 #: "Pneumothorax" as much as of "pneumothorax". Lookups stay lowercase.
 _WORD_IN_TEXT = re.compile(r"[A-Za-z]+(?:-[A-Za-z]+)*")
 
@@ -60,7 +60,7 @@ _WORD_IN_TEXT = re.compile(r"[A-Za-z]+(?:-[A-Za-z]+)*")
 class Suggestion:
     """One offered term, with the short reason it was offered.
 
-    ``note`` is what the UI prints under the term — the shared stem
+    ``note`` is what the UI prints under the term: the shared stem
     (``-thorax``) or the curated group's name (``chest trauma``). It exists so a
     suggestion never has to be taken on trust.
     """
@@ -87,7 +87,7 @@ class TermLookup:
     """The answer for one highlighted selection. Either list may be empty."""
 
     query: str
-    #: The single word the lists were actually built from — for a multi-word
+    #: The single word the lists were actually built from: for a multi-word
     #: selection this is the head word, so the UI can say what it looked up.
     key: str = ""
     similar_spelling: List[Suggestion] = field(default_factory=list)
@@ -114,7 +114,7 @@ class _Index:
 _INDEX: Optional[_Index] = None
 _LOCK = threading.Lock()
 
-#: Used only if the resource file is missing or unreadable — the module still
+#: Used only if the resource file is missing or unreadable: the module still
 #: answers, it just answers from the lexicon alone.
 _FALLBACK_TUNING: Dict[str, int] = {
     "max_query_chars": 60,
@@ -138,7 +138,7 @@ def _load_relations() -> Tuple[Dict[str, int], list]:
     try:
         raw = json.loads(related_terms_path().read_text(encoding="utf-8"))
     except Exception as exc:
-        logger.warning("Could not read related_terms.json (%s) — related terms "
+        logger.warning("Could not read related_terms.json (%s): related terms "
                        "fall back to lexicon stems only", exc)
         return dict(_FALLBACK_TUNING), []
 
@@ -156,7 +156,7 @@ def _build_families(lexicon: Sequence[str], tuning: Dict[str, int]) -> Dict[Tupl
     the word behind to be one, is counted across the whole file. A stem shared
     by two-to-a-dozen terms is a neighbourhood (``-thorax``, ``pneumo-``); one
     shared by fifty is grammar (``-ular``, ``-itis``) and is dropped by the
-    family-size ceiling — which is why no list of morphemes is written down
+    family-size ceiling: which is why no list of morphemes is written down
     anywhere in this repo.
     """
     lo = tuning["min_morpheme_chars"]
@@ -269,13 +269,13 @@ def _similar_spelling(key: str, index: _Index) -> List[Suggestion]:
     """Curated lexicon terms within the edit-distance ceiling of *key*.
 
     Runs against the shared SymSpell index (built over the full membership
-    wordlist) and then keeps only lexicon terms — the same "correct toward
+    wordlist) and then keeps only lexicon terms: the same "correct toward
     radiology, never toward the generic junk" rule the fuzzy corrector follows.
     """
     sym = get_symspell()
     if sym is None:
         return []
-    from symspellpy import Verbosity  # noqa: PLC0415 — optional dep, lazy
+    from symspellpy import Verbosity  # optional dep, lazy  # noqa: PLC0415
 
     hits = sym.lookup(
         key, Verbosity.ALL,
@@ -295,7 +295,7 @@ def _stem_related(key: str, index: _Index) -> Dict[str, Tuple[Tuple[int, int], s
     """Lexicon terms sharing a mined stem with *key*, scored by how specific it is.
 
     A longer stem is a stronger claim, and among equal stems a smaller family is
-    a closer neighbourhood — so the score is (stem length, -family size).
+    a closer neighbourhood: so the score is (stem length, -family size).
     """
     lo = index.tuning["min_morpheme_chars"]
     rest = index.tuning["min_remainder_chars"]
@@ -333,8 +333,8 @@ def _curated_related(terms: Sequence[str], index: _Index) -> List[Suggestion]:
 def lookup(text: str) -> TermLookup:
     """The two suggestion lists for a highlighted word or short phrase.
 
-    Never raises: an empty, over-long, or unrecognisable selection — and any
-    internal failure — comes back as empty lists.
+    Never raises: an empty, over-long, or unrecognisable selection, and any
+    internal failure, comes back as empty lists.
     """
     try:
         return _lookup(text)
@@ -393,29 +393,29 @@ def _lookup(text: str) -> TermLookup:
 
 
 # ---------------------------------------------------------------------------
-# Marking — which words are worth highlighting in the first place
+# Marking: which words are worth highlighting in the first place
 # ---------------------------------------------------------------------------
 
 def suspect_terms(text: str) -> List[Span]:
     """The words in *text* a reader should look at, with their offsets.
 
     Highlighting a word already answers it (:func:`lookup`); this answers the
-    question before it — *which* word. Without it the feature is invisible: you
+    question before it: *which* word. Without it the feature is invisible: you
     have to suspect a word to select it, and the words worth suspecting are
     exactly the ones that read as plausible.
 
     A word is marked only when **all three** hold:
 
     * it is not standard English (:func:`~src.medical.medical_dict.is_english_word`)
-      — the same guard the fuzzy corrector uses, and the reason "There" is not
+: the same guard the fuzzy corrector uses, and the reason "There" is not
       marked merely because "teres" is one edit away;
-    * the membership wordlist does not know it either — the "is this already a
+    * the membership wordlist does not know it either: the "is this already a
       real word? leave it alone" test; and
     * :func:`_similar_spelling` can name at least one curated lexicon term it
       might have been.
 
     The last is the point. A mark that opens onto an empty popup is a dead end,
-    and a reader who hits two of those stops trusting the marks — so an
+    and a reader who hits two of those stops trusting the marks: so an
     unusual-looking word with nothing to offer is left unmarked.
 
     Never raises: any failure comes back as no marks, because the report must
@@ -434,7 +434,7 @@ def _suspect_terms(text: str) -> List[Span]:
     # Without the English guard every ordinary word ("there", "again") whose
     # neighbourhood happens to hold a medical term would be marked. A report
     # speckled with wrong marks is worse than no marks, so the feature switches
-    # itself off rather than degrade — medical_dict warns loudly, once.
+    # itself off rather than degrade: medical_dict warns loudly, once.
     if is_english_word("the") is None:
         return []
 

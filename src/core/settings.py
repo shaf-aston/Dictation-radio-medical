@@ -22,7 +22,7 @@ _DEFAULTS: dict = {
     # on the `tts` gold set at 0.90 the gate blocked two rewrites and both were
     # correct ones, so it could only subtract. Whisper is confidently wrong often
     # enough that its confidence does not separate a misheard word from a heard
-    # one — at least not on synthetic audio, where every word scores high.
+    # one: at least not on synthetic audio, where every word scores high.
     # Set a float to switch it on; the honest test is the `own` set, real
     # acoustics, where confidence actually varies. See docs/dictation-accuracy.md.
     "correction_confidence_ceiling": None,
@@ -35,15 +35,22 @@ _DEFAULTS: dict = {
     # shorter than chunk_min_sec, cut at the latest pause found by
     # chunk_soft_max_sec if one exists, otherwise force-cut at
     # chunk_force_cut_sec regardless of whether a pause was found (the only
-    # case that can land mid-word — see ChunkPolicy's docstring).
+    # case that can land mid-word: see ChunkPolicy's docstring).
     "chunk_min_sec": 6.0,
     "chunk_soft_max_sec": 15.0,
     "chunk_force_cut_sec": 20.0,
+    # The last thing said before a pause used to wait for the speaker to start
+    # talking again, because a cut point had to be a pause with more speech
+    # after it to prove the silence was real. Now the clock proves it instead:
+    # once this much audio has arrived with no speech in it, the pause counts.
+    # Raise it if a mid-sentence breath is closing chunks; lower it to commit
+    # sooner when someone stops to read the film.
+    "chunk_trailing_silence_sec": 0.6,
     # --- Live transcription decode quality (see src/dictation/worker.py) ---
     "live_beam_size": 2,        # beam=1 caused repetition; beam=2 still real-time
     # Every decode that is not the live loop: the desktop's post-stop polish and
     # the web app's one-shot upload. Both are "transcribe this once, properly",
-    # so they share one knob — the web app used to have its own copy of it.
+    # so they share one knob: the web app used to have its own copy of it.
     "final_beam_size": 5,
     # The live preview of the still-open tail is dropped once that tail is
     # longer than this AND the machine is measured to decode slower than speech
@@ -51,14 +58,40 @@ _DEFAULTS: dict = {
     # committed, so this trades early sight of a few words for the committed
     # chunks arriving on time. 0 keeps the preview no matter how far behind.
     "preview_max_lag_sec": 3.0,
+    # A preview decode costs the same whatever it is handed, because Whisper
+    # pads every clip to a 30-second window. So decoding a tail that is barely
+    # started spends a full decode to show almost nothing, and delays the first
+    # real preview by that much. Measured: the opening cycle decoded 0.048s of
+    # audio for 1.15s of machine. Below this many seconds of open tail, wait.
+    "preview_min_tail_sec": 1.0,
     # committed chunks below this mean word confidence get one re-decode after stop
     "polish_confidence_ceiling": 0.75,
-    "silence_rms_floor": 0.002,  # skip live cycles quieter than this (anti-hallucination)
+    # A single word below this confidence gets a faint underline in the report.
+    # Lower than polish_confidence_ceiling on purpose: that one decides whether
+    # a whole chunk is worth re-decoding, this one decides whether one word is
+    # worth a second look from the radiologist, and marking every third word
+    # would make the marks worth nothing.
+    "uncertain_word_confidence": 0.6,
+    # Hard safety-net minimum below which a clip is always silence, however
+    # quiet the room has been. The working threshold is adaptive above this,
+    # see silence_rms_margin (rules.AdaptiveFloor), so a quiet talker isn't
+    # judged against a level tuned for someone else's voice.
+    "silence_rms_floor": 0.0005,
+    # A clip counts as silence only when it is this many times quieter than
+    # the session's own learned ambient level, not against one fixed number.
+    "silence_rms_margin": 2.5,
     "autosave_retention_days": 30,  # days to keep autosave files
     # --- Web front-end (src/ui/web_app.py) ---
-    "web_host": "127.0.0.1",    # loopback only — the app is offline by default
+    "web_host": "127.0.0.1",    # loopback only: the app is offline by default
     "web_port": 8005,
     "max_upload_mb": 50,        # reject audio uploads larger than this
+    # Two models, one dictation. This small one decodes the words that appear
+    # while you are still speaking; `model_size` above re-decodes after Stop,
+    # where being right matters more than being quick. Whisper's model cache
+    # holds two (transcriber._MODEL_CACHE_MAX), so this pair costs no reloads:
+    # naming a third distinct model here would make them evict each other.
+    "live_model_size": "tiny.en",
+    "live_cycle_sec": 0.5,      # how often the live loop looks for new audio
     "recent_reports": [],
     "patient_info_visible": True,
     "macros_panel_visible": True,
@@ -75,9 +108,13 @@ _DEFAULTS: dict = {
     # Local diagnostics: one record per dictation. Capped because each record
     # can hold a full report, and rolling beats growing without limit.
     "run_log_max": 200,
-    # The report text alongside the numbers — that output is the point of the
+    # The report text alongside the numbers: that output is the point of the
     # page. Turn off to keep every timing and drop only the body.
     "run_log_store_text": True,
+    # --- Live event diary (core/event_log.py, shown in the developer panel) ---
+    # How many recent events the in-memory diary keeps. It is a ring buffer, so
+    # this is the scroll-back length of the developer console, nothing more.
+    "event_log_max": 1000,
     "last_template": "",
     "last_macro_region": "Knee",
     "window_width": 1200,
@@ -99,7 +136,7 @@ _DEFAULTS: dict = {
 
 
 def get_default(key: str) -> Any:
-    """The shipped default for *key* — the single source of truth for defaults.
+    """The shipped default for *key*: the single source of truth for defaults.
 
     Callers that mirror settings elsewhere (the web client's preferences
     payload) read defaults from here rather than re-listing them, which is how

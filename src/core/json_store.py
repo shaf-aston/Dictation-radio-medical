@@ -3,7 +3,7 @@
 ``Settings``, ``ModelRegistry``, ``DatasetRegistry``, the imaging threshold
 loader, adaptive learning, macros, the audit log, and edit tracking each
 hand-rolled the same "read JSON with a fallback default; write JSON, creating
-parent directories" skeleton — including its error handling, which is the part
+parent directories" skeleton: including its error handling, which is the part
 that was easiest to get subtly wrong. This module is that skeleton, written
 once: whole-document JSON (:func:`read_json` / :func:`write_json`) and
 append-only JSON Lines (:func:`append_jsonl` / :func:`read_jsonl`).
@@ -37,13 +37,13 @@ def write_json(path: Path, data: Any) -> None:
     """Write *data* as indented JSON to *path*, creating parent directories.
 
     Written atomically (temp file + ``os.replace``) so a crash mid-write can
-    never leave a truncated file — a corrupt registry/settings file is silently
+    never leave a truncated file: a corrupt registry/settings file is silently
     read back as the empty default, losing the active fine-tuned-model pointer.
 
     The temp file gets a name unique to this writer rather than ``<target>.tmp``.
     These files have more than one writer: the desktop app and the web app run
     against the same ``dictation_settings.json``, which is why ``Settings`` has a
-    ``refresh()`` at all. With a single shared temp name two writers collide —
+    ``refresh()`` at all. With a single shared temp name two writers collide:
     the second ``os.replace`` finds the file already consumed, or, worse, moves a
     half-written temp over the target. That is the exact corruption this function
     exists to prevent, so a shared name would defeat its own purpose.

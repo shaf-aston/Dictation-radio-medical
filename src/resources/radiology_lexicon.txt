@@ -1,10 +1,10 @@
-# Radiology lexicon — the curated "right book" for spelling correction.
+# Radiology lexicon: the curated "right book" for spelling correction.
 #
 # This is the authoritative, radiology-focused vocabulary the fuzzy
 # spelling-corrector (dictation/postprocess/medical_dict_match.py, stage 7)
 # snaps a mis-transcribed word to. It is deliberately SMALL and CLEAN: every
 # line is a real radiology term a radiologist actually dictates, so a typo can
-# only ever be "corrected" toward a genuine term — never toward the chemistry,
+# only ever be "corrected" toward a genuine term: never toward the chemistry,
 # drug-name, and obscure-procedure junk that pollutes the broad 98k generic
 # medical wordlist (src/resources/medical_terms.txt).
 #
@@ -15,7 +15,7 @@
 # Format: one term per line, lowercase, singular/base form preferred (the
 # corrector's inflection guard handles plurals/tenses). Lines beginning with
 # '#' and blank lines are ignored. Keep it sorted within each section and add
-# the term, never a misspelling — this file is the spelling authority.
+# the term, never a misspelling: this file is the spelling authority.
 #
 # Specialty weighting: chest (the app's trauma focus) and MSK are the deepest
 # sections, then abdomen/pelvis, neuro, vascular, and shared descriptors.
@@ -128,7 +128,7 @@ vascularity
 doppler
 
 # ---------------------------------------------------------------------------
-# Chest / thorax (trauma focus — deepest section)
+# Chest / thorax (trauma focus: deepest section)
 # ---------------------------------------------------------------------------
 thorax
 thoracic

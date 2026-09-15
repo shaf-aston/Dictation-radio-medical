@@ -1,11 +1,11 @@
-"""Dictation edit tracking — the "was the dictation itself wrong?" signal.
+"""Dictation edit tracking: the "was the dictation itself wrong?" signal.
 
 When a radiologist edits the text *after* dictation has finished, that edit is
 the highest-quality evidence the dictation + correction pipeline got something
 wrong: the clinician literally fixed it. Nothing captured this in an analysable
 form. The existing single-word passive learner
 (:meth:`adaptive_learning.track_edit`) only kept same-length one-word swaps and
-fed them straight into the live correction map — it dropped multi-word fixes,
+fed them straight into the live correction map: it dropped multi-word fixes,
 insertions and deletions, and left no record to mine.
 
 This module snapshots the dictation OUTPUT and, when the report is committed
@@ -21,7 +21,7 @@ Privacy & scope:
 * **Consent-aligned.** Gated on the ``learning_enabled`` setting (default on);
   turning it off stops all capture.
 * **Minimal.** Only the changed token spans plus a few words of context are
-  stored — never the whole report — and the log can be reset.
+  stored, never the whole report, and the log can be reset.
 * **Lossless / never fatal.** Any failure is swallowed; tracking must never
   interrupt dictation or block a save.
 """
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 # A single edit whose changed side is longer than this many tokens is almost
 # certainly a wholesale rewrite or a pasted template block, not a dictation fix
-# worth mining — so we skip it to keep the signal clean.
+# worth mining: so we skip it to keep the signal clean.
 _MAX_SPAN_TOKENS = 8
 # Words of surrounding context kept on each side, so a reviewer (and the miner)
 # can see how a change was used without storing the whole sentence.
@@ -66,8 +66,8 @@ def diff_edits(
 
     Word-level :class:`difflib.SequenceMatcher` opcodes are turned into one
     record per changed span. ``op`` is ``replace`` (dictation said X, became Y),
-    ``delete`` (X removed) or ``insert`` (Y added). Unchanged regions — e.g. a
-    surrounding template — produce nothing. Spans longer than *max_span* tokens
+    ``delete`` (X removed) or ``insert`` (Y added). Unchanged regions: e.g. a
+    surrounding template: produce nothing. Spans longer than *max_span* tokens
     on the changed side are dropped as likely rewrites rather than fixes.
     """
     a = before.split()

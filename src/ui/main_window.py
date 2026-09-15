@@ -1,4 +1,4 @@
-"""Main application window — layout assembly and event dispatch."""
+"""Main application window: layout assembly and event dispatch."""
 
 from __future__ import annotations
 
@@ -31,9 +31,11 @@ from src.core.patient_schema import normalize_patient_info
 from src.features.file_manager import report_filename
 from src.ui.collapsible import Section
 from src.ui.status import StatusTrack
+from src.ui.finding_marks import FindingGutter
 from src.ui.term_marks import TermMarks
 from src.ui.term_popup import TermPopup
-from src.ui.styles import DARK, LIGHT, set_status_state
+from src.ui.styles import DARK, LIGHT, set_findings_state, set_status_state
+from src.features.report_release import OutstandingFindings
 from src.dictation.worker import STATE_CATCHING_UP, STATE_LIVE, STATE_LOADING
 from src.features.report_manager import (
     autosave_report, save_report_txt, export_to_word, DOCX_AVAILABLE
@@ -124,6 +126,8 @@ class MainWindow(QMainWindow):
     _macro_layout: QVBoxLayout
     template_combo: QComboBox
     editor: QTextEdit
+    finding_gutter: FindingGutter
+    _findings_pill: QLabel
     _info_words: QLabel
     btn_record: QPushButton
     btn_stop: QPushButton
@@ -161,6 +165,13 @@ class MainWindow(QMainWindow):
         # Sequence number of the one authoritative full-document pass submitted
         # after recording stops; None while no such pass is outstanding.
         self._final_seq: Optional[int] = None
+        # Sequence number of the pass that hands the live text straight back at
+        # Stop, ahead of the polish. Applying it is what re-enables Record.
+        self._handback_seq: Optional[int] = None
+        # The report exactly as it was handed back at Stop. If the editor no
+        # longer matches it when the polish lands, the radiologist has edited
+        # it and the polished version is dropped rather than overwriting them.
+        self._handed_over_text: Optional[str] = None
         # Where the dictated region starts. A QTextCursor, not an integer: Qt
         # moves it along when text is inserted before it, so loading a template
         # or typing into a form field mid-recording can no longer leave the
@@ -185,18 +196,25 @@ class MainWindow(QMainWindow):
         # one (src/ui/status.py).
         self._status = StatusTrack()
 
+        # Which critical findings this report has and which have been answered
+        # for. Built before the UI because the gutter and the count pill are
+        # two views of this one object, and the release gate updates it: the
+        # rule itself lives in the shared service, not in this front-end.
+        self.findings = OutstandingFindings()
+
         build_ui(self)
         self.patient_section.toggled.connect(self._on_patient_section_toggled)
         self.template_section.toggled.connect(self._on_template_section_toggled)
         self.settings_section.toggled.connect(self._on_settings_section_toggled)
         # Highlight a term in the editor and its neighbourhood appears beside
         # it. Owned here rather than in build_ui because it needs
-        # dictation_active() — it stays shut while the text is being rewritten.
+        # dictation_active(): it stays shut while the text is being rewritten.
         self.term_popup = TermPopup(self.editor, self.dictation_active, self)
-        # And the marks that say which word to highlight — without them the
+        # And the marks that say which word to highlight: without them the
         # popup only helps someone who already suspects the word.
         self.term_marks = TermMarks(self.editor, self.dictation_active, self)
         self.term_marks.changed.connect(self._on_marks_changed)
+        self.finding_gutter.changed.connect(self._on_findings_changed)
         self.term_popup.applied.connect(self._on_lookup_used)
         build_menu(self)
         self._setup_shortcuts()
@@ -273,18 +291,24 @@ class MainWindow(QMainWindow):
             # Warm the model the recording worker will actually load: an active
             # fine-tuned directory overrides model_size (recording_session
             # passes it to LiveTranscribeWorker), and the process-wide model
-            # cache is keyed on that reference — warming the stock model while
+            # cache is keyed on that reference: warming the stock model while
             # a fine-tune is active would miss the cache AND pin an unused
             # model in RAM.
             from src.ui.recording_session import _active_model_path
 
             active_model = _active_model_path()
-            warm_up_async(postprocess_warmers() + [
+            warmers = postprocess_warmers() + [
                 transcriber_warmer(
                     model_size,
                     model_path=str(active_model) if active_model else None,
                 )
-            ])
+            ]
+            # The live model writes the first words on screen: leaving it lazy
+            # makes the first dictation after every launch stall on its load.
+            live_model_size = resolve_model(self.settings.get("live_model_size"))
+            if live_model_size != model_size or active_model:
+                warmers.append(transcriber_warmer(live_model_size))
+            warm_up_async(warmers)
         except Exception as exc:  # warm-up is an optimisation, never fatal
             logger.debug("Could not start dictation warm-up: %s", exc)
 
@@ -318,7 +342,7 @@ class MainWindow(QMainWindow):
                 logger.debug("Could not schedule report analysis: %s", exc)
 
     def _on_model_available(self, version: str) -> None:
-        """A fine-tuned model finished training — offer to activate it."""
+        """A fine-tuned model finished training: offer to activate it."""
         try:
             from src.ui.dialogs import show_model_update_notification
             show_model_update_notification(self, version)
@@ -355,9 +379,10 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.setStyleSheet(DARK if theme == "dark" else LIGHT)  # type: ignore[union-attr]
-        # Extra selections are painted in code, so the stylesheet cannot reach
-        # them — the marks are told the theme explicitly.
+        # Extra selections and the gutter marks are painted in code, so the
+        # stylesheet cannot reach them: both are told the theme explicitly.
         self.term_marks.set_theme(theme)
+        self.finding_gutter.set_theme(theme)
         if self.settings.get("theme") != theme:
             self.settings.set("theme", theme)
 
@@ -382,11 +407,32 @@ class MainWindow(QMainWindow):
             return
         noun = "word" if count == 1 else "words"
         if self.settings.get("term_lookup_uses", 0) < self._hint_ceiling():
-            text = f"{count} {noun} to check — highlight one to see alternatives"
+            text = f"{count} {noun} to check: highlight one to see alternatives"
         else:
             text = f"{count} {noun} to check"
         self._info_marks.setText(text)
         self._info_marks.show()
+
+    def _on_findings_changed(self, count: int) -> None:
+        """Say, always and without opening anything, what this report contains.
+
+        Three readings, and only one of them is loud: a clean report is a quiet
+        "No findings" rather than a red zero, because a warning shown every
+        session is a warning nobody reads by the time it matters.
+        """
+        state = self.findings.state
+        if count == 0:
+            text = "No findings"
+        else:
+            outstanding = len(self.findings.outstanding)
+            shown = outstanding or count
+            noun = "finding" if shown == 1 else "findings"
+            text = (
+                f"{shown} {noun} to communicate" if outstanding
+                else f"{shown} {noun} acknowledged"
+            )
+        self._findings_pill.setText(text)
+        set_findings_state(self._findings_pill, state)
 
     def _hint_ceiling(self) -> int:
         return int(self.settings.get("term_lookup_hint_uses", 3) or 3)
@@ -427,7 +473,7 @@ class MainWindow(QMainWindow):
 
     # Toggles read the saved setting rather than the widget. Qt reports a child
     # as not visible whenever any ancestor is hidden, so asking the widget
-    # inverts the wrong value before the window is first shown — and the setting
+    # inverts the wrong value before the window is first shown: and the setting
     # is the single writer for this state anyway.
     def on_toggle_patient_panel(self) -> None:
         self._set_patient_panel_visible(not self.settings.get("patient_info_visible", True))
@@ -564,6 +610,7 @@ class MainWindow(QMainWindow):
                 return
         self.flush_dictation_edits()
         self.editor.clear()
+        self._start_new_report_findings()
         self.patient_name.clear()
         self.patient_id.clear()
         self.patient_dob.clear()
@@ -575,7 +622,18 @@ class MainWindow(QMainWindow):
     def _load_report_from_path(self, path: str) -> None:
         with open(path, "r", encoding="utf-8") as fh:
             self.editor.setPlainText(fh.read())
+        self._start_new_report_findings()
         self._show_status(f"Opened: {os.path.basename(path)}", 2000, state="ok")
+
+    def _start_new_report_findings(self) -> None:
+        """Forget the previous report's findings and its acknowledgements.
+
+        Acknowledgement answers "has this been phoned through for *this*
+        patient". Carrying them into the next report would show the next
+        patient's identical finding as already communicated.
+        """
+        self.findings.reset()
+        self.finding_gutter.refresh()
 
     def on_open_report(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -607,7 +665,7 @@ class MainWindow(QMainWindow):
         # Before the file dialog: these are the questions worth full attention,
         # and asking them once someone has already picked a filename catches them
         # in "just save it" mode. Acknowledging and then cancelling the dialog
-        # only over-records — the acknowledgement did happen, and the release
+        # only over-records: the acknowledgement did happen, and the release
         # itself is logged separately by _post_save.
         if not confirm_release(self):
             return
@@ -635,7 +693,7 @@ class MainWindow(QMainWindow):
                 "  pip install python-docx"
             )
             return
-        if not confirm_release(self):  # before the dialog — see on_save_txt
+        if not confirm_release(self):  # before the dialog: see on_save_txt
             return
         default = self._default_filename(".docx")
         path, _ = QFileDialog.getSaveFileName(
@@ -655,6 +713,7 @@ class MainWindow(QMainWindow):
         if self.editor.toPlainText().strip():
             audit_log.log_report_cleared(self._get_patient_info().get("id", ""))
         self.editor.clear()
+        self._start_new_report_findings()
 
     # ------------------------------------------------------------------
     # Recent reports menu
@@ -676,7 +735,7 @@ class MainWindow(QMainWindow):
     #
     # These MUST be bound methods of this QObject, not lambdas. A signal
     # connected to a plain callable has no receiver thread affinity, so Qt
-    # invokes it in the *emitting* thread — which for the transcription and
+    # invokes it in the *emitting* thread: which for the transcription and
     # post-process workers means touching QTextEdit from a background thread.
     # Binding them here gives Qt a UI-thread receiver, so it queues the call.
     # ------------------------------------------------------------------
@@ -722,7 +781,7 @@ class MainWindow(QMainWindow):
     def _show_status(self, message: str, timeout: int = 0, state: str = "idle") -> None:
         """Say what the app is doing, in the status bar and on the state pill.
 
-        ``timeout`` reverts to Ready — but only if nothing newer has been shown
+        ``timeout`` reverts to Ready: but only if nothing newer has been shown
         since. Without the generation counter a 5-second tip posted before Stop
         would fire in the middle of finalising and claim the app was idle while
         it was still working.
@@ -743,7 +802,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(timeout, partial(self._clear_status, generation))
 
     def _clear_status(self, generation: int) -> None:
-        """Revert a timed message — to Ready, or back to the work still running.
+        """Revert a timed message: to Ready, or back to the work still running.
 
         A short message shown mid-dictation (a clipping warning, a correction
         count) must not leave the app claiming to be idle while the worker is
@@ -761,7 +820,14 @@ class MainWindow(QMainWindow):
         self._info_words.setText(f"Words: {word_count}  |  Lines: {line_count}")
         self._wordcount_label.setText(f"Words: {word_count}")
 
-        # Passive learning: track user edits (debounced — fires 500 ms after
+        # The single "the report changed" funnel: editor.textChanged reaches
+        # here, and so do the dictation writes that block that signal and call
+        # this method by hand. Both overlays hang off it rather than off
+        # textChanged, so neither can miss a dictated report.
+        self.finding_gutter.schedule_refresh()
+        self.term_marks.schedule_rescan()
+
+        # Passive learning: track user edits (debounced: fires 500 ms after
         # the last keystroke rather than on every character).
         if (not self.recorder.is_recording
                         and self._last_editor_text
@@ -780,7 +846,7 @@ class MainWindow(QMainWindow):
         Called at every commit point (export, save, clear, open, close, and the
         start of the next recording). Compares the snapshot taken when dictation
         finished against the current editor text and records the radiologist's
-        edits — the signal for whether dictation itself was mistaken. Cleared
+        edits: the signal for whether dictation itself was mistaken. Cleared
         after flushing so each session is logged once.
         """
         snapshot = self._post_dictation_snapshot

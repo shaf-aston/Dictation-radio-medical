@@ -60,7 +60,7 @@ _WINDOW = 70  # character window to scan before/after term
 # Critical term lists
 # ---------------------------------------------------------------------------
 
-# Level 1 — life-threatening, immediate verbal communication required
+# Level 1: life-threatening, immediate verbal communication required
 _LEVEL_1_TERMS: List[str] = [
     "tension pneumothorax",
     "pneumothorax",
@@ -101,7 +101,7 @@ _LEVEL_1_TERMS: List[str] = [
     "myocardial infarction",
 ]
 
-# Level 2 — urgent, same-day communication required
+# Level 2: urgent, same-day communication required
 _LEVEL_2_TERMS: List[str] = [
     "pulmonary embolism",
     "filling defect",
@@ -171,6 +171,10 @@ class CriticalFinding:
     negated: bool
     uncertain: bool
     context: str      # surrounding text snippet for display
+    # Where the term sits in the scanned text, so a front-end can point at it
+    # without searching for the words again and finding a different occurrence.
+    start: int = 0
+    end: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -197,13 +201,20 @@ def scan_for_critical_findings(text: str) -> List[CriticalFinding]:
     """
     findings: List[CriticalFinding] = []
     seen_terms: set = set()
+    #: Where an accepted finding already sits. Terms are matched longest first,
+    #: so "acute appendicitis" claims the words before plain "appendicitis" can
+    #: report the same phrase a second time: one clinical problem, one finding.
+    claimed: List[Tuple[int, int]] = []
 
     for pattern, level in _TERM_PATTERNS:
         for m in pattern.finditer(text):
             term_key = m.group(0).lower()
             if term_key in seen_terms:
                 continue
-            seen_terms.add(term_key)
+            # Checked before the term is marked seen, so a phrase inside a
+            # longer finding here can still be reported where it stands alone.
+            if any(m.start() < end and start < m.end() for start, end in claimed):
+                continue
 
             negated, uncertain = _check_negation(text, m.start(), m.end())
 
@@ -215,6 +226,14 @@ def scan_for_critical_findings(text: str) -> List[CriticalFinding]:
                 # Only report if the negation itself is uncertain
                 continue
 
+            # Marked seen only once the mention is ACCEPTED. Marking it above,
+            # before the negation checks, meant a denial silenced every later
+            # real mention of the same term, and "no pneumothorax on the prior
+            # film ... large right pneumothorax" is ordinary report prose, so the
+            # whole report scanned clear and no acknowledgement was ever asked
+            # for. A rejected mention must leave no trace.
+            seen_terms.add(term_key)
+
             ctx_start = max(0, m.start() - 45)
             ctx_end   = min(len(text), m.end() + 45)
             context   = "…" + text[ctx_start:ctx_end].strip() + "…"
@@ -225,7 +244,10 @@ def scan_for_critical_findings(text: str) -> List[CriticalFinding]:
                 negated=negated,
                 uncertain=uncertain,
                 context=context,
+                start=m.start(),
+                end=m.end(),
             ))
+            claimed.append((m.start(), m.end()))
 
     # Sort: Level 1 first, then certain before uncertain
     findings.sort(key=lambda f: (f.level, f.uncertain))
@@ -238,9 +260,9 @@ def format_findings_for_dialog(findings: List[CriticalFinding]) -> str:
     for f in findings:
         qualifier = ""
         if f.uncertain:
-            qualifier = " [UNCERTAIN — cannot exclude]"
+            qualifier = " [UNCERTAIN, cannot exclude]"
         elif f.negated:
-            qualifier = " [negated — verify context]"
+            qualifier = " [negated, verify context]"
         severity = "⚠ LIFE-THREATENING" if f.level == 1 else "⚠ URGENT"
         lines.extend(
             (

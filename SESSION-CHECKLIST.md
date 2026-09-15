@@ -1,6 +1,6 @@
 # Where things stand
 
-`feat/eval-instrument` is merged into `master` — the two are the same commit.
+`feat/eval-instrument` is merged into `master`: the two are the same commit.
 Work since then is on `claude/eval-instrument-merge-check-j6apr7`.
 Tests pass, lint clean, theme check clean.
 
@@ -21,18 +21,20 @@ where the theme check could not see them; the check now reads `app.js` /
 code again.
 
 | Second engine, measured | Parakeet available via `--engine parakeet`, default unchanged |
+| Critical findings visible without touching your words | thin gutter marks + always-visible count (`ui/finding_marks.py`) |
+| Acknowledgement stops leaking | now a property of the report, not a one-shot dialog (`features/report_release.py`) |
 
 **The engine verdict** (full table in `docs/dictation-accuracy.md`): Parakeet is
 5.2x faster and gets **twice as many anatomical words wrong** (term error 3.44 %
 → 7.12 %), so it is not the default. It also decodes with no radiology
-vocabulary at all, which Whisper does get — wiring that in is the experiment
+vocabulary at all, which Whisper does get: wiring that in is the experiment
 that would settle whether the speed is free.
 
 A speed claim from earlier sessions was wrong and is corrected in that doc:
 Whisper `small.en` decodes at **0.57x real time**, not 3x slower than speech.
 The live lag came from decoding the same audio repeatedly, which is fixed.
 
-## Landed since — marks, run log, /developer
+## Landed since: marks, run log, /developer
 
 | What you asked for | Where it landed |
 |---|---|
@@ -63,14 +65,25 @@ answer to "is this a real word?". The old private name is kept as an alias.
 
 - `run_log_store_text` defaults **on**, so report text sits in `data/runs.jsonl`
   (local, gitignored, capped at 200 runs). Set it false to keep every timing and
-  drop only the body — your call.
+  drop only the body: your call.
 - The long-vs-short table needs real runs of both lengths before it says
   anything. It is currently an empty frame waiting for use.
+
+### Open on the findings count
+
+The outstanding-findings rule lives in `features/report_release.py`, so the
+browser can adopt it without new logic: but its UI is **not wired**. The web is
+not unsafe (every exit still funnels through the 409 gate); it simply does not
+show the count the desktop now shows. Deferred deliberately rather than
+half-built.
 
 ## Blocked on you
 
 - **Record the `own` gold set** (~15 min): `python -m scripts.eval.build_sets --set own --record`.
   It is the only measurement made on your actual voice, and every accuracy
-  question — including whether Parakeet beats Whisper on anatomy — needs it.
+  question, including whether Parakeet beats Whisper on anatomy, needs it.
+- **Dictate one short report and one long one.** The long-vs-short table at
+  `/developer` is a working frame with no runs in it. Two dictations fill it, and
+  then the question is answered with numbers instead of architecture.
 - **Shell direction** for the desktop beyond One Surface (Console / Lightbox),
   if you want to go further than the current tidy.

@@ -1,14 +1,14 @@
 """Gold-set discovery and manifest I/O for dictation evaluation.
 
 A *gold set* is a directory under ``data/eval/<name>/`` containing audio clips
-and a ``manifest.jsonl`` — one JSON record per clip pairing it with its
+and a ``manifest.jsonl``: one JSON record per clip pairing it with its
 reference transcript. Four sets exist, and they measure genuinely different
 things; reporting them as one blended number would hide exactly the failures
 this harness is for:
 
 ``own``
     The user's own dictations, their microphone, their accent. The only set
-    that measures real acoustics. Irreplaceable — never auto-deleted.
+    that measures real acoustics. Irreplaceable: never auto-deleted.
 ``tts``
     Real radiology report text spoken by an offline synthesiser. Stresses
     medical vocabulary hard under *unrealistically clean* audio, so it scores
@@ -20,7 +20,7 @@ this harness is for:
 ``bench``
     The two clips already in ``data/bench_audio/``, once hand-corrected.
 
-Audio lives under ``data/`` which is gitignored — deliberate, since ``own`` is
+Audio lives under ``data/`` which is gitignored: deliberate, since ``own`` is
 the user's recorded voice and belongs in version control no more than a report
 does.
 """
@@ -38,7 +38,7 @@ from src.features.file_manager import eval_manifest_path, eval_set_dir
 logger = logging.getLogger(__name__)
 
 #: A reference carrying this marker is a machine transcription awaiting human
-#: correction, not ground truth. :func:`load_set` refuses to score against it —
+#: correction, not ground truth. :func:`load_set` refuses to score against it:
 #: grading a model on its own output produces a flattering number that measures
 #: nothing, and is exactly the kind of silent lie this harness exists to catch.
 UNREVIEWED_MARKER = "[UNREVIEWED]"
@@ -46,9 +46,9 @@ UNREVIEWED_MARKER = "[UNREVIEWED]"
 #: Every set the harness knows about, with a one-line description of what it
 #: measures. Adding a set means adding it here and to ``build_sets.py``.
 KNOWN_SETS: Dict[str, str] = {
-    "own": "user's own dictations — real acoustics, real accent",
-    "tts": "synthesised radiology reports — medical vocabulary, clean audio",
-    "libri": "public-domain read speech — general-English regression + RTF",
+    "own": "user's own dictations, real acoustics, real accent",
+    "tts": "synthesised radiology reports, medical vocabulary, clean audio",
+    "libri": "public-domain read speech, general-English regression + RTF",
     "bench": "existing data/bench_audio clips, hand-corrected",
 }
 
@@ -101,7 +101,7 @@ def write_manifest(set_name: str, clips: List[Clip], replace: bool = True) -> Pa
 def load_set(set_name: str) -> List[Clip]:
     """Read one gold set's manifest, skipping records whose audio is missing.
 
-    A missing file is reported loudly rather than silently dropped — a set that
+    A missing file is reported loudly rather than silently dropped: a set that
     quietly shrank would make a later run look better than it is.
     """
     path = eval_manifest_path(set_name)
@@ -141,7 +141,7 @@ def load_set(set_name: str) -> List[Clip]:
 
     if missing:
         logger.warning(
-            "Set '%s': %d manifest entries have no audio file (%s%s) — "
+            "Set '%s': %d manifest entries have no audio file (%s%s): "
             "scores cover only the %d clips that were found",
             set_name, len(missing), ", ".join(missing[:3]),
             "..." if len(missing) > 3 else "", len(clips),
@@ -187,7 +187,7 @@ def audio_duration(path: Path) -> float:
 
 
 def _relative_to(path: Path, base: Path) -> str:
-    """Path relative to *base* when possible, else absolute — as a POSIX string."""
+    """Path relative to *base* when possible, else absolute: as a POSIX string."""
     try:
         return path.resolve().relative_to(base.resolve()).as_posix()
     except ValueError:

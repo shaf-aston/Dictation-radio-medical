@@ -7,8 +7,8 @@ model type. It supplies the three things that genuinely differ per model:
   2. how to describe the Lightning job that trains on that archive (``job_spec``);
   3. the ``task_type`` tag its produced models carry in the registry.
 
-Everything else — uploading the archive, polling the job, downloading and
-extracting the artifact, registering the model version — lives in the framework
+Everything else, uploading the archive, polling the job, downloading and
+extracting the artifact, registering the model version, lives in the framework
 and is identical across tasks.
 """
 

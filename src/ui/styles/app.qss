@@ -1,8 +1,8 @@
 /* ===========================================================================
-   Radio Dictate — desktop stylesheet
+   Radio Dictate: desktop stylesheet
    ---------------------------------------------------------------------------
    ONE sheet for both themes. Every placeholder below is filled in from
-   tokens.json by src/ui/theme.py, the same file the web front-end reads — so the
+   tokens.json by src/ui/theme.py, the same file the web front-end reads: so the
    two apps cannot drift apart. Never write a hex value in here; add a token.
 
    The idea, shared with the web app: the report is a film on a lightbox. The
@@ -126,7 +126,7 @@ QFrame#top_bar {
     border-radius: 4px;
 }
 
-/* What the dictation is doing right now, sat beside the record buttons — the
+/* What the dictation is doing right now, sat beside the record buttons: the
    one place the radiologist is already looking. The `state` property carries
    the value, exactly like the mic meter below, so the colours stay in here. */
 QLabel#state_pill {
@@ -144,10 +144,28 @@ QLabel#state_pill[state="rec"]  { color: {{film}}; background-color: {{rec}}; bo
 QLabel#state_pill[state="warn"] { color: {{warn}}; border-color: {{warn}}; }
 QLabel#state_pill[state="ok"]   { color: {{ok}}; border-color: {{ok}}; }
 
+/* Whether anything in this report still has to be communicated. Same pill shape
+   as the state above, and deliberately quiet when the report is clean: a "0"
+   shouted in red every session is what teaches people to stop reading it. Only
+   an outstanding finding takes {{rec}}; once acknowledged it steps down to a
+   plain reminder that the report contains one. */
+QLabel#findings_pill {
+    background-color: {{room}};
+    color: {{textDim}};
+    border: 1px solid {{edge}};
+    border-radius: 10px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    min-height: 16px;
+}
+QLabel#findings_pill[findings="outstanding"]   { color: {{film}}; background-color: {{rec}}; border-color: {{rec}}; }
+QLabel#findings_pill[findings="acknowledged"]  { color: {{ok}}; border-color: {{ok}}; }
+
 QLabel#elapsed { font-size: 11px; }
 
 /* Highlight a term, see its neighbourhood (src/ui/term_popup.py). Two tiers:
-   what the word might have been, then what merely travels with it — the second
+   what the word might have been, then what merely travels with it: the second
    quieter, so the first is what the eye lands on. */
 QFrame#term_popup {
     background-color: {{room2}};
@@ -180,8 +198,8 @@ QLabel#tp_why { color: {{textDim}}; font-size: 10px; }
 QFrame#tp_divider { color: {{edge}}; }
 QLabel#tp_foot { color: {{textDim}}; font-size: 10px; }
 
-/* "3 words to check — highlight one to see alternatives". An affordance, so
-   it reads as quietly as the word count beside it — never {{rec}}, which
+/* "3 words to check: highlight one to see alternatives". An affordance, so
+   it reads as quietly as the word count beside it: never {{rec}}, which
    would make a possible typo look like a clinical finding. */
 QLabel#info_marks { color: {{textDim}}; font-size: 11px; }
 

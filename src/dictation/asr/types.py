@@ -1,10 +1,10 @@
-"""Engine-agnostic transcription result types — the AsrEngine contract.
+"""Engine-agnostic transcription result types: the AsrEngine contract.
 
 Every recognition engine (faster-whisper today, ONNX/Parakeet at M3) returns
 these shapes regardless of its own native API. Confidence is part of the
 contract, not an optional extra: the whole point of this seam is that
 downstream post-processing (M4's token contract) can gate a correction on how
-sure the decoder was, and that only works if every engine reports it — an
+sure the decoder was, and that only works if every engine reports it: an
 engine that cannot supply real per-word probabilities must say so via
 :class:`EngineCaps` rather than silently returning 1.0 everywhere.
 """
@@ -39,7 +39,7 @@ class AsrSegment:
         """Mean word confidence, or ``None`` when the engine gave no words.
 
         ``None`` (not 0.0 or 1.0) so a caller can tell "the model was unsure"
-        apart from "this engine doesn't expose confidence at all" — collapsing
+        apart from "this engine doesn't expose confidence at all": collapsing
         the two would make the M4 correction gate either over- or under-fire
         for every engine that lacks word timestamps.
         """
@@ -58,7 +58,7 @@ class AsrResult:
 
 @dataclass(frozen=True)
 class EngineCaps:
-    """What an engine can actually provide — never assume, always check.
+    """What an engine can actually provide: never assume, always check.
 
     ``word_confidence``: real per-word probabilities (not a constant stand-in).
     ``hotwords``: decoder-level vocabulary biasing (M5).
@@ -73,7 +73,7 @@ class TranscribeContext:
     """Everything one ``transcribe()`` call needs, gathered in one place.
 
     Replaces the growing keyword-argument list on the old ``Transcriber``
-    wrapper — callers build one of these instead of remembering which knobs
+    wrapper: callers build one of these instead of remembering which knobs
     the live cycle needs versus the final pass.
     """
 

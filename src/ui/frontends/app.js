@@ -1,8 +1,6 @@
 const THEME_STORAGE_KEY = window.__THEME_STORAGE_KEY__;
 const BOOTSTRAP = window.__BOOTSTRAP__;
 const PATIENT_STORAGE_KEY = "radio-dictate-web-patient";
-let mediaRecorder;
-let audioChunks = [];
 let isRecording = false;
 let undoStack = [''];
 let undoIndex = 0;
@@ -16,6 +14,16 @@ let reportRequestInFlight = false;
 
 const dictateBtn = document.getElementById('dictateBtn');
 const micIcon = document.getElementById('micIcon');
+const cancelBtn = document.getElementById('cancelBtn');
+const recMeter = document.getElementById('recMeter');
+const recTimer = document.getElementById('recTimer');
+const sessionTimeline = document.getElementById('sessionTimeline');
+const tlRibbon = document.getElementById('tlRibbon');
+const tlPulse = document.getElementById('tlPulse');
+const tlNow = document.getElementById('tlNow');
+const tlLiveMsg = document.getElementById('tlLiveMsg');
+const tlLiveSub = document.getElementById('tlLiveSub');
+const tlTrail = document.getElementById('tlTrail');
 const editor = document.getElementById('editor');
 const newReportBtn = document.getElementById('newReportBtn');
 const saveTxtBtn = document.getElementById('saveTxtBtn');
@@ -79,7 +87,7 @@ function setThemeSavingState(isSaving) {
 
 // The status pill's states, matching the desktop window's: recording, working,
 // done, failed. The colour is a class app.css owns (.is-rec / .is-busy /
-// .is-ok / .is-error) so it comes from tokens.json like every other colour —
+// .is-ok / .is-error) so it comes from tokens.json like every other colour:
 // this used to set colours inline here, which both hardcoded them and named
 // classes app.css no longer has, so the dot never changed at all.
 const STATUS_STATES = ['is-rec', 'is-busy', 'is-ok', 'is-error'];
@@ -94,7 +102,7 @@ function showStatus(message, state = '', timeout = 0) {
     }
     statusText.textContent = message;
     if (timeout) {
-        // Only the newest message may clear itself — otherwise a short one
+        // Only the newest message may clear itself: otherwise a short one
         // scheduled earlier wipes the state of whatever is running now.
         setTimeout(() => {
             if (generation === statusGeneration) hideStatus();
@@ -304,6 +312,32 @@ function pushUndoState() {
     }
 }
 
+/* Say that the report changed, for the overlays that read it.
+ *
+ * Setting `editor.value` from script fires no `input` event, so anything
+ * listening for typing never sees a dictated report, a loaded template or an
+ * undo: which is exactly the text the findings strip exists to check. Every
+ * programmatic write calls this; the `input` listeners cover the typing. */
+// The count is on the report's own head strip, so it has to be refreshed
+// everywhere the text can change -- typing, a template load, a live update, a
+// suggestion applied. announceReportChanged() already runs on all of those.
+function updateWordCount() {
+    const el = document.getElementById('wordCount');
+    if (!el) return;
+    // What is on screen, which while recording includes the dimmed tail. A
+    // count that ignores the words you can plainly read says "0 words" at the
+    // very moment the app is proving it heard you.
+    const shown = [editor.value, isRecording ? previewText : ''].join(' ').trim();
+    const words = shown ? shown.split(/\s+/).length : 0;
+    el.textContent = words === 1 ? '1 word' : `${words} words`;
+}
+
+function announceReportChanged() {
+    updateWordCount();
+    scheduleMarks();
+    scheduleFindings();
+}
+
 function setEditorValue(value, { moveCaretToEnd = true } = {}) {
     editor.value = value;
     if (moveCaretToEnd && typeof editor.setSelectionRange === 'function') {
@@ -311,6 +345,7 @@ function setEditorValue(value, { moveCaretToEnd = true } = {}) {
         editor.setSelectionRange(end, end);
     }
     pushUndoState();
+    announceReportChanged();
 }
 
 function insertTextAtCursor(text) {
@@ -322,6 +357,7 @@ function insertTextAtCursor(text) {
     const needsSpacer = before.length > 0 && !/[\s\n]$/.test(before) && !/^[\s\n]/.test(text);
     const insertion = `${needsSpacer ? ' ' : ''}${text}`;
     editor.value = before + insertion + after;
+    announceReportChanged();
     if (typeof editor.setSelectionRange === 'function') {
         const pos = before.length + insertion.length;
         editor.setSelectionRange(pos, pos);
@@ -458,7 +494,7 @@ async function reloadMacros() {
         populateMacroRegions();
         macroRegionSelect.value = result.selected_region || macroRegionSelect.value;
         renderMacros(currentMacroRegion());
-        showStatus('Macros reloaded', 'is-ok', 1500);
+        showStatus('Phrases reloaded', 'is-ok', 1500);
     } catch (err) {
         showError('Macros could not be reloaded: ' + err.message);
     } finally {
@@ -509,7 +545,7 @@ function postReport(url, answers) {
 }
 
 // Returns the refusal the server wants answered, or null if this response was
-// not one — an ordinary error still has to reach the caller as an error.
+// not one: an ordinary error still has to reach the caller as an error.
 async function readReleaseGate(response) {
     if (response.status !== 409) {
         return null;
@@ -551,10 +587,10 @@ function confirmCriticalFindings(info) {
 }
 
 // Sends the report and clears the release gate on the way. Both answers start
-// unset; the server refuses with 409 one rule at a time — unfilled fields first,
-// then critical findings — we ask, and re-send with the radiologist's answer.
+// unset; the server refuses with 409 one rule at a time, unfilled fields first,
+// then critical findings, we ask, and re-send with the radiologist's answer.
 // Same questions the desktop app asks. Every path that lets the report leave the
-// app goes through here, clipboard included — a gate one button can skip is not a
+// app goes through here, clipboard included: a gate one button can skip is not a
 // gate. Returns null when the radiologist cancelled: not an error, just a stop.
 async function postGatedReport(endpoint) {
     const answers = { acknowledged: null, proceed_unfilled: false };
@@ -613,7 +649,7 @@ async function downloadReport(kind) {
         const blob = await response.blob();
         const filename = parseDownloadFilename(response.headers.get('content-disposition'), fallbackName);
         triggerDownload(blob, filename);
-        showStatus(kind === 'word' ? 'Word export ready' : 'TXT download ready', 'is-ok', 1800);
+        showStatus(kind === 'word' ? 'Word file ready' : 'Text file ready', 'is-ok', 1800);
     } catch (err) {
         showError('Report export failed: ' + err.message);
     } finally {
@@ -643,7 +679,7 @@ async function loadSelectedTemplate() {
 
     try {
         setTemplateLoadingState(true);
-        showStatus(`Loading template: ${name}`, 'is-busy');
+        showStatus('Loading template', 'is-busy');
 
         const response = await fetch(`/api/templates/${encodeURIComponent(name)}/load`, {
             method: 'POST',
@@ -654,14 +690,19 @@ async function loadSelectedTemplate() {
         }
 
         editor.value = result.content || '';
+        announceReportChanged();
+        // The top of the template, not the bottom. A freshly loaded report is
+        // something you read down from the first heading; dropping the caret at
+        // the end scrolled the first line half out of view and left the
+        // radiologist looking at "IMPRESSION: 1." before they had read anything.
         if (typeof editor.setSelectionRange === 'function') {
-            const end = editor.value.length;
-            editor.setSelectionRange(end, end);
+            editor.setSelectionRange(0, 0);
         }
+        editor.scrollTop = 0;
         editor.focus();
         undoStack = [editor.value];
         undoIndex = 0;
-        showStatus(`Template loaded: ${result.name}`, 'is-ok', 2000);
+        showStatus('Template loaded', 'is-ok', 2000);
     } catch (err) {
         showError('Template load failed: ' + err.message);
     } finally {
@@ -671,6 +712,7 @@ async function loadSelectedTemplate() {
 
 // Track text changes for undo and persist patient fields locally.
 editor.addEventListener('input', pushUndoState);
+editor.addEventListener('input', updateWordCount);
 [patientName, patientId, patientDob, patientStudyDate, patientReferrer, patientAccession].forEach((field) => {
     field.addEventListener('input', () => {
         savePatientDraft();
@@ -688,6 +730,8 @@ newReportBtn.addEventListener('click', () => {
     editor.focus();
     resetPatientInfo();
     hideStatus();
+    announceReportChanged();
+    resetFindings();
 });
 
 // Clear with confirmation
@@ -696,6 +740,7 @@ clearBtn.addEventListener('click', () => {
     if (confirm('Are you sure you want to clear all text? This cannot be undone.')) {
         setEditorValue('');
         hideStatus();
+        resetFindings();
     }
 });
 
@@ -777,6 +822,7 @@ function undo() {
     if (undoIndex > 0) {
         undoIndex--;
         editor.value = undoStack[undoIndex];
+        announceReportChanged();
         editor.focus();
     }
 }
@@ -785,91 +831,555 @@ function redo() {
     if (undoIndex < undoStack.length - 1) {
         undoIndex++;
         editor.value = undoStack[undoIndex];
+        announceReportChanged();
         editor.focus();
     }
 }
 
-async function startRecording() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
+// ---------------------------------------------------------------------------
+// Live dictation.
+//
+// The microphone streams raw 16-bit PCM at 16 kHz straight to /ws/dictate, and
+// text comes back while you are still speaking. It is raw PCM rather than the
+// browser's own MediaRecorder output because a webm/opus blob cannot be decoded
+// a piece at a time: waiting for the container to close is exactly the pause
+// this replaces.
+//
+// Two kinds of text arrive. `committed` is decoded once, corrected, and final.
+// `preview` is a guess about the words still being spoken; it is shown dimmed
+// and never enters the undo history, because presenting a guess as settled text
+// is the one thing a report editor must not do.
+// ---------------------------------------------------------------------------
 
-        mediaRecorder.ondataavailable = event => {
-            if (event.data.size > 0) audioChunks.push(event.data);
-        };
+// From the server, so the capture rate and the decoder's rate are one fact.
+const LIVE_SAMPLE_RATE = BOOTSTRAP.live_sample_rate;
 
-        mediaRecorder.onstop = sendAudio;
+let liveSocket = null;
+let audioContext = null;
+let micStream = null;
+let micNode = null;
+let committedText = '';       // what the server has frozen this session
+let previewText = '';         // the provisional tail, dimmed on screen
+let baseText = '';            // whatever was in the editor before recording
+let recordStartedAt = 0;
+let timerHandle = null;
+let handedOverText = null;  // what Stop handed back, to detect edits since
+// When Stop was pressed, so the developer console can price the two things
+// that follow it separately: the hand-back (should be instant) and the
+// accuracy pass behind it (allowed to take as long as it needs).
+let stopPressedAt = 0;
 
-        audioChunks = [];
-        mediaRecorder.start();
-        isRecording = true;
-        dictateBtn.setAttribute('aria-pressed', 'true');
-        dictateBtn.classList.add('is-recording');
-        micIcon.className = 'fas fa-stop';
+// The worklet only forwards frames. Every decision stays on the main thread, so
+// UI work can never block the audio thread.
+const PCM_WORKLET = [
+    'class PcmTap extends AudioWorkletProcessor {',
+    '    process(inputs) {',
+    '        const ch = inputs[0] && inputs[0][0];',
+    '        if (ch) this.port.postMessage(ch.slice(0));',
+    '        return true;',
+    '    }',
+    '}',
+    'registerProcessor("pcm-tap", PcmTap);',
+].join('\n');
 
-        showStatus('Recording...', 'is-rec');
-    } catch (err) {
-        console.error('Microphone access denied:', err);
-        showError('Microphone access denied. Please allow microphone permissions in your browser settings and try again.');
+function floatToPcm16(frame) {
+    const out = new Int16Array(frame.length);
+    for (let i = 0; i < frame.length; i++) {
+        const clamped = Math.max(-1, Math.min(1, frame[i]));
+        out[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+    }
+    return out;
+}
+
+function peakLevel(frame) {
+    let peak = 0;
+    for (let i = 0; i < frame.length; i++) {
+        const v = Math.abs(frame[i]);
+        if (v > peak) peak = v;
+    }
+    return peak;
+}
+
+// -- what the radiologist sees ---------------------------------------------
+
+function renderLiveText() {
+    const gap = baseText && !baseText.endsWith('\n') ? ' ' : '';
+    const settled = baseText + (committedText ? gap + committedText : '');
+    editor.value = settled;
+    editor.scrollTop = editor.scrollHeight;
+    paintPreview(settled);
+    // The count is the only thing on screen saying the report is growing while
+    // you speak. It is one split of the text, unlike the marks and findings
+    // scans, which is why it runs every cycle and they do not.
+    updateWordCount();
+}
+
+// The dimmed tail is painted by the existing marks underlay rather than a
+// second overlay mechanism, and nothing is inserted into the textarea, so an
+// export can never contain a provisional word.
+function paintPreview(settled) {
+    if (!editorMarks) return;
+    if (!previewText) { editorMarks.replaceChildren(); return; }
+    // The settled half is copied in transparently only to push the preview to
+    // the right place on the line; the textarea above paints those same
+    // characters for real.
+    const out = document.createDocumentFragment();
+    out.append(settled + (settled ? ' ' : ''));
+    const tail = document.createElement('span');
+    tail.className = 'preview';
+    tail.textContent = previewText;
+    out.append(tail);
+    editorMarks.replaceChildren(out);
+    syncMarksScroll();
+}
+
+//: Kept from the markup so the prompt is written down once, in the HTML.
+const EDITOR_PLACEHOLDER = editor.getAttribute('placeholder') || '';
+
+function setRecordingUi(on) {
+    dictateBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    dictateBtn.classList.toggle('is-recording', on);
+    micIcon.className = on ? 'fas fa-stop' : 'fas fa-microphone';
+    dictateBtn.setAttribute('aria-label', on ? 'Stop recording' : 'Start recording');
+    recMeter.hidden = !on;
+    cancelBtn.hidden = !on;
+    // The live preview is painted in the underlay BEHIND the textarea, and an
+    // empty textarea still paints its placeholder on top of it. The two drew
+    // over each other as "Predsictherpmicrophone and start speaking." for the
+    // first seconds of every dictation, which is the first thing you see.
+    editor.placeholder = on ? '' : EDITOR_PLACEHOLDER;
+    if (!on) setLevel(0);
+}
+
+// The real peak of the last frame: a meter that only ever shows "something"
+// is a meter that cannot tell you the microphone is dead.
+function setLevel(peak) {
+    recMeter.style.setProperty('--level', Math.min(1, peak * 2.2).toFixed(3));
+}
+
+function startTimer() {
+    recordStartedAt = Date.now();
+    const tick = () => {
+        const secs = Math.floor((Date.now() - recordStartedAt) / 1000);
+        const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+        const ss = String(secs % 60).padStart(2, '0');
+        recTimer.textContent = `${mm}:${ss}`;
+        // The ribbon's "now" edge rides this tick rather than a second timer:
+        // it is the same clock, and one clock cannot disagree with itself.
+        tlRender();
+    };
+    tick();
+    timerHandle = setInterval(tick, 500);
+}
+
+function stopTimer() {
+    if (timerHandle) clearInterval(timerHandle);
+    timerHandle = null;
+}
+
+// -- the session timeline ---------------------------------------------------
+// A dictation is a duration, but the status label could only ever say what was
+// true this instant and then overwrite itself, so a slow decode and a dead one
+// looked identical. This draws the session along time instead: the ribbon is
+// the shape of the audio, a hairline inside it is how far the text trails the
+// microphone, and the trail says the same in words for anyone who would rather
+// read than look. Every number here is one the session already had.
+
+const TL_TRAIL_MAX = 4;        // steps kept on screen; older ones fall off
+// The floor stops the ribbon rescaling wildly over the first second. Set to 20
+// it did the opposite of its job: a 9-second dictation drew into the left half
+// and left the right half blank, which reads as a session that stalled rather
+// than one that is short.
+const TL_MIN_SPAN_SEC = 10;
+const TL_BEHIND_SEC = 2.5;     // past this the text is visibly trailing
+
+const tl = {
+    startedAt: 0, steps: [], saved: [], lag: [], stalls: [],
+    savedTo: 0, audioSec: 0, behind: 0, words: 0, phase: 'idle',
+};
+
+function tlBegin() {
+    tl.startedAt = performance.now();
+    tl.steps = []; tl.saved = []; tl.lag = []; tl.stalls = [];
+    tl.savedTo = 0; tl.audioSec = 0; tl.behind = 0; tl.words = 0;
+    tl.phase = 'starting';
+    sessionTimeline.hidden = false;
+    tlStep('Opening the microphone');
+}
+
+function tlElapsed() {
+    return tl.startedAt ? (performance.now() - tl.startedAt) / 1000 : 0;
+}
+
+//: *tone* colours the duration only: 'good' for a step that beat its budget,
+//: 'slow' for one the radiologist waited on.
+function tlStep(label, seconds = null, tone = '') {
+    tl.steps.push({ at: tlElapsed(), label, seconds, tone });
+    if (tl.steps.length > 24) tl.steps.shift();
+    tlRender();
+}
+
+// Fed from devUpdateArrived, which already computes these for every partial:
+// one formula, two readers, so the console and the ribbon can never disagree.
+function tlUpdate(msg, stats) {
+    tl.audioSec = msg.audioSec || 0;
+    tl.behind = stats.behind;
+    tl.lag.push({ at: stats.sinceStart / 1000, behind: stats.behind });
+    tl.words = stats.words;
+
+    // One block per chunk the server actually froze, read from where the frozen
+    // text now ends. Inferring it instead from "the word count grew" drew a
+    // block per update -- half a second each, butted end to end -- so the
+    // ribbon came out as one flat bar with no boundaries in it, and the
+    // boundaries are the whole reason to look at it.
+    const saved = msg.savedSec || 0;
+    if (saved > tl.savedTo) {
+        tl.saved.push({ from: tl.savedTo, to: saved });
+        tl.savedTo = saved;
+    }
+
+    // The stretch where the live preview was switched off, held open until the
+    // state changes back, so it draws as one band rather than a dotted mess.
+    const stalling = msg.state === 'catching_up';
+    const open = tl.stalls.length && tl.stalls[tl.stalls.length - 1].to === null;
+    if (stalling && !open) {
+        tl.stalls.push({ from: stats.sinceStart / 1000, to: null });
+        tlStep('Catching up');
+    } else if (!stalling && open) {
+        tl.stalls[tl.stalls.length - 1].to = stats.sinceStart / 1000;
+    }
+
+    tl.phase = stalling ? 'behind' : (tl.words ? 'writing' : 'listening');
+    tlRender();
+}
+
+// What the phase means in plain words. The lag is in here, said as work still
+// to do rather than as a number to watch: "about 4s still to write" is the
+// same fact as "4s behind" without asking anyone to read it as a metric.
+function tlSay() {
+    const behindSec = Math.round(tl.behind);
+    switch (tl.phase) {
+        case 'starting':   return ['Opening the microphone', 'One moment.'];
+        case 'listening':  return ['Listening', 'Your first words appear in a few seconds.'];
+        // Words, not sentences: the count is a split of the committed text, so
+        // saying "sentences" put "12 sentences saved" under a twelve-word line.
+        case 'writing':    return ['Writing what you say', tlWords()];
+        case 'behind':     return ['Still hearing you',
+            `About ${Math.max(1, behindSec)}s of speech still to write. Nothing is lost.`];
+        case 'finishing':  return ['Finishing the last sentence', ''];
+        case 'polishing':  return ['Yours to edit', 'Still checking the least certain sentences.'];
+        case 'kept':       return ['Kept your edits', 'The polish was dropped rather than overwrite you.'];
+        case 'done':       return ['Finished', tlWords()];
+        default:           return ['Ready', ''];
     }
 }
 
-function stopRecording() {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop();
-        mediaRecorder.stream.getTracks().forEach(track => track.stop());
-        isRecording = false;
-        dictateBtn.setAttribute('aria-pressed', 'false');
-        dictateBtn.classList.remove('is-recording');
-        micIcon.className = 'fas fa-microphone';
+function tlWords() {
+    return tl.words ? `${tl.words} word${tl.words === 1 ? '' : 's'} written.` : '';
+}
 
-        showStatus('Transcribing...', 'is-busy');
+function tlRender() {
+    if (sessionTimeline.hidden) return;
+    const now = tlElapsed();
+    // A little headroom past the live edge, so the "now" line always has room
+    // to draw inside the ribbon instead of being clipped against its end, and
+    // so the session visibly has somewhere left to run.
+    const span = Math.max(TL_MIN_SPAN_SEC, now * 1.06);
+    const pct = (s) => Math.max(0, Math.min(100, (s / span) * 100));
+    const band = (from, to, cls) =>
+        `<span class="tl-seg ${cls}" style="left:${pct(from).toFixed(2)}%;width:${(pct(to) - pct(from)).toFixed(2)}%"></span>`;
+
+    const bands = tl.saved.map((s) => band(s.from, s.to, 'is-saved'));
+    // The sentence still being written: from the last saved word up to the
+    // last audio the server has read.
+    if (tl.audioSec > tl.savedTo) bands.push(band(tl.savedTo, tl.audioSec, 'is-open'));
+    for (const s of tl.stalls) bands.push(band(s.from, s.to === null ? now : s.to, 'is-behind'));
+
+    tlRibbon.querySelectorAll('.tl-seg').forEach((n) => n.remove());
+    tlRibbon.insertAdjacentHTML('afterbegin', bands.join(''));
+    tlNow.style.left = pct(now).toFixed(2) + '%';
+    tlDrawPulse(span);
+
+    const [msg, sub] = tlSay();
+    tlLiveMsg.textContent = msg;
+    tlLiveSub.textContent = sub;
+
+    tlTrail.replaceChildren(...tl.steps.slice(-TL_TRAIL_MAX).map((s) => {
+        const li = document.createElement('li');
+        const t = document.createElement('span');
+        t.className = 'tl-t';
+        t.textContent = fmtClock(s.at);
+        const label = document.createElement('span');
+        label.textContent = s.label;
+        const dur = document.createElement('span');
+        dur.className = 'tl-dur' + (s.tone ? ` is-${s.tone}` : '');
+        dur.textContent = s.seconds === null ? '' : `${s.seconds.toFixed(1)}s`;
+        li.append(t, label, dur);
+        return li;
+    }));
+}
+
+function fmtClock(seconds) {
+    const s = Math.max(0, Math.floor(seconds));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function tlDrawPulse(span) {
+    if (!tl.lag.length) { tlPulse.replaceChildren(); return; }
+    const W = 1000, H = 40;
+    const peak = Math.max(3, ...tl.lag.map((p) => p.behind));
+    const d = tl.lag.map((p, i) =>
+        `${i ? 'L' : 'M'}${((p.at / span) * W).toFixed(1)} ${(H - 2 - (p.behind / peak) * (H - 8)).toFixed(1)}`
+    ).join(' ');
+    // Built as markup rather than nodes because it is one path, redrawn whole.
+    tlPulse.innerHTML = `<path d="${d}" fill="none" stroke="${
+        tl.behind > TL_BEHIND_SEC ? 'var(--warn-text)' : 'var(--glow)'
+    }" stroke-width="1.25" stroke-linejoin="round" vector-effect="non-scaling-stroke" opacity=".55" />`;
+}
+
+function tlPhase(phase) {
+    tl.phase = phase;
+    tlRender();
+}
+
+// -- the socket -------------------------------------------------------------
+
+function openSocket() {
+    const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+    const socket = new WebSocket(`${scheme}://${location.host}/ws/dictate`);
+    socket.binaryType = 'arraybuffer';
+
+    socket.onmessage = (event) => {
+        const msg = safeParseJson(event.data, null);
+        if (!msg) return;
+        if (msg.type === 'partial') {
+            tlUpdate(msg, devUpdateArrived(msg));
+            committedText = msg.committed || '';
+            previewText = msg.preview || '';
+            uncertainWords = new Set(msg.uncertain || []);
+            renderLiveText();
+            showStatus(
+                msg.state === 'catching_up'
+                    ? 'Catching up'
+                    : 'Listening',
+                'is-rec',
+            );
+        } else if (msg.type === 'stopped') {
+            devMark('browser', 'report handed back', { words: devWordsIn(msg.text) },
+                { ms: stopPressedAt ? performance.now() - stopPressedAt : null });
+            // The report is yours now. The accurate re-decode is still running,
+            // but you can read and edit while it does.
+            previewText = '';
+            committedText = msg.text || '';
+            uncertainWords = new Set(msg.uncertain || []);
+            renderLiveText();
+            handedOverText = editor.value;
+            finishSession(null);
+            // The hand-back is the last word count the trail will quote, so it
+            // has to be this text's, not the last partial's.
+            tl.words = devWordsIn(msg.text);
+            tlStep('Yours to edit',
+                stopPressedAt ? (performance.now() - stopPressedAt) / 1000 : null, 'good');
+            tlPhase('polishing');
+            showStatus('Yours to edit · polishing', 'is-busy');
+        } else if (msg.type === 'final') {
+            devMark('browser', 'accuracy pass arrived', { words: devWordsIn(msg.text) },
+                { ms: stopPressedAt ? performance.now() - stopPressedAt : null });
+            const polishSec = stopPressedAt ? (performance.now() - stopPressedAt) / 1000 : null;
+            stopPressedAt = 0;
+            const improved = msg.text || '';
+            if (editor.value !== handedOverText) {
+                // You edited while it was working. Your words win: silently
+                // replacing them with the machine's would be the worst possible
+                // outcome for a clinical report.
+                tlStep('Kept your edits', polishSec);
+                tlPhase('kept');
+                showStatus('Kept your edits', 'is-ok', 4000);
+            } else {
+                committedText = improved;
+                uncertainWords = new Set(msg.uncertain || []);
+                renderLiveText();
+                pushUndoState();
+                announceReportChanged();
+                tl.words = devWordsIn(improved);
+                tlStep('Checked and polished', polishSec, 'good');
+                tlPhase('done');
+                showStatus('Polished', 'is-ok', 2000);
+            }
+            handedOverText = null;
+        } else if (msg.type === 'error') {
+            devMark('browser', msg.message || 'dictation failed', {}, { level: 'error' });
+            showError(msg.message || 'Dictation failed.');
+            finishSession(null);
+        }
+    };
+
+    // Only meaningful once recording has actually started: startRecording()
+    // has its own one-time 'error' listener for the connect attempt itself,
+    // and both firing on the same failure raced to set the status text.
+    socket.onerror = () => { if (isRecording) showError('Lost the connection to the dictation service.'); };
+    socket.onclose = () => { if (isRecording) teardownMic(); };
+    return socket;
+}
+
+// A connect to our own loopback server has been observed to error out
+// immediately under load, then succeed on the very next attempt with no
+// other change: transient, not a broken route. One retry absorbs it instead
+// of surfacing a scary error for something that would have worked a moment
+// later.
+async function connectDictationSocket(attemptsLeft = 2) {
+    const socket = openSocket();
+    try {
+        await new Promise((resolve, reject) => {
+            socket.addEventListener('open', resolve, { once: true });
+            socket.addEventListener('error', reject, { once: true });
+        });
+        return socket;
+    } catch {
+        socket.close();
+        if (attemptsLeft > 1) return connectDictationSocket(attemptsLeft - 1);
+        throw new Error('Could not reach the dictation service. Check that it is running and try again.');
     }
+}
+
+// One undo entry per dictation and one scan of the finished report: not one of
+// each per partial, which would both blow the 50-entry history in seconds and
+// spend the whole machine re-scanning half-sentences.
+function finishSession(okMessage) {
+    stopTimer();
+    setRecordingUi(false);
+    previewText = '';
+    paintPreview('');
+    pushUndoState();
+    announceReportChanged();
+    syncReportButtons();
+    if (okMessage) showStatus(okMessage, 'is-ok', 2500);
+}
+
+async function teardownMic() {
+    isRecording = false;
+    if (micNode) { micNode.disconnect(); micNode = null; }
+    if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+    if (audioContext) {
+        await audioContext.close().catch(() => {});
+        audioContext = null;
+    }
+}
+
+// -- start / stop / cancel --------------------------------------------------
+
+async function startRecording() {
+    devRecordingStarted();
+    // Before this, the button, the timer and the status all stayed idle while
+    // the microphone permission, the audio graph and the socket were awaited:
+    // press record, and for a second or more nothing on screen moved at all.
+    tlBegin();
+    showStatus('Opening the microphone', 'is-busy');
+    const micAskedAt = performance.now();
+    try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+        });
+    } catch (err) {
+        devMark('browser', 'microphone refused', {}, { level: 'error' });
+        console.error('Microphone access denied:', err);
+        showError('Microphone access denied. Allow microphone permissions in your browser settings, then try again.');
+        tlStep('Microphone refused');
+        sessionTimeline.hidden = true;
+        return;
+    }
+
+    devMark('browser', 'microphone granted', {}, { ms: performance.now() - micAskedAt });
+    tlStep('Microphone ready', (performance.now() - micAskedAt) / 1000);
+
+    try {
+        // Asking the context for 16 kHz makes the browser resample for us, so
+        // there is no hand-written downsampler to get wrong.
+        audioContext = new AudioContext({ sampleRate: LIVE_SAMPLE_RATE });
+        const workletUrl = URL.createObjectURL(new Blob([PCM_WORKLET], { type: 'application/javascript' }));
+        await audioContext.audioWorklet.addModule(workletUrl);
+        URL.revokeObjectURL(workletUrl);
+
+        const socketAskedAt = performance.now();
+        liveSocket = await connectDictationSocket();
+        devMark('browser', 'dictation socket open', {}, { ms: performance.now() - socketAskedAt });
+        tlStep('Connected', (performance.now() - socketAskedAt) / 1000);
+
+        micNode = new AudioWorkletNode(audioContext, 'pcm-tap');
+        micNode.port.onmessage = (event) => {
+            const frame = event.data;
+            setLevel(peakLevel(frame));
+            if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
+                const pcm = floatToPcm16(frame).buffer;
+                devAudioSent(pcm.byteLength);
+                liveSocket.send(pcm);
+            }
+        };
+        audioContext.createMediaStreamSource(micStream).connect(micNode);
+    } catch (err) {
+        console.error('Could not start live dictation:', err);
+        await teardownMic();
+        showError('Could not start dictation: ' + (err.message || 'unknown error'));
+        return;
+    }
+
+    baseText = editor.value.trim();
+    committedText = '';
+    previewText = '';
+    // The doubts belong to the dictation that raised them. A new session will
+    // report its own, and text from the last one has already been read.
+    uncertainWords = new Set();
+    isRecording = true;
+    setRecordingUi(true);
+    startTimer();
+    devMark('browser', 'recording started', {}, { ms: performance.now() - dev.recordStart });
+    tlStep('Listening');
+    tlPhase('listening');
+    showStatus('Listening', 'is-rec');
+}
+
+async function stopRecording() {
+    if (!isRecording) return;
+    stopPressedAt = performance.now();
+    devMark('browser', 'stop pressed', { updates: dev.updates });
+    await teardownMic();
+    setRecordingUi(false);
+    stopTimer();
+    tlStep('Stopped');
+    tlPhase('finishing');
+    showStatus('Finishing', 'is-busy');
+    if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
+        liveSocket.send(JSON.stringify({ command: 'stop' }));
+    } else {
+        finishSession(null);
+    }
+}
+
+// Cancel means cancel: the report goes back to exactly what it was.
+async function cancelRecording() {
+    devMark('browser', 'recording discarded', { updates: dev.updates });
+    if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
+        liveSocket.send(JSON.stringify({ command: 'cancel' }));
+    }
+    await teardownMic();
+    committedText = '';
+    previewText = '';
+    editor.value = baseText;
+    paintPreview('');
+    stopTimer();
+    setRecordingUi(false);
+    // Discard means discard: the session it described is gone, so its timeline
+    // goes with it rather than sitting under a report it no longer describes.
+    sessionTimeline.hidden = true;
+    tl.phase = 'idle';
+    hideStatus();
 }
 
 dictateBtn.addEventListener('click', () => {
-    if (isRecording) {
-        stopRecording();
-    } else {
-        startRecording();
-    }
+    if (isRecording) stopRecording(); else startRecording();
 });
+cancelBtn.addEventListener('click', cancelRecording);
 
-async function sendAudio() {
-    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-    const formData = new FormData();
-    formData.append("file", audioBlob, "dictation.webm");
-
-    try {
-        const response = await fetch('/transcribe', {
-            method: 'POST',
-            body: formData
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Transcription failed');
-        }
-
-        const result = await response.json();
-
-        if (result.text) {
-            const nextValue = editor.value.trim() !== '' ? `${editor.value} ${result.text}` : result.text;
-            setEditorValue(nextValue);
-            editor.scrollTop = editor.scrollHeight;
-            showStatus('Transcription complete', 'is-ok', 2000);
-        } else {
-            hideStatus();
-        }
-    } catch (err) {
-        console.error('Transcription error:', err);
-        showError('Transcription failed: ' + err.message + '. Try again.');
-    }
-}
-
-dictateBtn.setAttribute('aria-pressed', 'false');
-dictateBtn.setAttribute('role', 'button');
-dictateBtn.setAttribute('aria-label', 'Start or stop recording');
 renderTheme(document.documentElement.dataset.theme || 'dark', false);
 syncCachedTheme();
 applyBootstrapState();
@@ -877,18 +1387,21 @@ syncReportButtons();
 
 // ---------------------------------------------------------------------------
 // Option A: the panels below the editor remember whether you left them open.
-// This is the whole of "configurable to needs" — you shape the screen by using
+// This is the whole of "configurable to needs": you shape the screen by using
 // it. Kept in localStorage, not settings, because it is per-browser chrome
 // state and has no business going through the server.
 // ---------------------------------------------------------------------------
 
-const PANEL_STORAGE_KEY = "radio-dictate-web-panels";
+// Bumped when the defaults below changed: someone who had already visited was
+// otherwise pinned to the old folded-everything layout forever, and would have
+// had to find the fix by hand.
+const PANEL_STORAGE_KEY = "radio-dictate-web-panels-v2";
 
 function loadOpenPanels() {
     const saved = safeParseJson(localStorage.getItem(PANEL_STORAGE_KEY), null);
-    // First visit: patient details open, the rest folded. A new user sees the
-    // fields they need for an export without having to discover them.
-    return Array.isArray(saved) ? saved : ["patient"];
+    // First visit: the two you reach for while dictating are open. Patient
+    // details and Settings are things you set once, so they start folded.
+    return Array.isArray(saved) ? saved : ["template", "phrases"];
 }
 
 function saveOpenPanels() {
@@ -911,7 +1424,7 @@ function initPanels() {
 }
 
 // ---------------------------------------------------------------------------
-// Overflow menu — one primary action stays on the bar, the rest live in here.
+// Overflow menu: one primary action stays on the bar, the rest live in here.
 // ---------------------------------------------------------------------------
 
 function initOverflowMenu() {
@@ -1002,7 +1515,7 @@ function initDisclaimer() {
 // ---------------------------------------------------------------------------
 // The neighbourhood of a highlighted word. Highlight a term and a small panel
 // offers what it might have been (spelling) and what goes with it (related).
-// Both lists — and their order — come from src/medical/term_lookup.py, the
+// Both lists, and their order, come from src/medical/term_lookup.py, the
 // same service the desktop window asks, so the two front-ends cannot suggest
 // different things for the same word. Nothing is ever applied on its own.
 // ---------------------------------------------------------------------------
@@ -1062,7 +1575,7 @@ function applyTermSuggestion(term) {
 // ---------------------------------------------------------------------------
 // Which words are worth highlighting in the first place. The lookup above only
 // helps a radiologist who already suspects a word, and the words worth
-// suspecting are exactly the ones that read as plausible — so the app points.
+// suspecting are exactly the ones that read as plausible: so the app points.
 //
 // Marks are drawn on a transparent copy of the text sitting *behind* the
 // textarea. Nothing is inserted into the report itself, which is why Copy,
@@ -1076,6 +1589,11 @@ const marksHint = document.getElementById('marksHint');
 
 let marksTimer = null;
 let marksRequest = 0;
+// Words the decoder itself was unsure of, sent by the server with each update.
+// They are underlined more faintly than the suspect-term marks: one says "the
+// machine guessed at this", the other says "this word has alternatives worth
+// seeing", and collapsing them into one mark would lose that difference.
+let uncertainWords = new Set();
 let lookupUses = BOOTSTRAP.term_lookup_uses || 0;
 const lookupHintUses = BOOTSTRAP.term_lookup_hint_uses || 3;
 
@@ -1089,14 +1607,37 @@ function clearMarks() {
     marksHint.hidden = true;
 }
 
+// Every word the decoder was unsure of, wherever it appears in the report.
+// Matched by word rather than by position because the correction pipeline has
+// rewritten the text since the decode, so the original offsets no longer point
+// anywhere real -- and marking one word too many is the safe direction.
+function uncertainSpans(text, taken) {
+    if (!uncertainWords.size) return [];
+    const out = [];
+    const word = /[A-Za-z][A-Za-z'-]*/g;
+    let hit;
+    while ((hit = word.exec(text)) !== null) {
+        if (!uncertainWords.has(hit[0].toLowerCase())) continue;
+        const start = hit.index;
+        const end = start + hit[0].length;
+        // A suspect-term mark already covers this word and says more.
+        if (taken.some((s) => start < s.end && end > s.start)) continue;
+        out.push({ start, end, kind: 'unsure' });
+    }
+    return out;
+}
+
 function paintMarks(spans) {
     const text = editor.value;
+    const all = spans.concat(uncertainSpans(text, spans))
+        .sort((a, b) => a.start - b.start);
     const out = document.createDocumentFragment();
     let at = 0;
-    spans.forEach((span) => {
+    all.forEach((span) => {
         if (span.start < at) return;          // overlapping spans cannot happen, but never trust
         out.append(text.slice(at, span.start));
         const mark = document.createElement('mark');
+        if (span.kind === 'unsure') mark.className = 'unsure';
         mark.textContent = text.slice(span.start, span.end);
         out.append(mark);
         at = span.end;
@@ -1107,14 +1648,26 @@ function paintMarks(spans) {
     editorMarks.replaceChildren(out);
     syncMarksScroll();
 
-    if (!spans.length) {
+    // Both kinds of underline are counted, and named apart. An underline the
+    // radiologist cannot account for is worse than no underline: they either
+    // learn to ignore all of them or stop trusting the text around them.
+    const unsure = all.length - spans.length;
+    if (!all.length) {
         marksHint.hidden = true;
         return;
     }
-    const noun = spans.length === 1 ? 'word' : 'words';
-    marksHint.textContent = lookupUses < lookupHintUses
-        ? `${spans.length} ${noun} to check — highlight one to see alternatives`
-        : `${spans.length} ${noun} to check`;
+    const parts = [];
+    if (spans.length) {
+        parts.push(`${spans.length} ${spans.length === 1 ? 'word' : 'words'} to check`
+            + (lookupUses < lookupHintUses ? ': highlight one to see alternatives' : ''));
+    }
+    if (unsure) {
+        // A whole phrase, not a tail. When there are no suspect terms this is
+        // the only part there is, and "4 the machine wasn't sure of" on its
+        // own is not a sentence anyone can read.
+        parts.push(`${unsure} ${unsure === 1 ? 'word' : 'words'} the machine wasn't sure of`);
+    }
+    marksHint.textContent = parts.join(' · ');
     marksHint.hidden = false;
 }
 
@@ -1173,6 +1726,118 @@ function initTermMarks() {
     scheduleMarks();
 }
 
+// ---------------------------------------------------------------------------
+// Critical findings: a tick in the strip beside the report for each one, and a
+// count that is on show whether or not there is anything to show.
+//
+// Every rule lives on the server, in the same OutstandingFindings object the
+// desktop window reads (features/report_release.py): what counts as a finding,
+// whether a negation clears it, and whether an acknowledgement still holds. The
+// browser only draws the answer, which is why the two front-ends cannot come to
+// different conclusions about the same report.
+// ---------------------------------------------------------------------------
+
+const FINDINGS_DELAY_MS = 400;   // matches the term marks: one scan per settle
+
+const findingGutter = document.getElementById('findingGutter');
+const findingsPill = document.getElementById('findingsPill');
+
+let findingsTimer = null;
+let findingsRequest = 0;
+
+function paintFindings(data) {
+    const findings = data.findings || [];
+    findingGutter.replaceChildren();
+
+    // Placed by where the finding sits in the document rather than by where the
+    // text is scrolled to, so a finding further down the report still has a
+    // tick: and reaching one you cannot already see is the whole interaction.
+    const last = Math.max(1, editor.value.length);
+    findings.forEach((f) => {
+        const mark = document.createElement('button');
+        mark.type = 'button';
+        mark.className = 'finding-mark';
+        mark.dataset.outstanding = String(Boolean(f.outstanding));
+        mark.style.top = `${(Math.min(f.start, last) / last) * 100}%`;
+        mark.title = `${f.level === 1 ? 'Critical' : 'Urgent'}: ${f.term}`;
+        mark.setAttribute('aria-label', `Jump to ${f.term}`);
+        mark.addEventListener('click', () => {
+            // Selecting scrolls the textarea to it; focus last so the caret lands.
+            editor.focus();
+            editor.setSelectionRange(f.start, f.end);
+        });
+        findingGutter.append(mark);
+    });
+
+    findingsPill.dataset.findings = data.state || 'clear';
+    const count = data.count || 0;
+    if (!count) {
+        // "No findings", never a red zero: a warning shown on every clear
+        // report is one that stops being read on the report that has one.
+        findingsPill.textContent = 'No findings';
+        // A phone bar has no room for the sentence, so the pill carries a
+        // count the stylesheet can show instead. The full wording stays as the
+        // tooltip -- a number nobody can expand is not a warning.
+        findingsPill.dataset.short = '0';
+        findingsPill.title = 'No critical or urgent findings in this report';
+        return;
+    }
+    const outstanding = findings.filter((f) => f.outstanding).length;
+    const shown = outstanding || count;
+    const noun = shown === 1 ? 'finding' : 'findings';
+    findingsPill.textContent = outstanding
+        ? `${shown} ${noun} to communicate`
+        : `${shown} ${noun} acknowledged`;
+    findingsPill.dataset.short = String(shown);
+    findingsPill.title = findingsPill.textContent;
+}
+
+async function rescanFindings() {
+    // Recording rewrites the report every second, so offsets taken now would be
+    // stale before they were drawn. Stand down: and leave the last answer on
+    // screen rather than replacing it with "No findings", which would claim a
+    // report is clear at the exact moment nothing is re-checking it.
+    if (isRecording) return;
+    findingsRequest += 1;
+    const request = findingsRequest;
+    try {
+        const response = await fetch('/api/report/findings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: editor.value }),
+        });
+        if (request !== findingsRequest) return;   // a newer edit won
+        if (!response.ok) return;
+        paintFindings(await response.json());
+    } catch (err) {
+        // A strip that cannot answer must never interrupt the report, and must
+        // never quietly claim the report is clear either: leave what is shown.
+        console.warn('Findings scan failed:', err);
+    }
+}
+
+function scheduleFindings() {
+    if (findingsTimer) clearTimeout(findingsTimer);
+    findingsTimer = setTimeout(rescanFindings, FINDINGS_DELAY_MS);
+}
+
+async function resetFindings() {
+    // A new report: the previous patient's acknowledgements must not answer for
+    // this one's identical finding.
+    findingsRequest += 1;
+    try {
+        const response = await fetch('/api/report/findings/reset', { method: 'POST' });
+        if (response.ok) paintFindings(await response.json());
+    } catch (err) {
+        console.warn('Could not reset findings:', err);
+    }
+}
+
+function initFindingMarks() {
+    editor.addEventListener('input', scheduleFindings);
+    scheduleFindings();
+}
+
 function renderTermTier(host, items) {
     host.innerHTML = '';
     items.forEach((item) => {
@@ -1215,8 +1880,17 @@ async function lookupSelectedTerm() {
         hideTermPop();
         return;
     }
-    const range = { start: editor.selectionStart, end: editor.selectionEnd };
-    const selected = editor.value.slice(range.start, range.end).trim();
+    // A double-click word-select in a textarea can include the trailing
+    // space (Chrome does this at some word boundaries). Trim the range
+    // itself, not just the text sent to the lookup, so applying a
+    // suggestion replaces only the word and never eats the space next to it.
+    const raw = editor.value;
+    let start = editor.selectionStart;
+    let end = editor.selectionEnd;
+    while (start < end && /\s/.test(raw[start])) start += 1;
+    while (end > start && /\s/.test(raw[end - 1])) end -= 1;
+    const range = { start, end };
+    const selected = raw.slice(start, end);
     if (!selected) {
         hideTermPop();
         return;
@@ -1293,3 +1967,342 @@ initOverflowMenu();
 initDisclaimer();
 initTermPop();
 initTermMarks();
+initFindingMarks();
+
+// ---------------------------------------------------------------------------
+// Developer console
+//
+// Two clocks, one stream. The server's diary (src/core/event_log.py) says what
+// the machine did and how long each decode took; the browser's own marks say
+// when the text actually reached the screen. Both are needed, because the
+// complaint "it feels slow" is about the second one and the cause is nearly
+// always in the first.
+//
+// It polls rather than opening a second socket: the dictation socket must
+// never share a connection with diagnostics, and a poll that only asks for
+// events newer than the last one it printed costs almost nothing.
+//
+// Everything here is local. The endpoints read in-process buffers and are
+// served on loopback; nothing is written to disk and nothing leaves the device.
+// ---------------------------------------------------------------------------
+
+const DEV_STORAGE_KEY = 'radio-dictate-web-dev';
+const DEV_POLL_MS = 700;          // how often the server diary is drained
+const DEV_PERF_MS = 2500;         // the rolling averages move slowly
+const DEV_MAX_LINES = 800;        // scroll-back, matched to the server's ring
+const DEV_SLOW_MS = 1500;         // a decode over this is worth the eye landing on
+
+const devDrawer = document.getElementById('devDrawer');
+const devConsole = document.getElementById('devConsole');
+const devFilterInput = document.getElementById('devFilter');
+
+const dev = {
+    open: false,
+    paused: false,
+    lastSeq: 0,
+    pollTimer: null,
+    perfTimer: null,
+    entries: [],
+    filter: '',
+    dirty: false,
+    // What this browser measured about the recording in progress.
+    recordStart: 0,
+    firstWordsMs: null,
+    lastUpdateAt: 0,
+    updates: 0,
+    bytesSent: 0,
+};
+
+function devSetStat(id, text, over = false) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('over', Boolean(over));
+}
+
+// One entry. `source` is a short subsystem name; `fields` is whatever numbers
+// make the line readable. Recorded whether or not the drawer is open, so
+// opening it after a slow dictation still shows that dictation.
+function devMark(source, message, fields = {}, { level = 'info', ms = null } = {}) {
+    devPush({ t: Date.now() / 1000, source, message, ms, fields, level, browser: true });
+}
+
+function devPush(entry) {
+    const last = dev.entries[dev.entries.length - 1];
+    // The server's diary arrives in batches, so one of its lines can reach the
+    // page after a browser line that happened later. A console whose clock runs
+    // backwards reads as a broken console, so the order is repaired and the
+    // stream redrawn once the batch has landed.
+    const outOfOrder = Boolean(last) && entry.t < last.t;
+    dev.entries.push(entry);
+    if (outOfOrder) {
+        dev.entries.sort((a, b) => a.t - b.t);
+        dev.dirty = true;
+    }
+    if (dev.entries.length > DEV_MAX_LINES) {
+        dev.entries.splice(0, dev.entries.length - DEV_MAX_LINES);
+        dev.dirty = true;
+    }
+    if (!dev.dirty && dev.open && !dev.paused) devAppend(entry);
+}
+
+function devMatches(entry) {
+    if (!dev.filter) return true;
+    const hay = `${entry.source} ${entry.message} ${JSON.stringify(entry.fields || {})}`.toLowerCase();
+    return hay.includes(dev.filter);
+}
+
+function devClock(t) {
+    const d = new Date(t * 1000);
+    const pad = (n, w = 2) => String(n).padStart(w, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+}
+
+function devAppend(entry) {
+    if (!devMatches(entry)) return;
+    const atBottom = devConsole.scrollTop + devConsole.clientHeight >= devConsole.scrollHeight - 24;
+
+    const line = document.createElement('span');
+    line.className = 'dev-line';
+    if (entry.level === 'error' || entry.level === 'critical') line.classList.add('is-error');
+    if (entry.browser) line.classList.add('is-browser');
+
+    const add = (cls, text) => {
+        const el = document.createElement('span');
+        el.className = cls;
+        el.textContent = text;
+        line.appendChild(el);
+        line.appendChild(document.createTextNode(' '));
+    };
+
+    add('t', devClock(entry.t));
+    add('src', entry.browser ? 'browser' : entry.source);
+    add('msg', entry.message);
+
+    const fields = entry.fields || {};
+    const pairs = Object.keys(fields).map((k) => `${k}=${fields[k]}`).join(' ');
+    if (pairs) add('kv', pairs);
+
+    if (entry.ms !== null && entry.ms !== undefined) {
+        const el = document.createElement('span');
+        el.className = entry.ms >= DEV_SLOW_MS ? 'ms over' : 'ms';
+        el.textContent = `${Math.round(entry.ms)}ms`;
+        line.appendChild(el);
+    }
+
+    devConsole.appendChild(line);
+    while (devConsole.childElementCount > DEV_MAX_LINES) {
+        devConsole.removeChild(devConsole.firstChild);
+    }
+    // Follow the tail only if you were already at the tail. Scrolling up to
+    // read a line and being yanked back down is how a console becomes useless.
+    if (atBottom) devConsole.scrollTop = devConsole.scrollHeight;
+}
+
+function devRedraw() {
+    dev.dirty = false;
+    devConsole.innerHTML = '';
+    dev.entries.forEach(devAppend);
+    devConsole.scrollTop = devConsole.scrollHeight;
+}
+
+async function devPoll() {
+    if (!dev.open || dev.paused) return;
+    try {
+        const response = await fetch(`/api/debug/events?after=${dev.lastSeq}`);
+        if (!response.ok) return;
+        const data = await response.json();
+        (data.events || []).forEach((event) => {
+            dev.lastSeq = Math.max(dev.lastSeq, event.seq);
+            devPush(Object.assign({}, event, { browser: false }));
+        });
+        if (dev.dirty && dev.open && !dev.paused) devRedraw();
+    } catch (err) {
+        // The console failing must never be louder than what it reports on.
+        console.warn('Developer console poll failed:', err);
+    }
+}
+
+async function devPollPerf() {
+    if (!dev.open || dev.paused) return;
+    try {
+        const response = await fetch('/api/debug/perf');
+        if (!response.ok) return;
+        const data = await response.json();
+        const stages = data.stages || {};
+        const names = Object.keys(stages);
+        const rows = document.getElementById('devPerfRows');
+        const empty = document.getElementById('devPerfEmpty');
+        rows.innerHTML = '';
+        empty.hidden = names.length > 0;
+        names.slice(0, 14).forEach((name) => {
+            const stat = stages[name];
+            const tr = document.createElement('tr');
+            [name, stat.count, `${Math.round(stat.mean_ms)}ms`, `${Math.round(stat.p95_ms)}ms`]
+                .forEach((value, index) => {
+                    const td = document.createElement('td');
+                    if (index > 0) td.className = 'num';
+                    td.textContent = value;
+                    tr.appendChild(td);
+                });
+            rows.appendChild(tr);
+        });
+    } catch (err) {
+        console.warn('Developer perf read failed:', err);
+    }
+}
+
+function devSetOpen(open) {
+    dev.open = open;
+    devDrawer.hidden = !open;
+    const btn = document.getElementById('devBtn');
+    if (btn) btn.setAttribute('aria-pressed', String(open));
+    try {
+        localStorage.setItem(DEV_STORAGE_KEY, open ? '1' : '0');
+    } catch (err) {
+        console.warn('Could not remember the console state:', err);
+    }
+
+    clearInterval(dev.pollTimer);
+    clearInterval(dev.perfTimer);
+    if (!open) return;
+
+    devRedraw();
+    devPoll();
+    devPollPerf();
+    dev.pollTimer = setInterval(devPoll, DEV_POLL_MS);
+    dev.perfTimer = setInterval(devPollPerf, DEV_PERF_MS);
+}
+
+// -- what the browser itself measures ---------------------------------------
+
+function devRecordingStarted() {
+    dev.recordStart = performance.now();
+    dev.firstWordsMs = null;
+    dev.lastUpdateAt = 0;
+    dev.updates = 0;
+    dev.bytesSent = 0;
+    devSetStat('devFirstWords', '–');
+    devSetStat('devLastUpdate', '–');
+    devSetStat('devBehind', '–');
+    devSetStat('devUpdates', '0');
+    devSetStat('devAudioSent', '0.0s');
+}
+
+function devAudioSent(byteLength) {
+    dev.bytesSent += byteLength;
+    // 16-bit samples at the live rate: two bytes is one sample.
+    const seconds = dev.bytesSent / 2 / LIVE_SAMPLE_RATE;
+    if (dev.open) devSetStat('devAudioSent', `${seconds.toFixed(1)}s`);
+}
+
+function devWordsIn(text) {
+    const trimmed = (text || '').trim();
+    return trimmed ? trimmed.split(/\s+/).length : 0;
+}
+
+// Called for every 'partial' the socket delivers -- the moment the radiologist
+// actually sees new words, which is the only latency they feel.
+function devUpdateArrived(msg) {
+    const now = performance.now();
+    const sinceStart = now - dev.recordStart;
+    const gap = dev.lastUpdateAt ? now - dev.lastUpdateAt : null;
+    dev.lastUpdateAt = now;
+    dev.updates += 1;
+
+    const words = devWordsIn(msg.committed);
+    const previewWords = devWordsIn(msg.preview);
+    if (dev.firstWordsMs === null && (words || previewWords)) {
+        dev.firstWordsMs = sinceStart;
+        devMark('browser', 'first words on screen', {}, { ms: sinceStart });
+        // The wait everyone feels. Budget is the measured 3s; past that it is
+        // worth the radiologist knowing the start was slow, not just that it
+        // eventually arrived.
+        tlStep('First words', sinceStart / 1000, sinceStart > 3000 ? 'slow' : 'good');
+    }
+
+    // How far the text on screen is behind the microphone: wall time since the
+    // button was pressed, minus how much audio the server says it has read.
+    const behind = Math.max(0, sinceStart / 1000 - (msg.audioSec || 0));
+
+    devSetStat(
+        'devFirstWords',
+        dev.firstWordsMs === null ? '–' : `${(dev.firstWordsMs / 1000).toFixed(1)}s`,
+        dev.firstWordsMs !== null && dev.firstWordsMs > 6000,
+    );
+    devSetStat('devLastUpdate', gap === null ? '–' : `${(gap / 1000).toFixed(1)}s`, gap !== null && gap > 4000);
+    devSetStat('devBehind', `${behind.toFixed(1)}s`, behind > 5);
+    devSetStat('devUpdates', String(dev.updates));
+
+    devMark('browser', 'text on screen', {
+        words,
+        preview_words: previewWords,
+        audio_sec: msg.audioSec,
+        behind_sec: behind.toFixed(1),
+        state: msg.state,
+    }, { ms: gap });
+
+    // The same three numbers the console just printed, handed to the timeline
+    // rather than computed a second time and drifting.
+    return { sinceStart, behind, gap, words };
+}
+
+function initDevConsole() {
+    const btn = document.getElementById('devBtn');
+    if (btn) btn.addEventListener('click', () => devSetOpen(!dev.open));
+
+    document.getElementById('devCloseBtn').addEventListener('click', () => devSetOpen(false));
+
+    const pauseBtn = document.getElementById('devPauseBtn');
+    pauseBtn.addEventListener('click', () => {
+        dev.paused = !dev.paused;
+        pauseBtn.textContent = dev.paused ? 'Resume' : 'Pause';
+        pauseBtn.setAttribute('aria-pressed', String(dev.paused));
+        // Resuming prints what was missed rather than silently skipping it --
+        // a gap you cannot see is worse than no console at all.
+        if (!dev.paused) { devRedraw(); devPoll(); }
+    });
+
+    document.getElementById('devClearBtn').addEventListener('click', () => {
+        dev.entries = [];
+        devConsole.innerHTML = '';
+    });
+
+    document.getElementById('devCopyBtn').addEventListener('click', async () => {
+        const text = dev.entries.filter(devMatches).map((entry) => {
+            const pairs = Object.entries(entry.fields || {}).map(([k, v]) => `${k}=${v}`).join(' ');
+            const ms = (entry.ms === null || entry.ms === undefined) ? '' : ` ${Math.round(entry.ms)}ms`;
+            const who = entry.browser ? 'browser' : entry.source;
+            return `${devClock(entry.t)} ${who} ${entry.message} ${pairs}${ms}`.trim();
+        }).join('\n');
+        try {
+            await navigator.clipboard.writeText(text);
+            showStatus('Console copied', 'is-ok', 1800);
+        } catch (err) {
+            showError('Could not copy the console.');
+        }
+    });
+
+    devFilterInput.addEventListener('input', () => {
+        dev.filter = devFilterInput.value.trim().toLowerCase();
+        devRedraw();
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.ctrlKey && event.shiftKey && (event.key === 'D' || event.key === 'd')) {
+            event.preventDefault();
+            devSetOpen(!dev.open);
+        }
+    });
+
+    let wasOpen = false;
+    try {
+        wasOpen = localStorage.getItem(DEV_STORAGE_KEY) === '1';
+    } catch (err) {
+        console.warn('Could not read the console state:', err);
+    }
+    if (wasOpen) devSetOpen(true);
+}
+
+initDevConsole();
+updateWordCount();

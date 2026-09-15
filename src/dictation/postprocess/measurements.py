@@ -1,4 +1,4 @@
-"""Stage 4 — standardise measurements.
+"""Stage 4: standardise measurements.
 
 * ``5 millimetres`` → ``5 mm``
 * ``5 by 3 millimetres`` → ``5 x 3 mm``
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 
-# Inline regex tuples instead of a sequential 7-element list — naming each
+# Inline regex tuples instead of a sequential 7-element list: naming each
 # pattern matters because the apply order is significant.
 
 _MEASURE_MM_3D = re.compile(

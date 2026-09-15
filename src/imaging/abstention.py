@@ -1,4 +1,4 @@
-"""Selective-prediction gate — the scan assistant's central safety mechanism.
+"""Selective-prediction gate: the scan assistant's central safety mechanism.
 
 Research on clinical CXR models is consistent: high accuracy is not enough;
 deployment safety comes from a *rejection mechanism* that abstains on uncertain
@@ -8,7 +8,7 @@ classifier's raw per-label probabilities and keeps only the labels that are
   1. actually trained for the loaded weights (untrained heads emit noise), and
   2. at or above a calibrated per-pathology probability threshold.
 
-Everything else is withheld — the tool says nothing rather than something
+Everything else is withheld: the tool says nothing rather than something
 uncertain. Thresholds default to a conservative (high) value and are loaded from
 ``data/imaging/thresholds.json`` when present, else the packaged defaults; a site
 can lower a threshold deliberately, but the shipped behaviour errs toward silence.
@@ -64,7 +64,7 @@ def apply(scores: List[PathologyScore]) -> List[ImagingFinding]:
 
     Returns one :class:`ImagingFinding` per *kept* label (untrained or
     below-threshold labels are dropped entirely), sorted most-confident first.
-    ``region`` is left None here — localization fills it, and the analyzer drops
+    ``region`` is left None here: localization fills it, and the analyzer drops
     any finding that still lacks a region before it reaches the user.
     """
     thresholds = load_thresholds()

@@ -1,5 +1,5 @@
 // The /developer page: read the run log, render it, and answer the long-vs-short
-// question. Read-only — nothing here writes to the report or the settings.
+// question. Read-only: nothing here writes to the report or the settings.
 
 const runRows = document.getElementById('runRows');
 const runsEmpty = document.getElementById('runsEmpty');
@@ -18,14 +18,14 @@ const BANDS = [
 ];
 
 function secs(value) {
-    if (!value && value !== 0) return '—';
+    if (!value && value !== 0) return ':';
     return value >= 60 ? `${Math.floor(value / 60)}m ${Math.round(value % 60)}s`
                        : `${value.toFixed(1)}s`;
 }
 
 function when(iso) {
     const at = new Date(iso);
-    return Number.isNaN(at.getTime()) ? '—' : at.toLocaleString();
+    return Number.isNaN(at.getTime()) ? ':' : at.toLocaleString();
 }
 
 function median(values) {
@@ -60,14 +60,14 @@ function renderRuns(runs) {
     runs.forEach((run) => {
         const row = document.createElement('tr');
         cell(row, when(run.started));
-        cell(row, run.front_end || '—');
-        cell(row, run.model || '—');
+        cell(row, run.front_end || ',');
+        cell(row, run.model || ',');
         cell(row, secs(run.audio_sec), 'num');
         cell(row, secs(run.duration_sec), 'num');
-        cell(row, run.finalise_sec ? secs(run.finalise_sec) : '—', 'num');
+        cell(row, run.finalise_sec ? secs(run.finalise_sec) : ':', 'num');
 
         const ratio = run.decode_ratio;
-        const td = cell(row, ratio == null ? '—' : ratio.toFixed(2), 'num');
+        const td = cell(row, ratio == null ? ':' : ratio.toFixed(2), 'num');
         if (ratio != null && ratio > 1) td.classList.add('over');
 
         cell(row, String(run.word_count ?? 0), 'num');
@@ -104,10 +104,10 @@ function renderBands(runs) {
         cell(row, band.label);
         cell(row, String(inBand.length), 'num');
         const ratio = median(ratios);
-        const td = cell(row, ratio == null ? '—' : ratio.toFixed(2), 'num');
+        const td = cell(row, ratio == null ? ':' : ratio.toFixed(2), 'num');
         if (ratio != null && ratio > 1) td.classList.add('over');
         const tail = median(tails);
-        cell(row, tail == null ? '—' : secs(tail), 'num');
+        cell(row, tail == null ? ':' : secs(tail), 'num');
         lengthRows.appendChild(row);
     });
 }

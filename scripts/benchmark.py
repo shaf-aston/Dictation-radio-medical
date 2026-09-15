@@ -3,18 +3,18 @@
 Runs the *real* pipeline (no mocks) and reports where the time goes, using the
 same :mod:`src.core.perf` timings the live app records. Three uses:
 
-1. **Terminal latency check** (default) — warm-up cost, first-chunk (cold) cost,
+1. **Terminal latency check** (default): warm-up cost, first-chunk (cold) cost,
    and steady-state (warm) per-chunk cost, plus the per-stage perf table::
 
        python scripts/benchmark.py
 
-2. **Manual / visual check** — feed your own dictation text and see exactly what
+2. **Manual / visual check**: feed your own dictation text and see exactly what
    the pipeline turns it into (does it help or hurt your words?)::
 
        python scripts/benchmark.py --text "there is a tier of the supraspinatus"
        python scripts/benchmark.py --file my_dictation.txt --accent south_asian
 
-3. **Regression guard** — fail (exit 1) if the warm per-chunk latency drifts
+3. **Regression guard**: fail (exit 1) if the warm per-chunk latency drifts
    above a budget, so a future change that slows the hot path is caught::
 
        python scripts/benchmark.py --max-warm-ms 60

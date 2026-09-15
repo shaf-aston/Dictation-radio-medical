@@ -22,7 +22,7 @@ _QSS_FILE = Path(__file__).resolve().parent / "styles" / "app.qss"
 THEMES = ("dark", "light")
 
 # `room2`/`textDim` read naturally in Python and JSON; CSS wants `--room-2`.
-CSS_NAMES = {"room2": "room-2", "textDim": "text-dim"}
+CSS_NAMES = {"room2": "room-2", "textDim": "text-dim", "warnText": "warn-text"}
 
 
 def css_name(key: str) -> str:

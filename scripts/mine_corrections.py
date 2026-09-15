@@ -3,25 +3,25 @@
 
 The app already records every pipeline run (``data/analysis/analysis_*.json``)
 and every passively-learned single-word user edit
-(``data/learned_corrections.json``). Nothing read that data — so gaps were only
+(``data/learned_corrections.json``). Nothing read that data: so gaps were only
 found by stumbling on them. This script closes the loop: it ranks the
 highest-frequency uncorrected mishearings and prints ready-to-paste YAML stubs
 for ``corrections.yaml``.
 
 Three signals:
 
-1. **Post-dictation edits** — every word the radiologist changed *after*
+1. **Post-dictation edits**: every word the radiologist changed *after*
    dictation finished (``data/analysis/dictation_edits.jsonl``, written by
    ``features/edit_tracking.py``). A clinician fixing the delivered text is the
    strongest evidence the pipeline was wrong, so these rank first.
-2. **Survivors** — words present in a transcript's *output* that are neither in
+2. **Survivors**: words present in a transcript's *output* that are neither in
    the medical dictionary nor ordinary English-looking, i.e. likely
    mis-transcriptions the pipeline failed to fix. rapidfuzz suggests the nearest
    medical term as a candidate correction.
-3. **User edits** — the ``word_corrections`` a radiologist already made by hand
+3. **User edits**: the ``word_corrections`` a radiologist already made by hand
    via the single-word passive learner, which have no shipped rule yet.
 
-Output is a ranked report plus a YAML block. Nothing is written automatically —
+Output is a ranked report plus a YAML block. Nothing is written automatically:
 a human reviews and pastes. Run::
 
     python scripts/mine_corrections.py
@@ -51,7 +51,7 @@ def _english_filter():
 
     Uses pyspellchecker if installed (best signal); otherwise falls back to a
     compact stoplist of common words so the report isn't drowned in plain
-    English. Either way the miner only *triages* — a human reviews every stub.
+    English. Either way the miner only *triages*: a human reviews every stub.
     """
     try:
         from spellchecker import SpellChecker  # optional dep
@@ -166,7 +166,7 @@ def mine(top: int, min_count: int) -> str:
     # Signal 2: user edits with no candidate yet.
     user_edits = _load_user_edits()
 
-    # Signal 0 (ranked first): post-dictation edits — the clinician's own fixes.
+    # Signal 0 (ranked first): post-dictation edits: the clinician's own fixes.
     dictation_edits = _load_dictation_edits()
 
     lines = ["# ---- Mined correction candidates ----", ""]
@@ -180,7 +180,7 @@ def mine(top: int, min_count: int) -> str:
         ]:
             lines.append(
                 f"## Post-dictation edits by the radiologist ({len(ranked_edits)}) "
-                "— strongest signal"
+                ": strongest signal"
             )
             for (before, after), c in ranked_edits:
                 lines.append(f"  {c:4d}x  {before!r} -> {after!r}")
@@ -191,7 +191,7 @@ def mine(top: int, min_count: int) -> str:
             lines.append("")
 
     if user_edits:
-        lines.append(f"## Hand corrections by users ({len(user_edits)}) — highest confidence")
+        lines.append(f"## Hand corrections by users ({len(user_edits)}): highest confidence")
         for wrong, right in sorted(user_edits.items()):
             lines.append(f"  {wrong!r} -> {right!r}")
             stubs.append((f"user-{_slug(wrong)}", wrong, right, "from a user's manual edit"))

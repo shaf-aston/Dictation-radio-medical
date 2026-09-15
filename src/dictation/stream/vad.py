@@ -1,4 +1,4 @@
-"""Voice-activity detection — thin wrapper over faster-whisper's bundled Silero VAD.
+"""Voice-activity detection: thin wrapper over faster-whisper's bundled Silero VAD.
 
 No new dependency: faster_whisper ships ``silero_vad.onnx`` and this helper,
 the same one ``WhisperModel(vad_filter=True)`` already uses internally.
@@ -36,7 +36,7 @@ def detect_speech(
 
     ``min_silence_ms`` is deliberately shorter than faster-whisper's own
     ``vad_filter=True`` default (2000ms, tuned to filter non-speech noise out
-    of a whole-file decode) — the segmenter needs to catch a radiologist's
+    of a whole-file decode): the segmenter needs to catch a radiologist's
     ordinary between-sentence pause (typically 300-800ms) as a cut point, not
     just long silences.
     """

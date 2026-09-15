@@ -1,4 +1,4 @@
-"""Stages 3 and 9 — whitespace normalisation and sentence capitalisation."""
+"""Stages 3 and 9: whitespace normalisation and sentence capitalisation."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ _RE_HSPACE = re.compile(r"[^\S\n]+")
 _RE_PREPUNCT = re.compile(r"[ \t]+([.,;:!?)])")
 _RE_SENT = re.compile(r"([.!?]+\s+)")
 # Whisper decoding near-silence emits stray punctuation runs (", , . . ,").
-# After _RE_PREPUNCT strips the inner spaces these collapse to ",,..," — so fold
+# After _RE_PREPUNCT strips the inner spaces these collapse to ",,..,": so fold
 # any run of two-or-more punctuation marks (optionally space-separated) down to
 # its first mark. Single spaced marks are left alone: those are the legitimate
 # output of the spoken-punctuation stage (" : ", " . ") and get joined by
@@ -25,7 +25,7 @@ def normalize_spaces(text: str) -> str:
     return _RE_HSPACE.sub(" ", text).strip()
 
 
-# Tokens whose canonical case is already uppercase — leave them alone.
+# Tokens whose canonical case is already uppercase: leave them alone.
 _PRESERVE_CAPS = re.compile(
     r"^(CT|MRI|US|CXR|STIR|PDFS|FLAIR|DWI|ADC|ACL|PCL|MCL|LCL|UCL|TFCC|"
     r"SLAP|HAGL|ARCO|SPARCC|DEXA|PET|BMD|FAI|SI|APL|EPB|AVN|BMO)\b"

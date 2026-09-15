@@ -1,11 +1,11 @@
 /* ===========================================================================
-   Radio Dictate — web front-end
+   Radio Dictate: web front-end
    ---------------------------------------------------------------------------
    The idea: the report is a film on a lightbox. It is the only lit surface;
    every control around it is the dim reading room. That is why the editor is
    the brightest thing on screen and the chrome is deliberately quiet.
 
-   No web fonts, no framework, no build step. One stylesheet, system faces —
+   No web fonts, no framework, no build step. One stylesheet, system faces:
    the page paints on first byte because a radiologist should never wait for
    the interface before they can wait for the model.
    =========================================================================== */
@@ -13,6 +13,8 @@
 /* Self-hosted icons (offline-safe: no external CDN). Each .fa-* class masks
    an inline SVG so currentColor still applies and the existing markup +
    JS class-swaps keep working unchanged. */
+[hidden] { display: none !important; }
+
 .fas { display: inline-block; width: 1em; height: 1em; vertical-align: -0.125em;
     background-color: currentColor;
     -webkit-mask: var(--fa) no-repeat center / contain;
@@ -48,7 +50,7 @@
     color-scheme: dark light;
 
     /* Colours are NOT here. They come from src/ui/tokens.json, rendered into
-       the page's <head> by src/ui/theme.py — the same file the desktop
+       the page's <head> by src/ui/theme.py: the same file the desktop
        stylesheet reads, so the two front-ends cannot drift apart. */
 
     --r:      6px;
@@ -71,8 +73,13 @@
 
 html, body { height: 100%; }
 
+/* Two rows: the app, and the developer drawer under it. A drawer that is a
+   row rather than an overlay can never cover the microphone button: which is
+   the one control you still need while you are reading the console. */
 body {
     margin: 0;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
     background: var(--room);
     color: var(--text);
     font: 400 15px/1.55 var(--ui);
@@ -92,9 +99,15 @@ body {
 }
 
 .app {
+    min-height: 0;
     height: 100%;
     display: grid;
     grid-template-rows: var(--bar-h) minmax(0, 1fr);
+    /* The column needs the same minmax(0,…) the rows already have. An implicit
+       `auto` column is sized to its items' MAX-content, so one long status
+       message widened the whole page and made a phone scroll sideways instead
+       of the message being truncated. */
+    grid-template-columns: minmax(0, 1fr);
 }
 
 /* --------------------------------------------------------------------------
@@ -120,8 +133,13 @@ body {
     flex: none;
 }
 
+/* An <h1>, because the page had no level-one heading at all and a screen
+   reader had nothing to announce the app by. It is styled as the wordmark it
+   already was -- the change is to the outline, not to the picture. */
 .wordmark {
+    margin: 0;
     font-family: var(--hd);
+    font-size: 1rem;
     font-weight: 600;
     letter-spacing: -.01em;
     white-space: nowrap;
@@ -135,9 +153,22 @@ body {
     background: color-mix(in srgb, var(--text-dim) 12%, transparent);
     font-size: .8rem;
     color: var(--text-dim);
+    /* Takes the leftover width when the bar is cramped, but never grows past
+       its own text -- otherwise "Ready" became an empty pill a thousand pixels
+       wide. max-content is the ceiling; the ellipsis handles the floor. */
+    flex: 1 1 auto;
+    max-width: max-content;
+    min-width: 3.5rem;
+}
+/* min-width:0 is what makes the ellipsis actually work. Without it this span's
+   automatic minimum size is the whole un-wrapped message, so it refuses to
+   shrink, the pill cannot shrink either, and a long status widens the entire
+   page instead of being truncated: 390px of phone became 501px of sideways
+   scrolling. */
+.status span:last-child {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     min-width: 0;
 }
-.status span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .dot {
     width: 7px; height: 7px; border-radius: 50%;
@@ -203,7 +234,7 @@ body {
 .menu {
     position: absolute; right: 0; top: calc(100% + .45rem);
     z-index: 20;
-    min-width: 12.5rem;
+    min-width: 15.5rem;   /* wide enough that a label and its shortcut sit on one line */
     padding: .3rem;
     display: flex; flex-direction: column;
     background: var(--room-2);
@@ -211,7 +242,6 @@ body {
     border-radius: var(--r);
     box-shadow: 0 10px 30px rgb(0 0 0 / .35);
 }
-.menu[hidden] { display: none; }
 
 .menu button {
     display: flex; align-items: center; gap: .6rem;
@@ -226,12 +256,26 @@ body {
 .menu button:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 9%, transparent); }
 .menu button:disabled { opacity: .4; cursor: not-allowed; }
 .menu button .fas { color: var(--text-dim); flex: none; }
+.menu button span { flex: 1; white-space: nowrap; }
+.menu-kbd {
+    font: 600 .66rem var(--mono);
+    color: var(--text-dim);
+    border: 1px solid var(--edge);
+    border-radius: 3px;
+    padding: .05rem .28rem;
+    flex: none;
+}
 .menu hr { margin: .3rem .5rem; border: 0; border-top: 1px solid var(--edge); }
 .menu-danger { color: var(--rec); }
 .menu-danger .fas { color: var(--rec); }
 
 /* --------------------------------------------------------------------------
-   Main: the lit stage, then the folded panels
+   Main: the lit stage, and the rail of templates and phrases beside it.
+
+   Narrow screens stack (report first, rail under it). From --rail-at up, the
+   rail moves to the side and stays on screen while you dictate: a template
+   or a stock phrase you have to scroll away from the report to reach is one
+   nobody uses mid-dictation.
    -------------------------------------------------------------------------- */
 
 .main {
@@ -241,17 +285,63 @@ body {
     display: flex; flex-direction: column; gap: var(--gap);
 }
 
+@media (min-width: 68rem) {
+    .main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 21rem;
+        overflow: hidden;
+    }
+    /* The report keeps the full height and the rail scrolls on its own, so a
+       long list of phrases can never push the microphone button off screen.
+       Written with the parent in the selector on purpose: the base .stage rule
+       is further down the file, so at equal specificity it would win and the
+       stage would keep a 30rem floor it cannot shrink below -- which clipped
+       the microphone row the moment anything else took height, such as the
+       developer drawer opening. */
+    .main > .stage { min-height: 0; }
+    .panels { min-height: 0; max-height: 100%; overflow-y: auto; padding-right: .2rem; }
+}
+
 .stage {
     display: flex; flex-direction: column;
-    gap: .8rem;
+    gap: .55rem;
     min-height: min(58vh, 30rem);
     flex: 1 1 auto;
 }
 
+/* The report says what it is and how it is going, on one baseline. Before this
+   the word count did not exist and the "words to check" line hung under the
+   editor right-aligned against nothing, which read as a stray caption. */
+.stage-head {
+    display: flex; align-items: baseline; gap: .6rem;
+    padding: 0 .15rem;
+    min-height: 1.25rem;
+}
+
+.stage-title {
+    margin: 0;
+    font: 600 .74rem var(--ui);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+
+.stage-count {
+    margin-left: auto;
+    font: .74rem var(--mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+    white-space: nowrap;
+}
+
 /* The film on the lightbox: the one surface that emits rather than reflects.
-   The wrapper carries the surface so the textarea itself can be transparent —
+   The wrapper carries the surface so the textarea itself can be transparent:
    that is what lets the marks underlay show through from behind it. */
 .editor-wrap {
+    /* One width for the findings strip, used by the strip and by the marks
+       underlay that has to start where the strip ends. Two numbers here would
+       drift and slide every underline off its word. */
+    --gutter-w: 14px;
     position: relative;
     display: flex;
     flex: 1;
@@ -292,7 +382,7 @@ body {
    marks under the real words. It never receives the pointer. */
 .editor-marks {
     position: absolute;
-    inset: 0;
+    inset: 0 0 0 var(--gutter-w);
     z-index: 0;
     overflow: hidden;
     color: transparent;
@@ -305,13 +395,74 @@ body {
     border-bottom: 2px dotted var(--glow);
 }
 
-/* "3 words to check — highlight one to see alternatives". Assistive, so it is
+/* The decoder's own doubt, not a suggestion. Fainter and thinner than the mark
+   above on purpose: this one has nothing to offer if you click it, it only
+   says "read this word again". Two identical underlines meaning two different
+   things would make both of them noise. */
+.editor-marks mark.unsure {
+    border-bottom: 1px solid color-mix(in srgb, var(--glow) 40%, transparent);
+}
+
+/* --------------------------------------------------------------------------
+   Critical findings: a strip of ticks beside the report, and a count that is
+   always on show. Nothing here touches the radiologist's characters.
+   -------------------------------------------------------------------------- */
+
+.finding-gutter {
+    position: relative;
+    flex: none;
+    width: var(--gutter-w);
+    z-index: 2;                       /* above the marks underlay, below nothing */
+}
+
+/* Placed by position in the *document*, not by where the text happens to be
+   scrolled: so a finding three pages down still has a tick to click. Only
+   `top` is set from script; the colour belongs to the theme. */
+.finding-mark {
+    position: absolute;
+    left: 50%;
+    width: 4px;
+    height: 14px;
+    margin: -7px 0 0 -2px;
+    border-radius: 2px;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    background: var(--text-dim);      /* answered for */
+}
+.finding-mark[data-outstanding="true"] { background: var(--rec); }
+.finding-mark:focus-visible { outline: 2px solid var(--glow); outline-offset: 2px; }
+
+.findings-pill {
+    margin-left: .2rem;
+    padding: .2rem .6rem;
+    border-radius: 999px;
+    font-size: .8rem;
+    white-space: nowrap;
+    flex: none;
+    background: color-mix(in srgb, var(--text-dim) 12%, transparent);
+    color: var(--text-dim);
+}
+/* Red only while something is genuinely waiting on a phone call. A clear
+   report and an answered one stay quiet: a badge that shouts every time
+   stops being read. */
+.findings-pill[data-findings="outstanding"] {
+    background: color-mix(in srgb, var(--rec) 18%, transparent);
+    color: var(--rec);
+}
+.findings-pill[data-findings="acknowledged"] {
+    background: color-mix(in srgb, var(--ok) 16%, transparent);
+    color: var(--ok);
+}
+
+/* "3 words to check: highlight one to see alternatives". Assistive, so it is
    dim and never --rec, which this app keeps for recording and severity. */
 .marks-hint {
     margin: 0;
     color: var(--text-dim);
-    font-size: .78rem;
-    text-align: right;
+    font-size: .76rem;
+    min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 .stage-foot { display: flex; flex-direction: column; align-items: center; gap: .45rem; }
@@ -338,6 +489,98 @@ body {
     100% { box-shadow: 0 0 0 0    color-mix(in srgb, var(--rec) 0%, transparent); }
 }
 
+/* The recording row: discard on one side, elapsed time and level on the other,
+   both flanking the button so the state is read where the click happened. The
+   slots hold their width whether or not they are filled, so starting a
+   recording does not shove the microphone button sideways. */
+.rec-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: .9rem; }
+.rec-row > #cancelBtn { justify-self: end; }
+.rec-row > .rec-meter { justify-self: start; }
+
+.rec-meter { display: flex; align-items: center; gap: .5rem; }
+.rec-timer { font: 600 .8rem var(--mono); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+/* --level is the last frame's true peak, written by app.js. */
+.rec-level {
+    width: 3rem; height: .3rem; border-radius: 999px;
+    background: color-mix(in srgb, var(--edge) 80%, transparent);
+    overflow: hidden;
+}
+.rec-level i {
+    display: block; height: 100%; width: calc(var(--level, 0) * 100%);
+    background: var(--rec); border-radius: 999px;
+    transition: width .08s linear;
+}
+
+/* The provisional tail: still being decoded, so it is dimmed rather than shown
+   as settled text. It lives in the marks underlay, never in the textarea, so it
+   cannot reach an export. */
+/* The words you are still saying. Dimmer than the settled text, because it is
+   still provisional, but not dimmed twice: --text-dim at 72% opacity measures
+   3.4:1 on the film in dark and 3.2:1 in light, under the 4.5:1 floor, and it
+   was faint enough that the first word of a dictation could be missed
+   altogether. The token on its own is 5.3:1 and still clearly quieter. */
+.editor-marks .preview { color: var(--text-dim); }
+
+/* ---- the session timeline ------------------------------------------------
+   Time is the dimension the old single status label threw away: it said what
+   was happening and forgot it a second later. Everything here is drawn from
+   numbers the session already reports (audio read, text committed, how far
+   behind), so nothing new is asked of the server. */
+
+.timeline { align-self: stretch; display: flex; flex-direction: column; gap: .4rem; }
+
+.tl-ribbon {
+    position: relative;
+    height: 2.1rem;
+    border: 1px solid var(--edge);
+    border-radius: 3px;
+    background: var(--film);
+    overflow: hidden;
+}
+
+.tl-seg { position: absolute; top: 0; bottom: 0; }
+/* Saved is the machine's voice, not severity: --glow, never --rec. */
+/* The divider is the point, not decoration: it is where one saved sentence
+   ends and the next begins, which is what "is my dictation safe" is read from. */
+.tl-seg.is-saved {
+    background: color-mix(in srgb, var(--glow) 42%, transparent);
+    border-right: 2px solid var(--film);
+}
+.tl-seg.is-open { background: color-mix(in srgb, var(--glow) 13%, transparent); }
+/* Fell behind: a warning, one step below severity. */
+.tl-seg.is-behind {
+    background: repeating-linear-gradient(45deg,
+        transparent 0 4px,
+        color-mix(in srgb, var(--warn) 55%, transparent) 4px 5px);
+}
+
+/* The pulse: how far the text trails the voice, over the same time axis as the
+   ribbon, so a climb sits directly under the sentence it happened during.
+   Thin and half-faded on purpose. */
+.tl-pulse { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.tl-now { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--rec); }
+
+.tl-live { margin: 0; display: flex; flex-wrap: wrap; gap: .4rem; font-size: .78rem; }
+.tl-live b { font-weight: 600; color: var(--text); }
+.tl-live span { color: var(--text-dim); }
+
+.tl-trail { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.tl-trail li {
+    display: grid;
+    grid-template-columns: 2.9rem 1fr auto;
+    gap: .5rem;
+    padding: .1rem 0;
+    font-size: .74rem;
+    color: var(--text-dim);
+}
+/* The newest step is the one you are living through, so it is the readable one. */
+.tl-trail li:last-child { color: var(--text); }
+.tl-t, .tl-dur { font: 500 .71rem var(--mono); font-variant-numeric: tabular-nums; }
+.tl-dur.is-slow { color: var(--warn-text); }
+.tl-dur.is-good { color: var(--ok); }
+
 .hint { margin: 0; font-size: .76rem; color: var(--text-dim); }
 
 kbd {
@@ -360,6 +603,12 @@ kbd {
     border-radius: var(--r);
     background: var(--room-2);
     overflow: hidden;
+    /* A flex item with overflow:hidden gets an automatic minimum size of 0
+       (CSS Flexbox spec), so .panels' column layout can shrink an open panel
+       below its own content height whenever the sidebar is too full to fit
+       every open panel: the scrollable ancestor should absorb that instead,
+       not squash and clip one panel's controls into invisibility. */
+    flex-shrink: 0;
 }
 
 .panel > summary {
@@ -398,7 +647,11 @@ kbd {
     border-top: 1px solid var(--edge);
 }
 
-.p-toolbar { display: flex; align-items: flex-end; gap: .6rem; flex-wrap: wrap; }
+/* Every control in a panel toolbar ends on the same baseline, whether it is a
+   labelled select (which is two rows tall) or a bare button (one). Without the
+   button's own margin the two sat on different lines at the same gap. */
+.p-toolbar { display: flex; align-items: flex-end; gap: .5rem; flex-wrap: wrap; }
+.p-toolbar > .btn { flex: none; padding-block: .42rem; }
 
 /* --------------------------------------------------------------------------
    Fields
@@ -445,23 +698,54 @@ select:disabled, input:disabled { opacity: .5; }
    Quick phrase chips: tapped mid-report, so they are big enough to hit
    -------------------------------------------------------------------------- */
 
-.chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+/* A quick phrase is a name and the sentence it inserts: two different things,
+   so they get two lines. As a centred 999px pill they ran together into
+   "Rotator cuff intactRotator cuff tendons are..." and wrapped to three ragged
+   lines, which is what made the rail look broken. */
+.chips { display: flex; flex-direction: column; gap: .3rem; }
 
-.chips button {
-    padding: .35rem .7rem;
+.chips button, .macro-chip {
+    display: block;
+    width: 100%;
+    padding: .45rem .6rem;
     border: 1px solid var(--edge);
-    border-radius: 999px;
+    border-radius: var(--r);
     background: var(--room);
     color: var(--text);
     font: inherit; font-size: .82rem;
+    text-align: left;
     cursor: pointer;
-    transition: border-color .12s var(--ease), color .12s var(--ease);
+    transition: border-color .12s var(--ease), background .12s var(--ease);
 }
-.chips button:hover { border-color: var(--glow); color: var(--glow); }
+.chips button:hover, .macro-chip:hover {
+    border-color: var(--glow);
+    background: var(--hover);
+}
+
+.macro-chip strong {
+    display: block;
+    font-size: .82rem;
+    font-weight: 600;
+    color: var(--text);
+}
+/* The sentence itself is a preview, not the label: quieter, and clipped to
+   two lines so one long phrase cannot push the rest of the list off screen. */
+.macro-chip span {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    margin-top: .1rem;
+    font-size: .76rem;
+    line-height: 1.45;
+    color: var(--text-dim);
+}
+.macro-chip:hover strong { color: var(--glow); }
 
 /* --------------------------------------------------------------------------
    Term popover: the neighbourhood of the highlighted word
-   Two tiers, and the size difference is the whole message — what the word
+   Two tiers, and the size difference is the whole message: what the word
    might have been reads at full strength, what merely goes with it is
    deliberately quieter so it can be skimmed past. Suggestions are the
    machine's voice, so they wear --glow, never --rec.
@@ -477,7 +761,6 @@ select:disabled, input:disabled { opacity: .5; }
     border-radius: var(--r);
     box-shadow: 0 10px 30px rgb(0 0 0 / .35);
 }
-.termpop[hidden] { display: none; }
 
 .tp-head {
     margin: 0 0 .35rem;
@@ -533,7 +816,6 @@ select:disabled, input:disabled { opacity: .5; }
     background: color-mix(in srgb, var(--room) 82%, transparent);
     backdrop-filter: blur(2px);
 }
-.scrim[hidden] { display: none; }
 
 .modal {
     width: min(34rem, 100%);
@@ -552,8 +834,8 @@ select:disabled, input:disabled { opacity: .5; }
     color: var(--rec);
 }
 
-/* The text arrives as one string with blank lines in it — the same string the
-   desktop dialog shows — so the line breaks have to survive. */
+/* The text arrives as one string with blank lines in it, the same string the
+   desktop dialog shows, so the line breaks have to survive. */
 .modal-text {
     margin: 0;
     white-space: pre-line;
@@ -564,11 +846,166 @@ select:disabled, input:disabled { opacity: .5; }
 .modal-foot { display: flex; justify-content: flex-end; margin-top: 1.1rem; }
 
 /* --------------------------------------------------------------------------
+   Developer console
+
+   A row under the app, never an overlay: the microphone button has to stay
+   reachable while you are reading why the last decode was slow. Deliberately
+   the plainest surface in the file: monospace, no colour except where a line
+   is an error or a duration is over budget, because a console that decorates
+   itself is one you stop reading.
+   -------------------------------------------------------------------------- */
+
+.dev-drawer {
+    display: flex; flex-direction: column;
+    height: min(40vh, 24rem);
+    border-top: 1px solid var(--edge);
+    background: var(--room-2);
+}
+
+.dev-drawer-bar {
+    display: flex; align-items: center; gap: .8rem;
+    flex-wrap: wrap;
+    padding: .4rem var(--gap);
+    border-bottom: 1px solid var(--edge);
+}
+
+.dev-drawer-title {
+    font: 600 .74rem var(--ui);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    flex: none;
+}
+
+/* The five numbers a slow dictation is actually judged on, on the bar rather
+   than buried in the stream: you should not have to read a log to find out
+   how far behind the text is. */
+.dev-stat-row { display: flex; align-items: baseline; gap: .9rem; flex-wrap: wrap; min-width: 0; }
+
+.dev-stat { display: flex; align-items: baseline; gap: .3rem; white-space: nowrap; }
+.dev-stat b {
+    font: 600 .82rem var(--mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+}
+.dev-stat i { font-style: normal; font-size: .7rem; color: var(--text-dim); }
+/* Over the budget the live loop is designed to hold. Amber, not red: --rec
+   belongs to recording and to clinical severity in this app, and a slow
+   decode is neither. */
+.dev-stat b.over { color: var(--warn-text); }
+
+.dev-drawer-actions { margin-left: auto; display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+.dev-drawer-actions .btn { text-decoration: none; }
+.dev-drawer-actions .btn[aria-pressed="true"] { border-color: var(--glow); color: var(--glow); }
+
+.dev-filter input {
+    width: 8.5rem;
+    padding: .28rem .45rem;
+    font: .78rem var(--mono);
+}
+
+.dev-drawer-body {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 21rem;
+}
+
+.dev-console {
+    overflow-y: auto;
+    padding: .5rem var(--gap) .8rem;
+    font: .74rem/1.6 var(--mono);
+    color: var(--text-dim);
+    overflow-wrap: anywhere;
+}
+.dev-console:empty::after {
+    content: "Waiting for something to happen. Start a dictation.";
+    color: var(--text-dim);
+}
+
+.dev-line { display: block; }
+.dev-line .t { color: var(--text-dim); }
+.dev-line .src {
+    display: inline-block;
+    min-width: 7.5rem;
+    color: var(--glow);
+}
+.dev-line .msg { color: var(--text); }
+.dev-line .kv { color: var(--text-dim); }
+.dev-line .ms { color: var(--text-dim); font-weight: 600; }
+.dev-line .ms.over { color: var(--warn-text); }
+.dev-line.is-error .msg, .dev-line.is-error .src { color: var(--rec); }
+/* What the browser itself measured, told apart from what the server reported:
+   the two clocks are different machines' clocks and must never be read as one. */
+.dev-line.is-browser .src { color: var(--ok); }
+
+.dev-perf {
+    border-left: 1px solid var(--edge);
+    overflow-y: auto;
+    padding: .5rem .8rem .8rem;
+}
+.dev-perf-h {
+    margin: 0 0 .4rem;
+    font: 600 .7rem var(--ui);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+.dev-perf-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font: .72rem var(--mono);
+}
+.dev-perf-table th:first-child, .dev-perf-table td:first-child {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dev-perf-table th.num, .dev-perf-table td.num { width: 3.4rem; }
+.dev-perf-table th {
+    text-align: left; font-weight: 600; color: var(--text-dim);
+    padding: .15rem .3rem .3rem 0; border-bottom: 1px solid var(--edge);
+}
+.dev-perf-table td { padding: .15rem .3rem .15rem 0; color: var(--text); }
+.dev-perf-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.dev-perf-table tbody td:first-child { color: var(--text-dim); }
+.dev-perf-empty { margin: .4rem 0 0; font-size: .72rem; color: var(--text-dim); }
+
+@media (max-width: 60rem) {
+    .dev-drawer-body { grid-template-columns: minmax(0, 1fr); }
+    .dev-perf { display: none; }
+}
+
+@media (max-width: 40rem) {
+    .dev-drawer { height: min(56vh, 30rem); }
+    .dev-drawer-bar { gap: .4rem .6rem; padding: .35rem .7rem; }
+    .dev-drawer-title { width: 100%; }
+    .dev-stat-row { gap: .7rem; font-size: .9em; }
+    .dev-drawer-actions { margin-left: 0; width: 100%; }
+    .dev-filter input { flex: 1; width: auto; min-width: 5rem; }
+    .dev-line .src { min-width: 0; margin-right: .4rem; }
+}
+
+/* --------------------------------------------------------------------------
    Narrow screens
    -------------------------------------------------------------------------- */
 
 @media (max-width: 34rem) {
-    .wordmark { display: none; }
+    /* The bar cannot hold two sentences at 390px. The findings pill drops to
+       its count -- still red, still a tick in the gutter, full wording in the
+       tooltip -- so the status keeps enough room to say something. Before this
+       the status read "Te…", which is not a status. */
+    .findings-pill { font-size: 0; padding-inline: .5rem; }
+    .findings-pill::before {
+        content: attr(data-short);
+        font: 600 .8rem var(--mono);
+    }
+    /* Hidden from the eye, kept for a screen reader: display:none on the only
+       <h1> left the page with no heading at all on a phone. */
+    .wordmark {
+        position: absolute; width: 1px; height: 1px;
+        padding: 0; margin: -1px; overflow: hidden;
+        clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+    }
     .btn-primary span { display: none; }
     .status { margin-left: 0; }
     .stage { min-height: 45vh; }

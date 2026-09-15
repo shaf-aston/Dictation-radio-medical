@@ -1,4 +1,4 @@
-# Shipped correction rules — the data-driven spelling-fix layer.
+# Shipped correction rules: the data-driven spelling-fix layer.
 #
 # This file is REVIEWED and version-controlled. Site-specific rules added
 # through the app land in `user_corrections.yaml` (data dir), not here.

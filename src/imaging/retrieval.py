@@ -4,8 +4,8 @@ Builds and caches reference indices from labelled-image folders and answers
 attribute-aware "find visually similar prior cases" queries for a query film.
 
 The heavy pieces live in sibling modules and are re-exported here for back-compat:
-  * :class:`~src.imaging.retrieval_embed.EmbeddingExtractor` — DenseNet embeddings.
-  * :class:`~src.imaging.retrieval_index.EmbeddingIndex` — search + persistence.
+  * :class:`~src.imaging.retrieval_embed.EmbeddingExtractor`: DenseNet embeddings.
+  * :class:`~src.imaging.retrieval_index.EmbeddingIndex`: search + persistence.
 
 Index and embeddings are cached to disk in ``data/cache/imaging_embeddings/``
 (:func:`src.features.file_manager.imaging_embeddings_dir`) for reuse across
@@ -22,7 +22,7 @@ from typing import Any, List, Optional
 
 import numpy as np
 
-from src.imaging.classifier import get_active_classifier  # noqa: F401 — re-exported; patch target
+from src.imaging.classifier import get_active_classifier  # re-exported; patch target  # noqa: F401
 from src.imaging.datasets import DatasetRegistry, parse_label_file
 from src.imaging.exceptions import ImagingError
 from src.imaging.retrieval_embed import EmbeddingExtractor
@@ -84,7 +84,7 @@ class IndexBuilder:
             label_suffix: Suffix for label files (default: ".json").
 
         Returns:
-            A built EmbeddingIndex (not cached here — caching is the caller's
+            A built EmbeddingIndex (not cached here: caching is the caller's
             choice; see :func:`get_reference_index`).
 
         Raises:
@@ -229,7 +229,7 @@ def get_reference_index(
         index.save(cache_dir)
         hash_file.write_text(current_hash, encoding="utf-8")
     except ValueError as exc:
-        # No embeddings extractable (e.g. empty/imageless datasets) — treat as
+        # No embeddings extractable (e.g. empty/imageless datasets): treat as
         # "no reference data" rather than a hard failure.
         logger.info("No reference embeddings built: %s", exc)
         return None

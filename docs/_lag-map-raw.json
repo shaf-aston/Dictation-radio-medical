@@ -1,0 +1,1184 @@
+{
+  "lanes": [
+    {
+      "lane": "constraints — the DO-NOT-REPROPOSE list, plus the open questions the same documents leave standing",
+      "findings": [
+        {
+          "claim": "The committed-text lag of +9 to +11 s decomposes into chunk-close latency (6-20 s by construction, a policy not an inefficiency), ~5 s to decode a committed chunk at ~0.31 real time, the post-stop polish, and 5-14 ms of everything else — so 85-90% of the lag is decode time plus the deliberate chunking policy.",
+          "evidence": "docs/dictation-speed-review.md:13-30 (table at :16-21), :40-41",
+          "kind": "measured",
+          "seconds": 10
+        },
+        {
+          "claim": "REFUTED: 'skip the open-tail preview decode' — its return value looks discarded but is the LocalAgreement-2 seed, so killing it adds a full cycle of lag; and REFUTED: 'decode_ratio is blind so the loop is behind' — measured 0.64-0.76x, already inside the <=1.4x target, with stream.decode_ratio at 1.17x and 1.36x across two runs.",
+          "evidence": "docs/dictation-speed-review.md:47-48, :28-30",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "REFUTED: 'shorten the fixed 2.0 s cycle nap' — it is idle slack, not a queue, and polling faster *raises* decode_ratio; and REFUTED: 'cap the VAD re-scan window' — the open region is already bounded by force_cut_sec and a 22 s cap never binds (max observed tail 11.6 s).",
+          "evidence": "docs/dictation-speed-review.md:49-50",
+          "kind": "measured",
+          "seconds": 0
+        },
+        {
+          "claim": "REFUTED on correctness, not speed: 'drop word timestamps to skip the DTW alignment' — it silently deletes committed words via the 8-second hallucination gate at transcriber.py:352, and word confidence is now also load-bearing for polish targeting and the uncertain-word underline.",
+          "evidence": "docs/dictation-speed-review.md:51; CLAUDE.md:220-223, :249-256",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "REFUTED: 'drop vad_filter from the post-stop polish pass' — chunks *begin* with the pause they were cut at, so the second pass's VAD does real work rather than duplicating the segmenter's.",
+          "evidence": "docs/dictation-speed-review.md:52",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "REFUTED as below the noise floor: 'cache _project_root()' (0.566 ms against a 1-3 s cycle) and 'prefilter the 151-rule terminology table' (its ASCII safety valve is switched off upstream by the degree sign in measurements.py:47, making the prefilter net *slower* on real MSK reports).",
+          "evidence": "docs/dictation-speed-review.md:53-54",
+          "kind": "measured",
+          "seconds": 0
+        },
+        {
+          "claim": "The honest ceiling on preview-side work: deleting the open-tail preview decode entirely — stronger than any of the seven proposals — moved lag only from +10.5 s to +9.1 s, i.e. 1.4 s or about 13%, paid for by deleting the live preview.",
+          "evidence": "docs/dictation-speed-review.md:32-41",
+          "kind": "measured",
+          "seconds": 1.4
+        },
+        {
+          "claim": "REFUTED as a target: the 10-stage post-processing pipeline costs 5-14 ms against the ~6,200 ms to decode the same 20 s of audio (0.08% of a cycle, no hidden hotspot), and model loading, the compute_type fallback chain and CPU thread count were each investigated and found 'not the problem'.",
+          "evidence": "docs/dictation-speed-review.md:23-26; docs/ARCHITECTURE.md:77-78",
+          "kind": "measured",
+          "seconds": 0.014
+        },
+        {
+          "claim": "REFUTED TWICE: shortening the chunks — first because small.en costs a fixed ~4 s per transcribe() call whatever it is handed so halving chunk length nearly doubles total decode, then re-measured on the fast live model (18 tts clips, tiny.en live + small.en polish) where 3/6/8 against the shipped 6/15/20 raised decode 66% (216 s to 358 s), pushed RTF from 0.55 to 0.92 (no headroom under the sub-1.0 constraint), and moved WER 6.66%->7.31% and medical-term error 7.11%->7.56% the wrong way.",
+          "evidence": "docs/dictation-speed-review.md:93-97 and :157-175 (table at :163-166)",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "REFUTED: adding faster-whisper's `hotwords` argument to get more radiology vocabulary into the decoder — get_prompt() spends hotwords and initial_prompt from the *same* 223-token budget so they compete rather than add; measured against the installed tokenizer, radiology_prompt.txt was 1,150 tokens and 927 were discarded.",
+          "evidence": "docs/dictation-speed-review.md:99-122 (esp. :103-104, :120-122)",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "REFUTED as a default swap: Parakeet TDT 0.6b v3 is 5.2x faster than Whisper small.en (RTF 0.108 vs 0.565; 70 s vs 358 s on 10.8 min of audio) but doubles the medical-term error rate (3.44% -> 7.12%), the one metric allowed to veto a speed win — verdict 'do not switch', engine kept available behind --engine parakeet.",
+          "evidence": "docs/dictation-accuracy.md:116-147 (table at :121-127, verdict at :129-133)",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "REFUTED on measurement: the per-word confidence veto on corrections (src/dictation/postprocess/confidence_gate.py, 24 tests) is shipped DISABLED — at ceiling >=0.90 it fired twice in 30 reports and both times blocked a correction that was right, moving every metric the wrong way; separately, raising polish_confidence_ceiling (currently 0.75) to catch confidently-wrong words re-decodes more chunks, spends the Stop headroom, and has deliberately not been changed.",
+          "evidence": "docs/dictation-accuracy.md:59-83 (table at :66-70); docs/dictation-speed-review.md:192-200; src/core/settings.py:61",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "REJECTED ON COST, not deferred: acoustic rescoring of candidate words for a low-confidence span needs either a forced-alignment API faster-whisper does not expose or one re-decode per candidate, and with a fixed ~3.6 s per transcribe() call N candidate decodes per span breaks the real-time budget outright — revisit only behind an engine that exposes frame posteriors.",
+          "evidence": "docs/dictation-accuracy.md:90-97",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "Four more already-settled details not to re-litigate: pricing the preview by tail length (open_tail_sec * decode_cost) switched previews off part-way through every chunk and was replaced by pricing per call; requiring LocalAgreement-2 agreement before showing anything put first words at 13.8 s and was replaced by show-the-first-decode-provisionally (13.8 s -> 2.1 s, of which lazy Silero VAD loading was 11 s and preview_min_tail_sec=1.0 s the third part); live beam_size=1 caused repetition so beam=2 is deliberate; and any bench harness feeding arrays must use faster_whisper.audio.decode_audio(path, sampling_rate=16000), because naive nearest-sample resampling of the 22050 Hz clips aliases WER from ~10% to ~62% and reads exactly like a corrupt gold set.",
+          "evidence": "CLAUDE.md:207-219, :197-206, :233-240; docs/ARCHITECTURE.md:96-97; docs/dictation-speed-review.md:202-210",
+          "kind": "measured",
+          "seconds": 11.7
+        }
+      ],
+      "levers": [
+        {
+          "lever": "Record the `own` gold set: `python -m scripts.eval.build_sets --set own --record`, about 15 minutes of the user's own voice.",
+          "mechanism": "It does not itself reduce lag; it unblocks every other lever. The tts set is synthetic, generic-radiology vocabulary under unrealistically clean audio, so it scores real-acoustics and MSK-vocabulary changes as noise and can only see the cost of a specialty trade, never its benefit. Confirmed still unrecorded: data/eval/own/ holds manifest.jsonl and five .script.txt files and zero .wav files. Ranked #1 by expected value at docs/dictation-accuracy.md:164-166.",
+          "est_seconds_saved": "0 directly; it is the gate on the 5x-faster-engine lever below, which is worth roughly 4 s of the ~5 s committed-chunk decode",
+          "risk": "None to the app. The risk is skipping it: any speed change judged only on tts can mangle anatomy invisibly, which is exactly the failure this project exists to prevent.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Wire lexicon biasing into Parakeet's CTC path and re-run the bake-off.",
+          "mechanism": "Parakeet's doubled term error (7.12% vs 3.44%) was measured with NO radiology vocabulary reaching it at all — the engine reports `hotwords: False` — while Whisper gets the 210-token prompt inside its decoder. Some of that gap is a missing feature, not a worse model, and Parakeet's false-correction rate is already less than half Whisper's (5.56% vs 14.29%, 34 true fixes against 2 bad). Named as the #2 next step at docs/dictation-accuracy.md:167-169 and :137-141.",
+          "est_seconds_saved": "up to ~4 s per committed chunk if term error closes to Whisper's (RTF 0.108 vs 0.565); 0 if it does not close",
+          "risk": "Term error is the veto metric. If biasing does not close the 3.44%->7.12% gap the answer is still 'do not switch' — and it must be judged on the `own` set, not tts, or the verdict is uninterpretable.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Use the fast engine for the POST-STOP polish rather than as the live engine.",
+          "mechanism": "docs/dictation-accuracy.md:155-158 says explicitly that a faster engine is 'worth having for the post-Stop polish, not a cure for a lag that has already been fixed'. The polish currently re-decodes every low-confidence committed chunk plus the open tail at final_beam_size on small.en (src/dictation/worker.py:460-495); measured, that background pass lands at +16.1 s (web) and +17.2 s (desktop) after Stop (docs/dictation-speed-review.md:186-188).",
+          "est_seconds_saved": "0 s of live lag; roughly 12-15 s off the background polish window, which is what buys headroom to raise polish_confidence_ceiling",
+          "risk": "The polish is the accuracy backstop for the fast live model. A polish engine with worse term error makes the final report worse than the live text it replaced — the one place a speed win is unambiguously not allowed.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Settle the condition_on_previous_text disagreement by teaching the eval harness to drive the polish path.",
+          "mechanism": "The two paths disagree in shipped code: live sets it False (src/dictation/stream/live_session.py:445, src/dictation/worker.py:327 and :413, src/ui/web_app.py:869) while the confidence-targeted polish sets it True (src/dictation/worker.py:466 and :492). With it True each decoded segment pushes the 223-token prompt further out of the window, trading vocabulary priming for continuity. The harness decodes one-shot and never exercises the polish path, so there is no way to measure which is better; docs/dictation-accuracy.md:110-114 marks it 'Open, not fixed' and :170-171 ranks it #3.",
+          "est_seconds_saved": "0-1 s per polished chunk (a shorter prompt decodes marginally faster); the real payoff is accuracy, not seconds",
+          "risk": "Setting it False in the polish could break sentence continuity across chunk boundaries; setting it True everywhere evicts the radiology prompt from the live path. Both directions stay unmeasurable until the harness can run the polish path.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Re-choose which 223 tokens reach the decoder, now that the ordering mechanism exists.",
+          "mechanism": "Whisper's prompt slot is 223 tokens and radiology_prompt.txt was 1,150, so 927 were discarded — and because Whisper keeps the LAST 223, what survived was generic MRI/ultrasound physics vocabulary while ACL, PCL, supraspinatus, infraspinatus, subscapularis and glenohumeral were dropped (docs/dictation-speed-review.md:99-118). The shipped prompt is now 210 tokens spent on musculoskeletal and trauma terms, and full-30-clip medical-term error was flat (3.40% -> 3.29%) because tts cannot reward that trade by construction (docs/dictation-accuracy.md:50-57). Explicitly left unfinished pending the `own` set.",
+          "est_seconds_saved": "0 s; this is a pure accuracy lever whose value is that it can PAY FOR a speed lever elsewhere by absorbing that lever's term-error cost",
+          "risk": "A third claimant on the same budget is the user's learned terms (capped at 80, about 216 tokens, enough to evict the shipped vocabulary entirely); the current fix is ordering — learned terms are written first so they are the ones dropped (docs/dictation-accuracy.md:104-108). Any re-ordering must preserve that.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Give the confidence veto (confidence_gate.py, built, 24 tests, shipped off) its fair hearing on the `own` set.",
+          "mechanism": "It was measured only on synthetic audio 'where nearly every word scores high, the signal barely varies at all' — so the instrument, not the mechanism, may be what failed. A real microphone and a real accent produce confidences that actually vary. One setting turns it on (docs/dictation-accuracy.md:80-83).",
+          "est_seconds_saved": "0 s; it is a false-correction lever, and a lower false-correction rate is what would let a faster, noisier engine be accepted",
+          "risk": "On the evidence so far it subtracts: it blocked two right corrections in 30 reports and moved every metric the wrong way. Re-enabling it without the own set is simply repeating a refuted experiment.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Measure a chunk policy BETWEEN the two points that have data — only 6/15/20 and 3/6/8 have ever been run.",
+          "mechanism": "Chunk-close latency is the single largest lag term (6-20 s by construction, docs/dictation-speed-review.md:18) and it is policy, not inefficiency; M6 already made the knobs tunable and they sit in src/core/settings.py:39-41. Halving to 3/6/8 was refuted on RTF 0.92 and worse accuracy, but nothing between the two has been measured — for example lowering chunk_soft_max_sec alone while leaving chunk_min_sec at 6.0, which changes when a pause is *accepted* rather than how short a chunk may be.",
+          "est_seconds_saved": "plausibly 2-4 s of chunk-close latency if a mid-point holds RTF near 0.6-0.7; unmeasured",
+          "risk": "The refuted 3/6/8 run is the warning: more chunks means more fixed ~1 s decode calls, and RTF above about 0.9 leaves no headroom on this CPU-only machine. Must be run through scripts.eval.run_eval with RTF and medical-term error read side by side, never judged by feel.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Decouple what the user sees as SETTLED from when a chunk CLOSES.",
+          "mechanism": "Inferred, not named in the docs, so treat it as unvalidated. The complaint is about committed text, and chunk-close latency is 6-20 s of that by construction — yet the preview already shows those words, pinned and never taken back after the single permitted first correction (CLAUDE.md:197-206). If pinned preview text were promoted to committed status at a pause boundary rather than waiting for the chunk to close, the perceived commit lag falls with no change to decode cost at all.",
+          "est_seconds_saved": "up to the chunk-close term itself, 6-20 s of perceived lag, at zero decode cost — speculative until measured",
+          "risk": "Directly touches the hard constraint that confirmed text must not un-write itself: promoting preview text to committed means the later closed-chunk decode may disagree with text already presented as permanent. The ledger's decode-once guarantee (src/dictation/stream/ledger.py) needs re-examining before anyone writes code.",
+          "already_refuted": false
+        }
+      ],
+      "uncertainties": [
+        "The +9 to +11 s committed-text figure is from 2026-07-28, before the tiny.en live-model split (2026-09-01) and before the preview repricing. No post-split measurement of COMMITTED-text lag exists in these documents; every 2026-09-01 number measures either first-words-on-screen (4.7 s, 4.9 s, 6.9 s) or the background polish (+16.1 s, +17.2 s). The user's current complaint may be against a lag budget nobody has re-decomposed.",
+        "Every accuracy number in both documents comes from the synthetic tts set. docs/dictation-accuracy.md:6-11 states outright these are vocabulary numbers that 'say nothing about what a real microphone and a real accent do'. Any refutation resting on a term-error delta — Parakeet, chunk shortening, the confidence veto — is refuted on an instrument that cannot see this app's actual acoustics.",
+        "dictation_settings.json sets model_size to small.en while src/core/settings.py:14 defaults it to base.en, and the file still carries the superseded live_window_sec (25.0) and commit_lag_sec (5.0) keys that docs/ARCHITECTURE.md:131-136 says no longer exist. Check which values a given run actually used before quoting any RTF at the user.",
+        "The 2026-09-01 chunk re-measurement used 18 tts clips and the document itself notes an 8-clip run had the two accuracy rows the other way round, so the accuracy half of that refutation sits inside the noise. Only the decode/RTF half (216 s -> 358 s, 0.55 -> 0.92) is solid.",
+        "The 'seven proposals' table at docs/dictation-speed-review.md:45-54 actually contains eight rows; one row is a refuted claim ('decode_ratio is blind') rather than a proposal. All eight are listed above.",
+        "docs/ARCHITECTURE.md sections 2, 3 and its tunable-knobs table are explicitly marked superseded by the chunk-once rebuild (:12-18, :131-136). It is cited above only for facts it flags as still current: live beam=1 causing repetition, and model loading / compute_type / thread count not being the problem."
+      ]
+    },
+    {
+      "lane": "Desktop front-end: does it share or duplicate the live rules?",
+      "findings": [
+        {
+          "claim": "The genuinely shared core is small: segmenter.py (ChunkPolicy/cut_chunks), ledger.py (ChunkLedger/close_sentence), tail.py (LocalAgreement2), vad.py, and five helpers in rules.py (build_context_prompt, mean_confidence, low_confidence_words, rms, AdaptiveFloor, should_skip_preview). Everything else about the live loop is written twice.",
+          "evidence": "src/dictation/worker.py:63-73 imports vs src/dictation/stream/live_session.py:29-39 imports; rules.py:1-9 docstring states the intent",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "Only the preview-skip PREDICATE is shared; the state machine around it is copy-pasted, including the same magic constants (0.9 decay while skipping, 0.6/0.4 cost smoothing, _preview_earliest = now + cost).",
+          "evidence": "worker.py:346-362 and worker.py:426-427 vs live_session.py:210-226 and live_session.py:312-313; rules.should_skip_preview is rules.py:122-157 and holds no state",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "DIVERGENCE: the minimum-tail gate before a preview decode (preview_min_tail_sec) exists only on the web. The desktop will spend a full ~0.7-1.5s tiny.en decode on a fraction of a second of audio, which is exactly the waste the web removed to get first words from 13.8s to 2.1s.",
+          "evidence": "live_session.py:299 `if len(clip) < self.preview_min_tail_sec * self.sr: return self._agreement.stable()`; no occurrence of preview_min_tail_sec in worker.py or recording_session.py (grep over src/dictation and src/ui); the setting exists at src/core/settings.py:59 and is read only at src/ui/web_app.py:929-931",
+          "kind": "read-from-code",
+          "seconds": 1.5
+        },
+        {
+          "claim": "DIVERGENCE: low-confidence word marking is web-only end to end. The desktop never reads uncertain_word_confidence, never calls low_confidence_words, and no desktop view renders a mark, so a desktop report gives no signal about words the decoder guessed at.",
+          "evidence": "live_session.py:104,175-178 and web_app.py:951-953 and src/ui/frontends/app.js:1394-1412; grep for 'uncertain' returns zero hits in src/ui/main_window.py, src/ui/views.py, src/ui/term_marks.py and zero in worker.py",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "DIVERGENCE: the web closes the still-open tail with the fast model before handing the report back; the desktop hands back committed text plus the LocalAgreement-2 preview instead. If previews were being skipped when Stop was pressed, the desktop hand-back carries a stale _last_stable and can be missing most of the last chunk, which is the exact '20 of 48 words handed back' failure the web fixed.",
+          "evidence": "live_session.py:325-355 (close_open_tail_fast) called at web_app.py:1072; desktop hand-back is recording_session.py:308-333 reading window._last_raw_transcript, which is set at recording_session.py:347 from worker.py:364-373 (committed_text + stable_tail, where stable_tail is worker.py:356 self._last_stable when skipping)",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "DIVERGENCE: the web puts a full stop on the finished report; the desktop does not. ledger.close_sentence is applied only at paragraph gaps inside committed_text, so the desktop's last sentence ends bare.",
+          "evidence": "live_session.py:405 `final = close_sentence(self._post.process(raw, 0)[0])`; worker.py:508 `full_text = self._ledger.committed_text` with no close_sentence; ledger.py:109 is the only other call site",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "DIVERGENCE in the provisional/committed contract: the desktop concatenates preview into the committed string, so the 10-stage pipeline runs over provisional words and the editor renders them identically to frozen text. The web deliberately post-processes only the committed half and ships preview as its own field so the page can dim it.",
+          "evidence": "worker.py:364-373 merges then emits one string; recording_session.py:347-356 submits that whole string to the pipeline; live_session.py:228-234 with the comment at 229-231, and LiveUpdate's docstring live_session.py:50-58 stating the rule the desktop breaks",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "Desktop-only per-cycle cost: a soundfile header stat plus a seek-and-read off the growing WAV every cycle. The web slices an in-memory buffer.",
+          "evidence": "worker.py:239 self._audio_length() -> sf.info (worker.py:536-549), worker.py:298 self._read_audio(tail_start) (worker.py:551-587, wrapped in perf.stage 'worker.read_audio'); live_session.py:196-198 is `buf, total = self._buf, self._len` then a slice",
+          "kind": "read-from-code",
+          "seconds": 0.1
+        },
+        {
+          "claim": "Desktop-only idle time: after every cycle the worker sleeps for half the cycle's WALL time, capped at 2.0s. A cycle that commits one chunk (~1.5s) and runs a preview (~1.4s) therefore parks the loop for ~1.5s before it can even look for the next chunk cut. The web starts the next cycle as soon as live_cycle_sec (0.5s) has passed and the previous task is done.",
+          "evidence": "worker.py:271-277 `sleep_time = max(0.4, min(decode_sec * 0.5, 2.0))` where decode_sec is the full cycle duration returned by worker.py:375; web_app.py:1044-1046 `if time.time() - last_cycle >= cycle_sec and (cycle_task is None or cycle_task.done())`",
+          "kind": "read-from-code",
+          "seconds": 1.5
+        },
+        {
+          "claim": "That desktop-only pacing is consistent with the only head-to-head measurement on file: same 30s clip, first text on screen 4.9s on the web versus 6.9s on the desktop, and the accuracy pass landing 1.1s later on the desktop.",
+          "evidence": "docs/dictation-speed-review.md:180-190 (the table under 'Update 2026-09-01: Stop no longer waits, on either front-end')",
+          "kind": "measured",
+          "seconds": 2
+        },
+        {
+          "claim": "Stop is slower to take effect on the desktop: finalize() only sets a flag, and the loop notices it at the top of the next iteration, so up to 2.0s of the sleep above elapses before the polish begins. The web explicitly awaits the in-flight cycle and then proceeds immediately.",
+          "evidence": "worker.py:201-203 finalize(), consumed at worker.py:238 and worker.py:261-268; called from recording_session.py:303-305; web equivalent at web_app.py:1057-1061",
+          "kind": "read-from-code",
+          "seconds": 2
+        },
+        {
+          "claim": "SAFETY DIVERGENCE: the web refuses to commit a chunk whose end runs past the audio it actually sliced this cycle; the desktop has no such check, and its total_samples (from the WAV header) comes from a different call than its audio (a separate read), so the two can legitimately disagree on a file still being written. numpy would clamp silently and ledger.commit would advance the open frontier past audio that was never decoded.",
+          "evidence": "live_session.py:252-259 (the explicit guard and its comment) versus worker.py:309-310 `local = slice(...); chunk_audio = tail_audio[local]` with no bounds test; the two sources are worker.py:239 (sf.info) and worker.py:298 (read); the frontier advance is ledger.py:148-151",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "DIVERGENCE in decode parameters: every web decode pins temperature=0.0, while the desktop's post-Stop polish passes no temperature at all, which transcriber.py turns into Whisper's fallback ladder [0.0, 0.2, 0.4, 0.6, 0.8] - up to five re-decodes of a segment. Cuts both ways: it costs the desktop background time, and it means the two front-ends' polish passes are not the same decode.",
+          "evidence": "live_session.py:448 temperature=0.0 for all stages; worker.py:459-470 and worker.py:488-495 omit temperature; default is types.py:86 (None) and transcriber.py:276 expands None to the ladder",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "COMMIT-POLICY COUPLING: a change in the streaming core would need four desktop edits, and two places would silently keep the old behaviour. Needs editing: worker.py:293-375 (_run_cycle's own commit loop, a private copy of live_session._commit_closed), worker.py:434-517 (the desktop's own polish, a private copy of finalize), worker.py:373 (the committed_len it hands the incremental post-processor), recording_session.py:261-276 (the constructor arg list). Silently unchanged: any new gate added to LiveSession only (as preview_min_tail_sec and close_open_tail_fast already are), and the desktop's hand-back, which reads a UI-side cached string rather than asking the ledger.",
+          "evidence": "worker.py:293-375, worker.py:434-517, worker.py:373, recording_session.py:261-276, recording_session.py:319; contrast live_session.py:245-277 and live_session.py:357-410",
+          "kind": "read-from-code",
+          "seconds": null
+        }
+      ],
+      "levers": [
+        {
+          "lever": "Wire preview_min_tail_sec into LiveTranscribeWorker and apply it in _decode_open_tail, mirroring live_session.py:299 (return self._agreement.stable(), do not clear).",
+          "mechanism": "Stops the desktop burning a whole ~0.7-1.5s tiny.en decode on sub-second tails. On the web this was one of the three changes credited with 13.8s -> 2.1s; the decode it saves is a decode the committed chunks get instead.",
+          "est_seconds_saved": "1-2s off first words, and one preview slot per chunk returned to committed decoding",
+          "risk": "None to anatomy accuracy: the preview is never committed. Only risk is the preview appearing slightly later at the very start of each chunk.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Replace worker.py:276-277's sleep with the web's cadence: wake on a fixed live_cycle_sec (settings.py:87, default 0.5) rather than sleeping for half the last cycle's wall time.",
+          "mechanism": "The current formula makes the loop idle longest exactly after the most expensive cycles, which are the cycles that just committed a chunk and therefore have the next chunk waiting. That idle time is pure added lag on the committed text, which is the user's actual complaint.",
+          "est_seconds_saved": "up to 1.5-2.0s per commit cycle on the desktop; plausibly most of the measured 2.0s desktop/web first-text gap",
+          "risk": "A tighter loop raises the desktop's CPU share, which could crowd the decoder. Mitigate by keeping the existing guard that a cycle never overlaps itself, exactly as web_app.py:1044-1046 does.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Give the desktop stop path a close_open_tail_fast equivalent (or better: call the shared one) before _hand_back_live_text, and hand back ledger text rather than window._last_raw_transcript.",
+          "mechanism": "Today the desktop's hand-back can be committed text plus a stale preview. One fast decode (~1.5s here) buys a complete report; the current path can hand back a report missing the last chunk with nothing saying so.",
+          "est_seconds_saved": "costs ~1.5s at Stop, removes an unbounded gap where the last chunk arrives only with the polish",
+          "risk": "Adds ~1.5s to the currently +0.0s hand-back. The tail would be fast-model text, so it must be force-polished like live_session._forced_polish_index (live_session.py:371-372) or an anatomical word decoded by tiny.en could survive into the report.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Add the chunk-past-tail guard from live_session.py:252-259 to worker.py:309.",
+          "mechanism": "Prevents committing a decode of the wrong seconds and advancing the ledger frontier past audio that was never decoded. On the desktop the header length and the audio read are two separate calls against a file still being written, so the mismatch this guards is reachable.",
+          "est_seconds_saved": "0s; it is a correctness fix, not a speed one",
+          "risk": "Defers a chunk by one cycle in the rare case it fires. No accuracy downside.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Move the preview-skip state (cost smoothing, decay, _preview_earliest, _last_stable) out of both loops into a small class in stream/rules.py that both instantiate.",
+          "mechanism": "The four constants are currently duplicated at worker.py:346-362/426-427 and live_session.py:210-226/312-313. Any future tuning of the preview budget otherwise lands in one front-end only, which is the documented recurring defect in this repo.",
+          "est_seconds_saved": "0s directly; it is what stops the next speed fix from being web-only",
+          "risk": "Pure refactor; the existing test_stream_rules.py covers the predicate but not the state machine, so add a test for the decay and the earliest-start gate.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Pin temperature=0.0 in worker.py's two polish decodes (worker.py:459-470, 488-495), or pin the fallback ladder on both front-ends.",
+          "mechanism": "Right now the two front-ends run different decoders in the polish pass, so a desktop measurement cannot be compared with a web one. transcriber.py:276 expands None into a five-temperature fallback.",
+          "est_seconds_saved": "variable background seconds after Stop; 0s of live lag",
+          "risk": "Removing the fallback can make Whisper keep a degenerate/repetitive segment it would otherwise have retried, which is an accuracy risk in the direction this app cares about. Measure on the eval harness before choosing which way to converge.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Retire worker.py's loop: run stream.LiveSession on the desktop's QThread, feeding it blocks from audio.py instead of polling the WAV, and keep worker.py only as the Qt signal shell.",
+          "mechanism": "Removes every divergence in this list at once, and removes the desktop's per-cycle sf.info plus seek-read (worker.py:536-587) in favour of the in-memory buffer. One loop means one commit policy and one place to tune it.",
+          "est_seconds_saved": "the full desktop/web gap, measured at 2.0s on first text (docs/dictation-speed-review.md:183-188), plus the disk cost",
+          "risk": "Largest blast radius here. The desktop's WAV is also what the training collector and the polish read (worker.py:262, recording_session._prepare_training_audio), so the file must still be written even once the loop stops reading it; and the desktop would need LiveUpdate's committed/preview split plumbed into views.py.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Emit event_log entries from the desktop worker the way live_session._decode does (live_session.py:434-437).",
+          "mechanism": "The developer console's per-decode diary, first-words mark and behind-sec number exist only for the web (web_app.py:995-1015). Without them, every desktop claim in this report stays inferred from code rather than measured.",
+          "est_seconds_saved": "0s; it is what makes the other levers measurable on the desktop",
+          "risk": "None to the offline invariant: event_log is an in-process ring buffer.",
+          "already_refuted": false
+        }
+      ],
+      "uncertainties": [
+        "I did not run the desktop app. Every desktop timing here is read from code or taken from docs/dictation-speed-review.md:183-188; the 1.5-2.0s attributed to worker.py:276's sleep is arithmetic on the formula, not a stopwatch.",
+        "I could not separate how much of the measured 6.9s vs 4.9s first-text gap is the post-cycle sleep, how much is the missing preview_min_tail_sec gate, and how much is the per-cycle disk read. Instrumenting worker.py with event_log would settle it in one run.",
+        "Whether the desktop's hand-back actually loses the last chunk in practice depends on how often should_skip_preview fires near Stop on a real dictation. The mechanism is clear from worker.py:346-362; the frequency is not measured.",
+        "tests/ contains no test that touches LiveTranscribeWorker (grep found none), so none of the desktop-only behaviour above is covered by a regression test; the parity claims rest on reading the two files.",
+        "I did not check whether ChunkPolicy's __post_init__ validation error (segmenter.py:43-48) is caught on the desktop at record-start the way it presumably is on the web; a bad settings value could surface differently in the two front-ends.",
+        "The temperature divergence's accuracy direction is genuinely unknown to me. Whisper's fallback ladder usually helps, so pinning 0.0 on the desktop could trade medical-term accuracy for background seconds; that needs the eval harness, not an opinion."
+      ]
+    },
+    {
+      "lane": "After the text exists in Python, how long until a human sees it?",
+      "findings": [
+        {
+          "claim": "VERDICT FOR THIS LANE: from the moment `LiveUpdate` exists in Python to pixels is under ~10 ms end to end; there is no throttle, debounce, rAF batch or poll anywhere between the socket message and the paint.",
+          "evidence": "src/ui/web_app.py:1019-1026 (send immediately after cycle) -> src/ui/frontends/app.js:977-991 (onmessage calls renderLiveText synchronously) -> app.js:898-908 (assigns editor.value, paints underlay, updates count; no timer)",
+          "kind": "read-from-code",
+          "seconds": 0.01
+        },
+        {
+          "claim": "Client-side work per update, measured: 26 us at 100 words, 68 us at 400, 118 us at 800, 204 us at 1500 words (JSON.parse + the concat, the word-count regex split, and the underlay text-node string).",
+          "evidence": "node bench of the exact expressions in app.js:978, 900, 323, 921 -> '100 words payload 923B pure-JS per update 26.1 us / 1500 words payload 11226B ... 204.3 us'",
+          "kind": "measured",
+          "seconds": 0.0002
+        },
+        {
+          "claim": "The whole transcript IS re-sent every update, and it costs nothing measurable. Payload measured at 948 B (100 words), 3.1 KB (400), 6.1 KB (800), 11.2 KB (1500); `json.dumps` 6.1-60.8 us.",
+          "evidence": "src/ui/web_app.py:1019-1026 sends `update.committed` in full; python bench -> '800 words payload 6103 bytes json.dumps 19.1 us'",
+          "kind": "measured",
+          "seconds": 0.0001
+        },
+        {
+          "claim": "Setting `editor.value` from script fires no `input` event, so the two 400 ms rescans (term marks, critical findings) do NOT run on a live partial. This lane's most likely hidden cost is already deliberately avoided.",
+          "evidence": "src/ui/frontends/app.js:308-313 (the comment stating it), 1487-1489 MARKS_DELAY_MS=400 bound at 1503, 1599-1601 FINDINGS_DELAY_MS=400 bound at 1617, both on 'input' only; renderLiveText (898-908) calls only updateWordCount, never announceReportChanged",
+          "kind": "read-from-code",
+          "seconds": 0
+        },
+        {
+          "claim": "`live_cycle_sec` (0.5 s, the only interval in the handler) is NOT the limiter. A cycle may only start when the previous one is done, and cycles cost >1 s, so the 0.5 s gate is always already satisfied.",
+          "evidence": "src/ui/web_app.py:1043-1045 `if time.time() - last_cycle >= cycle_sec and (cycle_task is None or cycle_task.done())`; `last_cycle` is stamped at cycle START, not end (1044); default 0.5 at src/core/settings.py:87",
+          "kind": "read-from-code",
+          "seconds": 0
+        },
+        {
+          "claim": "Identical updates are dropped server-side before the send, so a message only leaves the process when the text actually changed.",
+          "evidence": "src/dictation/stream/live_session.py:235-241 compares committed/preview/state/uncertain and returns None; note `audio_sec` is deliberately excluded from the comparison",
+          "kind": "read-from-code",
+          "seconds": 0
+        },
+        {
+          "claim": "THE REAL CADENCE LIMITER IS SERVER-SIDE PACING, NOT THE CLIENT. After each preview decode the next one is blocked for as long as the last one took, so during preview-only stretches the browser gets a genuinely new message roughly every 2 decodes, i.e. about 2.6-3.0 s on this machine.",
+          "evidence": "src/dictation/stream/live_session.py:313 `self._preview_earliest = time.time() + cost`; the skipped cycle then produces an identical-text update that the dedupe at 235-241 drops. Decode cost 1.33-1.52 s per call is the figure recorded in CLAUDE.md 'Live-speed design' point 3.",
+          "kind": "inferred",
+          "seconds": 1.4
+        },
+        {
+          "claim": "On a cycle that closes a chunk, the newly committed text is NOT sent until that same cycle has also finished its preview decode: one cycle produces exactly one message, built after both decodes.",
+          "evidence": "src/dictation/stream/live_session.py:205 (_commit_closed) -> 210-226 (preview decode) -> 234 (LiveUpdate built) -> 242 returned; src/ui/web_app.py:997 awaits `session.cycle` then sends at 1019. The preview is often skipped right after a commit because the new open tail is short (live_session.py:298-300, preview_min_tail_sec=1.0), but not when audio has already accumulated past the cut.",
+          "kind": "read-from-code",
+          "seconds": 1.4
+        },
+        {
+          "claim": "The 'Catching up' badge fires on the deliberate preview-pacing skip, not on a real backlog. Line 221 is the only place the web path ever sets that state.",
+          "evidence": "src/dictation/stream/live_session.py:210-221 sets STATE_CATCHING_UP inside the `should_skip_preview or time.time() < self._preview_earliest` branch; grep shows 221 is the sole assignment; rendered at src/ui/frontends/app.js:986-991 as 'Catching up'",
+          "kind": "read-from-code",
+          "seconds": 0
+        },
+        {
+          "claim": "THE DEV CONSOLE'S 'text on screen' MARK IS TIMESTAMPED BEFORE THE PAINT, not after. `devUpdateArrived(msg)` is the first statement in the partial branch; the editor is written four lines later.",
+          "evidence": "src/ui/frontends/app.js:980-985: `devUpdateArrived(msg);` at 981, `renderLiveText();` at 985. The mark itself is written at app.js:2003-2009 with fields words/preview_words/audio_sec/behind_sec/state and ms=gap-since-last-update.",
+          "kind": "read-from-code",
+          "seconds": 0.016
+        },
+        {
+          "claim": "The console's five bar numbers are first words / last update gap / behind mic / update count / audio sent, all written by `devUpdateArrived` and reset by `devRecordingStarted`.",
+          "evidence": "src/ui/frontends/app.js:1988-2001 (devSetStat calls) against the ids in src/ui/frontends/app.html:291,293,295,297,299; reset at app.js:1949-1961; amber thresholds are firstWords>6000 ms, gap>4000 ms, behind>5 s",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "THE VERIFICATION PHASE MUST KNOW THIS: the browser's clock starts BEFORE the microphone is granted, so both 'first words' and 'behind mic' carry the mic-permission + AudioContext + socket-open time as a constant positive offset.",
+          "evidence": "src/ui/frontends/app.js:1060-1061 `devRecordingStarted()` is the first line of startRecording, then `getUserMedia` is awaited at 1064; dev.recordStart set at 1949; behind computed at 1993 as `sinceStart/1000 - msg.audioSec`",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "The server's own `behind_sec` uses a different baseline (socket accept) than the browser's, so the two clocks in the console are not directly comparable and will disagree by roughly the mic-grant interval.",
+          "evidence": "src/ui/web_app.py:970 `started = time.time()` right after `ws.accept()` (961), used at 1005-1008 `behind_sec=round(max(0.0, time.time() - started - update.audio_sec), 1)`",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "Two other things in the send path are noise, measured: the incremental post-process that runs on every cycle costs 3-18 ms as the report grows from 22 to 1320 words, and per-audio-frame ingestion costs 7 us against 125 frames/s (0.09% of one CPU).",
+          "evidence": "python bench of IncrementalPostprocessor.process on a growing transcript -> 'cycle 1 22 words 3.01 ms ... cycle 60 1320 words 4.21 ms' (worst observed 18.07 ms at 1100 words); ingest bench of the exact web_app.py:1041 expression -> 'ingest per 8ms frame: 7.0 us'",
+          "kind": "measured",
+          "seconds": 0.018
+        }
+      ],
+      "levers": [
+        {
+          "lever": "Split the commit send from the preview send: in `LiveSession.cycle`, return/emit the committed update as soon as `_commit_closed` reports True (live_session.py:205), then run the preview decode and emit a second update. `web_app.run_cycle` sends both.",
+          "mechanism": "Committed text is currently built only after the same cycle's preview decode has finished (live_session.py:205-242), so on any commit cycle where the open tail is already >= preview_min_tail_sec the kept words wait one extra full decode before leaving the process. This is the only place in this lane where committed text is provably held behind work it does not need.",
+          "est_seconds_saved": "0 to 1.5 s on each commit cycle; 0 when the open tail is short enough that the preview was going to be skipped anyway",
+          "risk": "Low for the un-writing rule: `_commit_closed` already resets the agreement and clears `_last_stable` (live_session.py:206-208), so the first message would carry committed + preview='' - which is what the code already computes. Two messages per cycle instead of one; the browser would show an empty dimmed tail for ~1.4 s. Zero anatomy-accuracy risk: no decode changes.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Stop rendering the preview-pacing skip as 'Catching up'. Either give `should_skip_preview`/`_preview_earliest` its own state name, or map both states to 'Listening' in app.js:986-991.",
+          "mechanism": "STATE_CATCHING_UP is set at live_session.py:221 by the healthy pacing rule, not by a backlog, so the badge oscillates roughly every 1.4 s during normal dictation. It tells a radiologist the app is behind at exactly the moments it is working as designed, which is a direct contributor to 'still too slow'.",
+          "est_seconds_saved": "0 s of real lag; removes a false slowness signal on roughly half of all cycles",
+          "risk": "Loses the genuine warning when `should_skip_preview` fires because a decode really did exceed preview_max_lag_sec (3.0 s). Keep that branch labelled and rename only the `_preview_earliest` branch. No accuracy risk.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Start the browser's latency clock at the first PCM byte sent, and record mic-grant + socket-open as a separate labelled offset rather than folding them into `dev.recordStart`.",
+          "mechanism": "`devRecordingStarted()` runs before `getUserMedia` (app.js:1060-1064), so 'first words' and 'behind mic' both include several hundred ms of setup the decoder never saw. Every measurement the verification phase takes from this console is inflated by that offset, and it is invisible in the number.",
+          "est_seconds_saved": "0 s of real lag; removes an unknown 0.2-1.0 s bias from the numbers the project will be judged on",
+          "risk": "The current 'first words' number is arguably the more honest user-facing figure (a radiologist does wait through the permission prompt). Keep both: report time-from-button and time-from-first-audio side by side rather than replacing one with the other.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Move `devUpdateArrived(msg)` to after `renderLiveText()`, or take the stamp inside a `requestAnimationFrame` callback, so the 'text on screen' mark measures pixels rather than JSON parsing.",
+          "mechanism": "app.js:981 marks before app.js:985 paints. The gap is small (measured pure-JS 0.2 ms plus up to one compositor frame, ~16 ms) but the mark's name asserts something it does not measure, and this lane's whole verification story rests on that one mark.",
+          "est_seconds_saved": "0 s; makes the console's central claim true rather than approximately true",
+          "risk": "A rAF callback can be deferred indefinitely in a background tab, which would make the mark look catastrophically slow when the window is not visible. Guard with document.visibilityState or keep the synchronous mark alongside it.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Emit a cheap audioSec-only heartbeat (no text) during the `_preview_earliest` skip window, or add `audio_sec` to the dedupe comparison at live_session.py:235-241.",
+          "mechanism": "The dedupe deliberately excludes audio_sec, so during a 1.4 s skip window the browser receives nothing and 'behind mic' / 'audio sent' freeze at stale values. That makes the console under-report the very stretches it exists to expose, and it makes the 'last update' gap stat unreadable as a mixture of 'no new text' and 'no message at all'.",
+          "est_seconds_saved": "0 s of real lag; restores the diagnostic during the exact window that matters",
+          "risk": "Adding audio_sec to the dedupe would send a message on every 0.5 s cycle whether or not text changed, roughly tripling message count (still trivial: measured 6 KB and 19 us at 800 words). A separate tiny heartbeat type is cleaner. No accuracy risk.",
+          "already_refuted": false
+        },
+        {
+          "lever": "DO NOT bother sending committed text as a delta instead of in full.",
+          "mechanism": "Measured at report length: 11.2 KB payload, 61 us to serialise, 204 us of client JS at 1500 words, over loopback. The whole-transcript resend is roughly 0.01% of one decode. Any delta protocol would add reconciliation state on both sides for no measurable gain, and would introduce a way for the two sides to disagree about the report text.",
+          "est_seconds_saved": "under 0.001 s - not worth doing",
+          "risk": "Listed here so the next reviewer does not spend a day on it. A delta protocol that desynchronises would corrupt a clinical report, which is a far worse failure than the 200 us it saves.",
+          "already_refuted": false
+        }
+      ],
+      "uncertainties": [
+        "I did not drive a real browser. The DOM half of the paint (assigning editor.value on a textarea holding a report, and replaceChildren on the marks underlay with a report-length text node) is INFERRED to be low-single-digit milliseconds; only the pure-JS half was measured, in Node. A browser-hands run with a performance.measure around renderLiveText would settle it.",
+        "How often a commit cycle ALSO runs a preview decode is inferred from reading live_session.py:205-226 and 298-300, not counted. If the open tail is almost always shorter than preview_min_tail_sec (1.0 s) at the moment a chunk closes, lever 1 is worth close to zero. One counter on the STATE_LIVE-with-commit path during a real dictation would decide it.",
+        "The 1.33-1.52 s decode cost underpinning the 2.6-3.0 s cadence estimate is quoted from CLAUDE.md's Live-speed design section, not re-measured in this pass.",
+        "The dedupe's exact behaviour on the first skip cycle after a live cycle (state changes live -> catching_up, so one extra message IS sent with unchanged text) is read from code; I did not observe the resulting message sequence on the wire.",
+        "Whether the browser coalesces several WebSocket messages arriving close together into one task-queue turn is not something I checked; if it does, two messages from lever 1 could paint in the same frame and the split would show no benefit."
+      ]
+    },
+    {
+      "lane": "first principles",
+      "findings": [
+        {
+          "claim": "The irreducible cost of asking Whisper anything at all on this machine is ~0.70s: a tiny.en transcribe() of 0.5s of audio costs 0.705s, of 3s costs 0.849s, of 20s costs 2.239s. Cost is flat in clip length because the encoder always runs on a padded 30s mel window.",
+          "evidence": "Measured now: python floor script over data/eval/bench/chest_long.wav via src.dictation.asr.factory.create_engine('faster-whisper', model_size='tiny.en'), beam=2, want_word_confidence=True, best of 3. Output: 0.5s->0.705s, 1s->0.806s, 2s->0.821s, 3s->0.849s, 6s->1.655s, 10s->1.509s, 15s->1.631s, 20s->2.239s",
+          "kind": "measured",
+          "seconds": 0.7
+        },
+        {
+          "claim": "The single largest term in committed-word lag is the chunk-close policy, not decoding: a word cannot become permanent until its chunk closes, and a chunk is never cut shorter than 6.0s.",
+          "evidence": "src/core/settings.py:39-41 (chunk_min_sec 6.0, chunk_soft_max_sec 15.0, chunk_force_cut_sec 20.0); enforced at src/dictation/stream/segmenter.py:103-119; docs/dictation-speed-review.md:18 already labels this 6-20s 'by construction'",
+          "kind": "read-from-code",
+          "seconds": 4.9
+        },
+        {
+          "claim": "Mean wait-for-endpoint is about 4.9s: the eval set runs 2.2 chunks per 21.6s clip, so mean realised chunk length is ~9.8s and a uniformly-placed word waits about half of that.",
+          "evidence": "docs/dictation-speed-review.md:165 (2.2 chunks/clip at the shipped policy) and :75 (30 clips, 10.8 min => 21.6s/clip). Arithmetic mine, not measured directly.",
+          "kind": "inferred",
+          "seconds": 4.9
+        },
+        {
+          "claim": "Every second of audio is decoded for keeps once but for display one to three more times, and the display decode is deliberately allowed to consume half the wall clock.",
+          "evidence": "src/dictation/stream/live_session.py:279-314 (_decode_open_tail; its result goes only to LocalAgreement2, never to the ledger) versus :267-273 (_commit_closed decodes the same samples again); the half-the-clock throttle is :122-128 and :313 (self._preview_earliest = time.time() + cost)",
+          "kind": "read-from-code",
+          "seconds": 1.4
+        },
+        {
+          "claim": "Deleting the preview decode entirely was already measured to move end-to-end lag from +10.5s to +9.1s, i.e. the preview costs ~1.4s of committed-text lag.",
+          "evidence": "docs/dictation-speed-review.md:33-38",
+          "kind": "measured",
+          "seconds": 1.4
+        },
+        {
+          "claim": "A chunk that becomes committable while a preview decode is in flight must wait for that preview to finish, because the web loop runs at most one cycle task at a time.",
+          "evidence": "src/ui/web_app.py:1043-1045 (starts a cycle only if cycle_task is None or done); the preview inside that cycle costs 0.7-2.2s per the measurement above",
+          "kind": "read-from-code",
+          "seconds": 1
+        },
+        {
+          "claim": "The ledger already supports mid-report, in-place correction of one committed chunk by index; nothing calls it except the post-Stop pass.",
+          "evidence": "src/dictation/stream/ledger.py:166-171 (ChunkLedger.replace); its only caller is src/dictation/stream/live_session.py:384 inside finalize(), and finalize() is invoked only after Stop at src/ui/web_app.py:1089",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "Per-chunk uncertainty bookkeeping is already keyed by committed-chunk index, so replacing one chunk's low-confidence marks mid-session needs no new data structure.",
+          "evidence": "src/dictation/stream/live_session.py:132-135 (self._uncertain dict), :175-178 (_note_uncertain(result, index)), :385 (replacement call with an explicit index)",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "The incremental post-processing frontier does not forbid a mid-prefix rewrite: it detects one and falls back to a whole-document pipeline pass, which costs 5-14ms.",
+          "evidence": "src/dictation/postprocess/incremental.py:112-121 (_extend_prefix returns False unless the new raw prefix startswith the cached one) and :100-104 (process() then calls reset() and reprocesses everything); cost from docs/dictation-speed-review.md:23",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "The real obstacle to running the accurate model concurrently with the live loop is CPU oversubscription, not code structure: every model is constructed with 14 intra-op threads on a 16-core box, so two concurrent decodes ask for 28.",
+          "evidence": "src/dictation/transcriber.py:166 (cpu_threads = 0 if cuda else max(4, (os.cpu_count() or 4) - 2)) and :182-183 (passed to WhisperModel); os.cpu_count() == 16 measured on this machine",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "A background corrector triggered by mean word confidence would inherit a blind spot already measured: the polish left hemothorax and cardiomedius-inal standing on one run because the fast model was confident about words it got wrong.",
+          "evidence": "docs/dictation-speed-review.md:192-200",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "Committing the fast model's text means committing text with 2.7x the anatomical error rate: tiny.en medical-term error 9.4% versus small.en 3.4% on the same 30 clips.",
+          "evidence": "docs/dictation-speed-review.md:78-82",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "The existing refutation of shorter chunks (3/6/8 gives RTF 0.92, decode +66%) was measured with the preview decode still running, so it does not isolate the cost of shorter committed chunks alone.",
+          "evidence": "docs/dictation-speed-review.md:163-175; the preview is on by default per src/core/settings.py:53 (preview_max_lag_sec 3.0) and is not mentioned as disabled in that run",
+          "kind": "inferred",
+          "seconds": null
+        },
+        {
+          "claim": "A second, smaller floor sits under the chunk policy: the VAD will not declare a usable cut point until 300ms of silence has elapsed, plus 200ms of speech padding.",
+          "evidence": "src/dictation/stream/vad.py:311-315 (min_silence_ms=300, speech_pad_ms=200 defaults, passed to faster_whisper.vad.VadOptions)",
+          "kind": "read-from-code",
+          "seconds": 0.3
+        }
+      ],
+      "levers": [
+        {
+          "lever": "Promote the LocalAgreement-2 confirmed prefix from display-only to committed text: when two consecutive open-tail decodes agree on a word, write it into the ledger instead of only painting it dimmed. This is what Whisper-Streaming (Machacek, Dabre, Bojar, ACL 2023 demo) actually does; this repo implements the algorithm but throws its output away.",
+          "mechanism": "Removes the two dominant terms at once. A word's commit latency stops being (wait for a >=6s chunk to close) + (queue behind a preview) + (decode) and becomes (two preview cycles) ~= 2 x 1.5s. It also removes work rather than adding it: the preview decode at live_session.py:279-314 currently produces text that is discarded and then re-earned by a second decode of the same samples at :267.",
+          "est_seconds_saved": "4-6 s of the 9-11 s",
+          "risk": "The largest risk in this whole list. It breaks the guarantee the ledger exists to state (ledger.py:1-13) and moves the commit decision off a VAD-verified silence boundary onto an arbitrary mid-word audio edge. Whisper's failure mode at a truncated edge is not a dropped word but a fluent invention, which is exactly the class the 8-second hallucination gate exists to catch. And the committed text is then tiny.en's, at 9.4% medical-term error against small.en's 3.4% (speed-review.md:78-82). Unsafe on its own; only defensible paired with lever 2."
+        },
+        {
+          "lever": "Run the accurate model as a continuous background corrector a chunk or two behind the live frontier, instead of only after Stop. Walk _ledger.low_confidence_indices() on its own task while recording, calling the existing ChunkLedger.replace().",
+          "mechanism": "The two-model design is already half of the standard two-pass architecture (small streaming pass + large rescoring pass, e.g. Sainath et al. 2019 two-pass RNN-T + LAS). Here the second pass is scheduled only at Stop (live_session.py:379-394, called from web_app.py:1089). Moving it to run during dictation does not make the first word appear sooner, but it converts fast text into accurate text seconds after it lands rather than minutes, which is what makes lever 1 or 6 acceptable at all.",
+          "est_seconds_saved": "0 s of first-appearance lag; converts committed text from tiny.en quality to small.en quality within ~5-10 s of commit instead of at Stop",
+          "risk": "CPU contention: transcriber.py:166 gives both models 14 threads on 16 cores. A small.en call measured ~4 s alone (speed-review.md:138-145) would stretch and be stretched by the live tiny.en calls, so the live loop could fall behind while chasing accuracy. Needs lever 3 first. Also inherits the confident-and-wrong blind spot in speed-review.md:192-200: the corrector only revisits chunks whose confidence was low."
+        },
+        {
+          "lever": "Give each engine its own intra-op thread budget instead of both taking cpu_count-2. E.g. live engine 10 threads, corrector 4, at transcriber.py:166.",
+          "mechanism": "Makes lever 2 mechanically possible. Right now two concurrent decodes request 28 threads on 16 cores, so the OS scheduler decides which of the two clinical paths degrades, rather than the design deciding.",
+          "est_seconds_saved": "0 s directly; it is the precondition for lever 2's benefit",
+          "risk": "Each individual decode gets slower. If the live engine drops below the threads it needs, first-word latency regresses toward the 13.8 s figure the 2026-09-01 work just fixed. Must be measured per-engine, not assumed."
+        },
+        {
+          "lever": "Give committed-chunk decodes their own task, separate from the preview, so a chunk that reaches a VAD boundary never queues behind an in-flight preview decode. Today both live inside one cycle_task guarded at web_app.py:1043-1045.",
+          "mechanism": "Attacks the queue term directly: a preview costs 0.7-2.2 s measured, and a chunk that becomes committable one tenth of a second into one waits out the whole call before its own decode even starts.",
+          "est_seconds_saved": "0.5-2 s",
+          "risk": "Two decodes at once, which is the same oversubscription problem as lever 2, on a smaller scale (both would be tiny.en). Also, live_session.cycle() is explicitly documented as not written to survive two concurrent entries (live_session.py:185-195), so the split must be done in the session, not by removing the web loop's guard."
+        },
+        {
+          "lever": "Re-measure the shorter chunk policy (3/6/8) with the preview decode switched off, and compare against the shipped 6/15/20 with the preview on.",
+          "mechanism": "The existing refutation gave RTF 0.92 for 3/6/8, but the preview was running and is designed to eat half the wall clock (live_session.py:122-128). Shorter chunks and a live preview are two ways to buy the same thing, low-latency visible text, and the app is currently paying for both. Spending the entire preview budget on shorter committed chunks may land under RTF 0.7 with real permanent text instead of provisional text.",
+          "est_seconds_saved": "2-4 s if it survives; 0 s if it does not",
+          "risk": "None to run: it is a measurement, not a change. If adopted, the risk is the one the refutation already found: more chunks means more calls at ~0.7 s fixed each, and both accuracy metrics moved the wrong way at 3/6/8 (WER 6.66->7.31%, term error 7.11->7.56%), though the doc itself calls that gap noise.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Commit by distance from the audio edge rather than by agreement count: faster-whisper already returns per-word timestamps, so commit every word in the open-tail decode that ends more than K ms before the end of the decoded clip, and leave the rest provisional.",
+          "mechanism": "Same latency win as lever 1 (words become permanent from the preview decode, not from a chunk close) but it targets the actual failure mechanism instead of a proxy. Whisper invents text at a truncated edge; a word that ended 1.5 s before the edge had full acoustic right-context and is not an edge artefact. Agreement-count commits, by contrast, can confirm two decodes that made the same edge mistake twice.",
+          "est_seconds_saved": "3-5 s",
+          "risk": "K is an unmeasured tuning knob and a too-small K commits exactly the edge hallucinations this is meant to avoid. Word timestamps come from cross-attention DTW and are known-imprecise; the repo already depends on them elsewhere (rules.py:177-199, and speed-review.md:51 records that removing them breaks the hallucination gate), so their accuracy at a chunk edge specifically is untested here."
+        },
+        {
+          "lever": "Run the Parakeet TDT experiment that was left open: wire lexicon biasing into it, then use it as the LIVE engine with Whisper small.en as the background corrector from lever 2.",
+          "mechanism": "Parakeet is a Transducer, the only architecture family in this repo that is natively frame-synchronous rather than window-padded, so it is the only route to a decode cost that scales with audio rather than sitting at a 0.7 s per-call floor. It is already installed and already behind the swap-seam (asr/factory.py:19, engines/parakeet_engine.py; onnx-asr present on this machine). Measured RTF 0.108 versus small.en's 0.565 buys enough headroom to run short chunks and a continuous corrector at the same time.",
+          "est_seconds_saved": "3-6 s, contingent on the biasing experiment",
+          "risk": "The engine swap alone is already refuted on the veto metric: medical-term error 7.12% versus Whisper small.en 3.44% (dictation-accuracy.md:120-131). The entire case rests on unproven lexicon biasing closing a 2x anatomy gap, and the adapter reports hotwords=False today, so the biasing path does not exist yet. Do not ship this on a speed argument.",
+          "already_refuted": false
+        }
+      ],
+      "uncertainties": [
+        "The 9-11 s committed-lag figure is from docs/dictation-speed-review.md:12-13, dated 2026-07-28, BEFORE the live_model_size split of 2026-09-01 that took first words from 15.9 s to 4.7 s. I found no post-split measurement of committed-word lag anywhere in the repo. Every seconds figure I attribute below is against a number that may already be stale; measure it before acting on any lever.",
+        "My ~4.9 s mean endpoint wait is arithmetic over two published ratios (2.2 chunks per clip, 21.6 s per clip), not an observed chunk-length distribution. Real dictation pause structure could put it anywhere from 3 s to 8 s.",
+        "Whether two concurrent ctranslate2 models at 14 threads each actually contend badly on this 16-core box, or the OS schedules it acceptably, is untested. Levers 2, 3 and 4 all hinge on it and none of them is safe to propose as a finished plan until it is measured.",
+        "Whether LocalAgreement-2 agreement on tiny.en is precise enough on anatomical vocabulary is completely untested. Two decodes agreeing is agreement about tiny.en's biases, not evidence of correctness, and the whole case for lever 1 rests on it.",
+        "Citation confidence: I am confident about LocalAgreement (Liu et al. 2020, partial hypothesis selection) and Whisper-Streaming (Machacek, Dabre, Bojar, ACL 2023 system demo), which is the paper this repo's tail.py is implementing. I recall the others more loosely and would verify before writing any of them into docs: two-pass RNN-T + LAS rescoring (Sainath et al. 2019), WeNet U2/U2++ CTC-prefix-beam plus attention rescoring, MoChA monotonic chunkwise attention, Emformer. The mechanism claims about them stand on architecture, not on my memory of the papers.",
+        "No `own` gold set exists (real acoustics, MSK vocabulary) per dictation-accuracy.md:173-177, so every lever here can currently only be scored on synthetic TTS audio, which is exactly the material on which the medical-term-error veto is least trustworthy. Recording it is still the highest-value action in the repo and it blocks honest evaluation of levers 1, 5, 6 and 7."
+      ]
+    },
+    {
+      "lane": "chunk-close policy: what makes a word wait before it is committed, and whether the LocalAgreement-2 stable prefix can be committed progressively instead",
+      "findings": [
+        {
+          "claim": "A cut point can only be the end of a speech mark that has ANOTHER speech mark after it, so a pause only closes a chunk once the speaker starts talking again; a trailing pause closes nothing.",
+          "evidence": "src/dictation/stream/segmenter.py:94-98 (`if marks[i].end_sample < marks[i+1].start_sample`, loop `range(len(marks)-1)`). Ran cut_chunks(12s audio, one mark 0-6.5s) -> [(0.0, 12.0, closed=False)]: no chunk closes at all despite 5.5s of trailing silence.",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "The policy deliberately picks the LATEST usable pause up to chunk_soft_max_sec, so plentiful pauses do not shorten chunks; they lengthen them toward 15s.",
+          "evidence": "src/dictation/stream/segmenter.py:107-111 (`within_soft[-1]`). Ran cut_chunks(30s, a 1.7s speech mark every 2s) -> cuts at 13.7s and 27.7s, not at 6.x s. Defaults chunk_min_sec=6.0 / soft_max=15.0 / force_cut=20.0 at segmenter.py:30-32 and src/core/settings.py:39-41.",
+          "kind": "measured",
+          "seconds": 7
+        },
+        {
+          "claim": "With no pause at all the chunk is force-cut at exactly chunk_force_cut_sec, and only once the buffer already runs past it.",
+          "evidence": "src/dictation/stream/segmenter.py:114-116 (`elif force_pt < total_samples`). Ran cut_chunks(45s, one unbroken 45s mark) -> closed chunks (0,20) and (20,40), open tail (40,45).",
+          "kind": "measured",
+          "seconds": 20
+        },
+        {
+          "claim": "The VAD gate adds ~0.5s before a pause is even a candidate: the silence must last 300ms, and the cut is placed 200ms after true speech end because marks are padded.",
+          "evidence": "src/dictation/stream/vad.py:30-34 and 43-49 (`min_silence_duration_ms=300`, `speech_pad_ms=200`).",
+          "kind": "read-from-code",
+          "seconds": 0.5
+        },
+        {
+          "claim": "After the cut exists, the web loop waits up to live_cycle_sec (0.5s) AND for the previous cycle to finish, because a new cycle only starts when the last task is done.",
+          "evidence": "src/ui/web_app.py:965 (`cycle_sec` from `live_cycle_sec`, 0.5 in dictation_settings.json) and web_app.py:1044 (`if time.time() - last_cycle >= cycle_sec and (cycle_task is None or cycle_task.done())`); the comment at web_app.py:982-984 says session.cycle() is not written to survive two concurrent runs.",
+          "kind": "read-from-code",
+          "seconds": 0.5
+        },
+        {
+          "claim": "A closing chunk is decoded at the START of a cycle but the open-tail preview runs at the END of the previous one, so a commit queues behind a full preview decode.",
+          "evidence": "src/dictation/stream/live_session.py:205 (`self._commit_closed(...)`) versus live_session.py:225 (`self._decode_open_tail(...)`), both inside the single-threaded `cycle()`; the whole cycle runs on one worker thread (`anyio.to_thread.run_sync(session.cycle)`, web_app.py:996).",
+          "kind": "read-from-code",
+          "seconds": 3
+        },
+        {
+          "claim": "The committed-chunk decode asks for word confidence, which measurably costs +0.6 to +1.6s per call on tiny.en; the preview decode does not ask for it.",
+          "evidence": "live_session.py:267-270 (`want_confidence=True`) vs live_session.py:305-308 (`want_confidence=False`). Measured on data/bench_audio/chest_long.wav, tiny.en, beam 2, best of 3: 3s clip 1.22s->1.88s, 6s 0.65->1.23, 10s 1.37->2.18, 15s 1.78->3.32, 20s 3.44->4.95, 25s 3.78->5.09.",
+          "kind": "measured",
+          "seconds": 1.5
+        },
+        {
+          "claim": "On tiny.en a decode call is NOT flat with clip length: it rises ~3.5x from a 3s clip to a 25s clip, contradicting the flat-cost premise the preview throttle is built on.",
+          "evidence": "5 reps interleaved, same clip, beam 2, no word timestamps (min/median seconds): 3s 0.95/1.17, 6s 1.69/2.00, 10s 1.86/2.49, 15s 2.08/3.44, 20s 2.75/4.75, 25s 3.30/4.29. The flatness claim (1.33s@3s, 1.36s@6s, 1.52s@25s) is asserted at src/dictation/stream/rules.py:143-147 and repeated in CLAUDE.md; those numbers are from the small.en era where the encoder dominates.",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "Because cost grows with tail length and preview_max_lag_sec is 3.0, the preview switches itself OFF on long open tails and the loop reports catching_up: the same failure the current formula was written to fix, reached by a different route.",
+          "evidence": "src/dictation/stream/rules.py:155-157 (`return preview_cost_sec > max_lag_sec`), live_session.py:210-226 (skip path, STATE_CATCHING_UP), live_session.py:313 (`self._preview_earliest = time.time() + cost`), preview_max_lag_sec=3.0 in dictation_settings.json; measured 20s-tail cost 2.75s min / 4.75s median crosses that ceiling.",
+          "kind": "inferred",
+          "seconds": null
+        },
+        {
+          "claim": "LocalAgreement-2's stable prefix is a bare string with no sample offset, while ChunkLedger.commit demands absolute start/end samples and refuses anything that does not start exactly at the open frontier.",
+          "evidence": "src/dictation/stream/tail.py:41-48 and 68-105 (everything is `.split()` on text) versus src/dictation/stream/ledger.py:136-151 (raises unless `chunk.closed` and `chunk.start_sample == self._open_start`). The only source of a sample offset is Word.start/end, src/dictation/asr/types.py:19-25, which needs want_word_confidence=True on the preview.",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "A progressively-committed chunk would carry mean_confidence=None and the post-Stop polish silently skips every None, so the fast model would become the final authority on most of the report.",
+          "evidence": "src/dictation/stream/ledger.py:153-164 (`if c.mean_confidence is not None and c.mean_confidence < ceiling`), fed by live_session.py:273 (`mean_confidence(result)`); the preview result has no words at all (live_session.py:307 `want_confidence=False`), and src/dictation/stream/rules.py:42-50 returns None when no segment reported a confidence.",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "The ledger's sentence-close / paragraph break only fires across a chunk that committed EMPTY text, because chunks are always contiguous so the sample gap is otherwise exactly zero.",
+          "evidence": "src/dictation/stream/ledger.py:100-115 (`gap_sec = (c.start_sample - prev_end)/sr`, with `if not c.text: continue` at 104-105). Ran it: contiguous chunks -> 'the lungs are clear no effusion'; the same two with an empty chunk between -> 'the lungs are clear.\\nno effusion'. Progressive commits are contiguous and non-empty, so they never trigger it.",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "Cutting a chunk mid-speech leaves the next chunk with no way to recover context: chunks never overlap, there is no boundary-dedup step, the prompt deliberately excludes committed text, and live chunks decode with condition_on_previous_text=False at beam 2.",
+          "evidence": "src/dictation/stream/rules.py:22-26 ('Chunks never overlap in this design, so there is no boundary-dedup step to lean on'); live_session.py:414-450 (`condition: bool = False` default, passed as `condition_on_previous_text`), live_session.py:267-270 (chunk decode passes no `condition`), live_beam_size=2 in dictation_settings.json.",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "Progressive commit has only one force-polish slot to reuse, so at Stop it either re-decodes ~100 short chunks with small.en or re-decodes none of them.",
+          "evidence": "src/dictation/stream/live_session.py:139 (`self._forced_polish_index: Optional[int] = None`), set at 355, consumed at 371 (`if self._forced_polish_index is not None and ... not in targets`). docs/dictation-speed-review.md records the property this would destroy: report handed back +0.0s, accuracy pass lands +16.1s (web).",
+          "kind": "read-from-code",
+          "seconds": null
+        }
+      ],
+      "levers": [
+        {
+          "lever": "Cap the PREVIEW clip to the last N seconds of the open tail (new knob, e.g. preview_max_tail_sec = 8) instead of decoding the whole open tail in _decode_open_tail.",
+          "mechanism": "Measured, preview cost tracks clip length on tiny.en (2.75-4.75s at 20s of tail vs 1.69-2.00s at 6s). live_session.py:313 blocks the next preview for exactly the last one's cost and rules.py:155-157 drops previews entirely once cost > preview_max_lag_sec=3.0, so a long tail throttles and then silences the preview. A shorter preview clip roughly halves the cost and doubles the LocalAgreement-2 cadence.",
+          "est_seconds_saved": "1-3s off perceived (preview) lag; 0s off committed lag",
+          "risk": "Display-only path (live_session.py:279-314), so kept text and medical-term accuracy are untouched. Real risks: LocalAgreement2._previous would compare two different audio windows unless the window is anchored, and the preview would show only recent words, so the committed+preview join in the front-end needs checking. Must not be applied to _commit_closed.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Add the last speech mark's end as a cut candidate when the audio after it is already silent for >= min_silence, i.e. stop requiring a FOLLOWING speech mark in segmenter.cut_chunks.",
+          "mechanism": "Verified: a 6.5s utterance followed by 5.5s of silence closes nothing today (segmenter.py:94-98). The commonest real behaviour, say a sentence then pause to think, currently waits for the radiologist to speak again before the words they already said can be committed.",
+          "est_seconds_saved": "0s in continuous speech; seconds to tens of seconds in the pause-heavy case, capped today only by the 20s force cut",
+          "risk": "Lowest of any lever here: the cut is still at a VAD-confirmed silence boundary and the chunk is still >= chunk_min_sec, so nothing is cut mid-word and the accuracy premise at segmenter.py:4-10 is preserved. Small chance of freezing a trailing word Whisper would have finished differently with more audio. Needs the same change in the desktop copy (worker.py:297-339).",
+          "already_refuted": false
+        },
+        {
+          "lever": "Lower chunk_soft_max_sec from 15.0 to ~9-10, leaving chunk_min_sec at 6.0 and chunk_force_cut_sec at 20.0.",
+          "mechanism": "segmenter.py:110-111 takes the LATEST pause up to soft_max, so the policy actively pushes chunks toward 15s (verified: pauses every 2s still produced a 13.7s chunk). Mean wait for a mid-chunk word is about half the chunk length, so 6/10/20 caps it near 4s instead of 7s, while every cut stays at a VAD silence boundary.",
+          "est_seconds_saved": "2.5-3s off committed lag",
+          "risk": "NOT the change docs/dictation-speed-review.md:163-168 refuted: that was 3/6/8, which also halved min_sec and doubled chunk count (medical-term error 7.11%->7.56%, RTF 0.55->0.92). This keeps the 6s floor. But chunk count still rises ~40%, and on the measured curve a 10s chunk costs 1.86s vs 2.08s for 15s, so decode per second of audio rises ~0.14 -> ~0.19 and RTF moves toward ~0.7. Must be re-measured on scripts/eval before shipping.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Split the web cycle into a commit task that never waits and a preview task that may be dropped, so a closed chunk is not queued behind the previous cycle's preview decode.",
+          "mechanism": "web_app.py:1044 gates a new cycle on `cycle_task.done()`, and live_session.cycle() runs _commit_closed (line 205) only after the previous cycle's _decode_open_tail (line 225) has returned. Measured preview cost on a long tail is 2.75-4.75s, all of which sits between a chunk closing and its text appearing.",
+          "est_seconds_saved": "0-4.8s, sharply worse on long tails",
+          "risk": "Real refactor, not a flag: web_app.py:982-984 states cycle() is not written to survive two concurrent runs. The ledger and LocalAgreement2 mutations must stay on one thread; getting this wrong reintroduces the duplicated-seconds bug the snapshot comment at live_session.py:185-195 describes.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Progressive commit of the LocalAgreement-2 stable prefix, in the only de-risked form: promote the stable prefix ONLY up to the last Silero speech-mark end inside the open tail, ignoring chunk_min_sec and the following-mark requirement.",
+          "mechanism": "Keeps the silence-boundary invariant (segmenter.py:4-10) while removing the two waits that are pure policy: the 6s floor and the need for the speaker to resume. Needs want_word_confidence=True on the preview to map words to samples (types.py:19-25), which measured at +0.59s (6s clip) to +1.55s (15s clip), and that same flag simultaneously supplies the mean_confidence the polish gate needs (ledger.py:153-164).",
+          "est_seconds_saved": "3-6s off committed lag",
+          "risk": "Chunks shorter than 6s are the direction docs/dictation-speed-review.md:163-168 measured as worse for medical-term error, so this needs the eval harness, not judgement. _forced_polish_index (live_session.py:139) must become a set or Stop cost explodes. Sub-6s chunks newly expose single-word real dictation to the whole-segment hallucination gate (transcriber.py:369-372, applied at :300), which deletes a segment whose entire text is e.g. 'you'.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Naive progressive commit of the stable prefix at an arbitrary word boundary, cutting mid-speech. Listed to rule it out, not to try.",
+          "mechanism": "Would remove the whole 0-20s chunk-close wait in one step.",
+          "est_seconds_saved": "6-9s, on paper",
+          "risk": "Breaks four things at once: every later chunk begins mid-phrase with no context (rules.py:22-26 forbids overlap and has no dedup step; condition_on_previous_text is False), mean_confidence is None so the polish never revisits it (ledger.py:161-164), paragraph breaks vanish because the ledger's gap is always 0 on contiguous chunks (measured) and a 2.5s pause no longer sits inside one chunk for transcriber.py:320 to see, and Whisper's DTW word end times are approximate so the cut clips word onsets. This is the medical-term veto, not a speed tradeoff.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Re-measure the current committed lag before optimising it, using behind_sec already emitted by the socket.",
+          "mechanism": "web_app.py:1006-1010 computes `behind_sec = time.time() - started - update.audio_sec` per cycle and the developer console reads it via GET /api/debug/events. The +9 to +11s figure in docs/dictation-speed-review.md:13 was recorded 2026-07-28, before the 2026-09-01 tiny.en live-model split that took first words from 15.9s to 4.7s; the committed number may already be lower.",
+          "est_seconds_saved": "0 directly; prevents optimising against a stale baseline",
+          "risk": "None. Pure measurement.",
+          "already_refuted": false
+        }
+      ],
+      "uncertainties": [
+        "I did not measure end-to-end committed lag on the running app. The 9-11s target comes from docs/dictation-speed-review.md:13 (recorded 2026-07-28, pre-dating the tiny.en live-model split), so the real current number is unverified and my per-stage seconds are a reconstruction, not an observation.",
+        "My decode-cost curve is one clip (data/bench_audio/chest_long.wav), one model (tiny.en), one machine state. Medians run 1.5-2x the minima, so scheduling noise is large and the absolute numbers should not be quoted as budgets; only the shape (cost rises with clip length on tiny.en) is solid.",
+        "I did not verify whether Silero's speech_pad_ms=200 merges two marks separated by less than ~400ms. If it does, the effective minimum pause needed to create a cut candidate is nearer 700ms than the 300ms min_silence_duration_ms suggests, and lever 2's payoff changes.",
+        "I did not check how often a fully-silent chunk actually occurs in real dictation. My reading is that it needs roughly a 20s force-cut of silence, which would mean the ledger's paragraph break almost never fires today and transcriber.py:320 is doing nearly all the paragraph work. That is inferred from code plus a synthetic ledger run, not from a real recording.",
+        "The desktop worker duplicates the commit loop (worker.py:297-339 and :481-506) rather than importing live_session. Every lever above is a two-place change and I only traced the web path in full.",
+        "I did not verify that Whisper word end times from tiny.en are accurate enough to cut on. The +0.6 to +1.6s cost of turning them on is measured; their positional error is not, and lever 5 depends entirely on it."
+      ]
+    },
+    {
+      "lane": "Is the live loop serialised, and could it overlap work on 16 CPUs?",
+      "findings": [
+        {
+          "claim": "Audio ingestion is NOT blocked during a decode on the web path any more: the fix on 3ee4324 moved session.cycle() out of the receive loop into an asyncio background task, so ws.receive() keeps draining PCM while a decode runs.",
+          "evidence": "src/ui/web_app.py:1043-1046 (`if time.time() - last_cycle >= cycle_sec and (cycle_task is None or cycle_task.done()): cycle_task = asyncio.create_task(run_cycle())`) vs the pre-fix `update = await anyio.to_thread.run_sync(session.cycle)` inline in the receive loop; `git show 3ee4324 -- src/ui/web_app.py`. The commit message reports the measured effect: on a 30s clip on-screen lag went from +0.7s->+5.1s (compounding) to +0.05s->+2.7s.",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "That fix bought drain-freedom, not overlap: the same `cycle_task.done()` guard means exactly one cycle may run at a time, so a chunk that closes while a cycle is in flight is not decoded until that cycle (including its preview decode) has finished.",
+          "evidence": "src/ui/web_app.py:1043 (the `cycle_task is None or cycle_task.done()` condition) and the comment at src/ui/web_app.py:982-983 (\"guards against two decodes running at once, which session.cycle() is not written to survive\").",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "Committed-chunk decode and open-tail preview decode are serialised inside a single Python call: cycle() runs every closed chunk through _commit_closed first, then _decode_open_tail, on one thread.",
+          "evidence": "src/dictation/stream/live_session.py:205 (`committed_any = self._commit_closed(...)`) then :225 (`preview = self._decode_open_tail(...)`); both call self._decode -> engine.transcribe on the same live_engine (:267-270, :305-308). Desktop mirror: src/dictation/worker.py:306-340 (commit loop) then :359-361 (preview).",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "Even if the two were run on separate Python threads, ctranslate2 would still serialise them: faster-whisper is constructed without num_workers, so inter_threads=1 and one WhisperModel serves one request at a time.",
+          "evidence": "src/dictation/transcriber.py:181-183 constructs WhisperModel with only model_ref/device/compute_type/cpu_threads/download_root; faster_whisper 1.2.1 WhisperModel.__init__ defaults num_workers=1 and passes `inter_threads=num_workers` into ctranslate2.models.Whisper (read from installed faster_whisper/transcribe.py).",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "Measured: two decodes on one shipped-config tiny.en model (cpu_threads=14, num_workers=1) run concurrently take the SAME time as run back-to-back - proof of the CT2 queue, not a thread-pool artefact.",
+          "evidence": "Benchmark scratchpad/one.py on data/eval/bench/chest_long.wav, 15s + 12s clips, beam=2, 3 reps: `tiny.en intra=14 workers=1: alone15s=2.90 alone12s=2.33 seq=4.64 conc=4.44 speedup=1.05`.",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "Measured: with num_workers=2 and cpu_threads reduced to 8, the same pair of decodes overlaps for a real win - median for the pair 6.82s (shipped, sequential) -> 4.05s (tuned, concurrent), min 5.20s -> 2.46s, interleaved A/B in one process, 5 reps.",
+          "evidence": "scratchpad/ab.py: `SHIPPED intra=14 w=1 sequential : min=5.20 med=6.82 max=9.84` / `TUNED intra=8 w=2 concurrent : min=2.46 med=4.05 max=8.31`.",
+          "kind": "measured",
+          "seconds": 2.8
+        },
+        {
+          "claim": "Thread oversubscription is real and measurable: keeping cpu_threads=14 while adding workers gives a much weaker win on tiny.en (28 threads on 16 cores) and an outright LOSS on small.en at beam 5 (42 threads on 16 cores).",
+          "evidence": "scratchpad/one.py `tiny.en intra=14 workers=2: seq=7.45 conc=3.98 speedup=1.87` vs `tiny.en intra=8 workers=2: seq=3.50 conc=2.31`; scratchpad/polish.py `small.en polish x3(10s,beam5) intra=14 workers=3 par=3: seq=37.80s conc=50.82s speedup=0.74`, against `intra=5 workers=3 par=3: seq=22.46s conc=10.89s speedup=2.06`.",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "num_workers>1 is not free: ctranslate2 replicates the model per inter-thread, and that measurably degrades even purely sequential throughput - the same 3 sequential small.en decodes cost 13.53s at workers=1 and 37.80s at workers=3.",
+          "evidence": "scratchpad/polish.py, three separate processes, identical sequential workload: seq=13.53 (intra=14 w=1), seq=37.80 (intra=14 w=3), seq=22.46 (intra=5 w=3). Judged against the shipped baseline the best concurrent polish config is 13.53s -> 10.89s, ~20%, not the 2.06x its own row shows.",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "The post-Stop confidence-targeted polish decodes chunks strictly one at a time, on both front-ends.",
+          "evidence": "src/dictation/stream/live_session.py:373-386 (`for done, i in enumerate(targets, ...)` then a blocking self._decode per target, then a further tail decode at :390-394); src/dictation/worker.py:450-476 (same shape, `for done, i in enumerate(targets, ...)` with a blocking engine.transcribe inside).",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "There is no thread-pool bound capping this: anyio's default thread limiter is 40, and only one to_thread call is ever outstanding per socket anyway.",
+          "evidence": "anyio._backends._asyncio: `limiter = CapacityLimiter(40)`; the only to_thread calls on the live path are src/ui/web_app.py:995 (cycle), :1072 (close_open_tail_fast) and :1089 (finalize), and the Stop path awaits the in-flight cycle at :1063-1065 before either. The cap is the CT2 inter_threads=1 queue, not the pool.",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "Because _get_engine caches one AsrEngine per model name process-wide and transcriber._MODEL_CACHE caches the WhisperModel, every socket in the process shares one model object - so with num_workers=1 two browser tabs dictating at once serialise against each other too.",
+          "evidence": "src/ui/web_app.py:348-360 (`asr_engines` dict under `transcriber_lock`, keyed on the resolved model name); src/dictation/transcriber.py:151-160 + :184 (_MODEL_CACHE keyed on (model_ref, device, compute_type), _MODEL_CACHE_MAX=2 at :90).",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "Attributing seconds: a closed chunk waits behind the previous cycle's preview decode of the open tail, which alone measured 2.2-2.3s for a 12s tail on tiny.en, on top of its own ~2.5-2.9s decode.",
+          "evidence": "Component costs measured in scratchpad/one.py (`alone15s=2.90 alone12s=2.33` at the shipped intra=14/w=1 config); the wait is structural per src/ui/web_app.py:1043 and src/dictation/stream/live_session.py:205/225. The docs' own budget puts total felt lag at +9 to +11s with chunk-close policy owning 6-20s of it (docs/dictation-speed-review.md:14-19).",
+          "kind": "inferred",
+          "seconds": 2.3
+        }
+      ],
+      "levers": [
+        {
+          "lever": "Give the live engine num_workers=2 and drop cpu_threads to ~8, then split cycle() so a closed-chunk commit can start while the previous cycle's preview decode is still running (two guarded tasks in web_app.py's socket loop instead of one `cycle_task`).",
+          "mechanism": "Today a chunk that closes mid-cycle waits for that cycle's preview decode to finish (live_session.py:205/225, web_app.py:1043), and even a threaded split would queue inside ctranslate2 because inter_threads=1 (transcriber.py:181-183). Both barriers have to go together; then the preview's ~2.3s stops sitting in front of the text that is actually kept.",
+          "est_seconds_saved": "~2-3s of committed lag (measured pair cost 6.82s median -> 4.05s median; min 5.20 -> 2.46)",
+          "risk": "Two risks, both real. (1) Correctness, not accuracy: LiveSession.cycle mutates _ledger, _agreement, _last_stable, _uncertain and _preview_cost with no lock, and web_app.py:982-983 says outright it is not written to survive two callers - the commit path and the preview path must be separated into their own state before this is safe, or the transcript can duplicate or drop a chunk. (2) num_workers=2 replicates the model in RAM and measurably slows sequential decodes (small.en seq 13.53s -> 37.80s at w=3), so cpu_threads must come down in the same change and the pairing must be re-measured, not assumed. Anatomy accuracy is untouched: the same model, beam, prompt and audio bytes go into each transcribe() call, so decoded text should be identical.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Cheaper first step, no concurrency at all: when pending_cuts() shows a chunk is ready to close, skip the preview decode for that cycle outright rather than letting it run after the commit.",
+          "mechanism": "The preview is cosmetic and never committed (live_session.py:279-287), yet on the very cycle a chunk closes it still costs a full decode that delays the NEXT cycle's commit by ~2.3s. The existing skip machinery (rules.should_skip_preview, _preview_earliest at live_session.py:210-222) already proves dropping a preview is safe and self-healing.",
+          "est_seconds_saved": "~1-2s per chunk boundary; no RAM or thread cost",
+          "risk": "Low. The preview freezes on _last_stable for one cycle, which the code already does under load and shows as STATE_CATCHING_UP. But note docs/dictation-speed-review.md:47 refuted *deleting* the preview entirely because its return value seeds LocalAgreement-2 - this must skip only on chunk-close cycles, where _agreement.reset() is called anyway (live_session.py:206-208), so the seed is being thrown away regardless. That reset is the reason this variant escapes the prior refutation, and it is the thing to verify first.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Run the post-Stop polish chunks concurrently (live_session.py:373-386, worker.py:450-476) with the final engine at num_workers=3, cpu_threads=5.",
+          "mechanism": "Polish targets are independent chunks by construction (each has its own audio slice and its own ledger index), so nothing orders them; today they queue behind each other for the full beam-5 cost each.",
+          "est_seconds_saved": "~2.6s of background time on a 3-chunk polish (measured 13.53s shipped-sequential -> 10.89s), and ZERO on the lag the user is complaining about",
+          "risk": "Poor value for the risk. It is background time after the report is already handed back (web_app.py:1077-1096), so the radiologist does not sit through it; against that, small.en at intra=14/workers=3 measured a 0.74x LOSS, the ledger.replace() calls would need ordering, and the cancellation check at worker.py:451/479 stops being a clean between-chunks boundary. Do the live-loop levers first and leave this alone.",
+          "already_refuted": false
+        },
+        {
+          "lever": "Do not raise cpu_threads above 14 or add workers without lowering intra threads - and treat any thread-count change as a measured change, not a config tweak.",
+          "mechanism": "cpu_threads = max(4, os.cpu_count()-2) = 14 here (transcriber.py:167). Two engines each at 14 is already 28 threads on 16 cores whenever the live loop and a polish overlap; adding workers on top is what produced the measured 0.74x regression.",
+          "est_seconds_saved": "0 directly; prevents a 25-35% regression",
+          "risk": "None to accuracy; this is a guard rail on the levers above rather than a change of its own.",
+          "already_refuted": false
+        }
+      ],
+      "uncertainties": [
+        "Measurement noise on this machine was large: identical sequential workloads ranged 3.50-9.84s across runs (scratchpad/one.py and ab.py), so every speedup above is quoted as min and median over reps and should be re-confirmed on a quiet machine before anything ships.",
+        "The benchmarks call faster_whisper directly, not through the app's AsrEngine port, so they exclude VAD, the postprocess pipeline and the socket - they price decode overlap only, not end-to-end lag.",
+        "I did not measure the cross-model case (tiny.en live decode overlapping a small.en polish), which is what actually happens if a second recording starts while a polish is still running; that is the worst oversubscription case and is untested.",
+        "Whether splitting cycle() into independently-locked commit and preview halves is achievable without duplicating ledger state is a design question I did not attempt - the 2-3s estimate assumes it is.",
+        "num_workers>1 memory cost was not measured, only inferred from the sequential slowdown pattern; on a machine that also holds two Whisper models (transcriber._MODEL_CACHE_MAX=2) that could matter.",
+        "The exact validation experiment: start the app, run `python -m scripts.dev.live_probe data/eval/bench/chest_long.wav` five times on shipped code and five times on the patched build, comparing the lag printed on the first update where committed_len grows (not first-text, which is already fixed); then `python -m scripts.eval.run_eval --set tts` on both builds and confirm medical-term error is unchanged - it must be bit-identical, since no decode input changes."
+      ]
+    },
+    {
+      "lane": "The decode call itself: what every transcribe() passes, and what faster-whisper 1.2.1 / ctranslate2 4.6.0 offer that this app never touches.",
+      "findings": [
+        {
+          "claim": "There are exactly three decode shapes. Live committed chunk: beam=live_beam_size(2), vad_filter=False, condition_on_previous_text=False, want_word_confidence=True, temperature=0.0. Open-tail preview: identical but want_word_confidence=False. Post-Stop polish: beam=final_beam_size(5), condition_on_previous_text=True, want_word_confidence=True.",
+          "evidence": "src/dictation/stream/live_session.py:267-269 (live.chunk), :305-307 (live.preview), :345-347 (stop.tail), :379-381 + :391-393 (final.polish/final.tail), all funnelled through _decode at :414-453; desktop twins at src/dictation/worker.py:320-333 (chunk), :406-417 (preview), :459-470 + :485-496 (polish). Settings src/core/settings.py:43,47.",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "The temperature fallback ladder is live on two of the six app call sites and is a hidden 8.4x multiplier when it trips. src/dictation/stream/live_session.py:448 pins temperature=0.0 for every web stage, but the desktop polish and the web upload path pass no temperature at all, so TranscribeContext's default None falls through to the 5-value ladder.",
+          "evidence": "src/dictation/asr/types.py:86 (temperature default None) -> src/dictation/transcriber.py:276 (`temperature if temperature is not None else [0.0,0.2,0.4,0.6,0.8]`). No temperature passed at src/dictation/worker.py:461-469, :487-495, src/ui/web_app.py:865-871. Measured (bench4, tiny.en, 15s clip, beam=2): temperature=0.0 -> generate()=1, 1.736s; ladder with a threshold forced to always fail -> generate()=5, 13.458s.",
+          "kind": "measured",
+          "seconds": 11.7
+        },
+        {
+          "claim": "A ladder retry is decoder-only, not encoder-only-once-per-temperature: the encoder output is computed once and reused across all 5 passes, but each retry at temperature>0 switches to beam_size=1 with num_hypotheses=best_of (5), so a retry is not cheaper than the greedy pass.",
+          "evidence": "C:/Python312/Lib/site-packages/faster_whisper/transcribe.py:1432 (`for temperature in options.temperatures`), :1434-1441 (beam_size=1, num_hypotheses=options.best_of), :1445 (generate reuses encoder_output). Measured: encode()=1, generate()=5 for one transcribe() (bench4).",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "word_timestamps=True does not just add a DTW align pass: on tiny.en it makes the sequential seek loop run a SECOND full 30s-padded encoder+decoder window on the leftover sliver of every clip. Measured encoder windows per transcribe(): 2 with word timestamps, 1 without, at every clip length tested (3/6/7/10/15/20s).",
+          "evidence": "Cause: transcribe.py:1288-1291 overwrites `seek = round(last_word_end * frames_per_second)` only under `if options.word_timestamps:`; last_word_end lands short of content_frames so the while loop at :1157 runs again. Measured (bench10, tiny.en beam=2): 6s 2.005s/gen=2 vs 0.870s/gen=1; 15s 1.825/gen=2 vs 1.327/gen=1; 20s 2.388/gen=2 vs 1.967/gen=1. align() is called exactly once (bench4).",
+          "kind": "measured",
+          "seconds": 0.42
+        },
+        {
+          "claim": "The docs' claim that dropping word timestamps deletes committed words is VERIFIED in mechanism, but the cited line is stale. With word_timestamps=False a segment's end comes from the coarse timestamp tokens and collapses to the whole clip length; with it on, add_word_timestamps overwrites segment start/end with the first/last word time.",
+          "evidence": "Overwrite at transcribe.py:1683 (`subsegment['start'] = words[0]['start']`) and :1690 (`subsegment['end'] = words[-1]['end']`); fallback span at transcribe.py:1091-1094 (`end=time_offset + duration`). Measured (bench8, 15s clip): wt=True -> segment (0.0, 14.06); wt=False -> segment (0.0, 15.0). The gate is src/dictation/transcriber.py:385 (`len(lower.split()) <= 2 and duration > 8.0`), NOT transcriber.py:352 as docs/dictation-speed-review.md:51 says - line 352 is the string \"amara.org\" inside _HALLUCINATION_PHRASES.",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "faster-whisper 1.2.1 does ship BatchedInferencePipeline, and it helps a SINGLE short clip too, not only a batch, because it bypasses the seek loop entirely: one encode(), one generate(), no second window. Measured on the live model it is 1.27x-2.06x faster than the app's current call at every clip length with word_timestamps=True.",
+          "evidence": "Class at transcribe.py:111; single generate at :219; one forward per batch at :585-590. Measured (bench10, tiny.en beam=2 wt=True, min of 4): 3s 1.171->0.722 (1.62x); 6s 2.005->0.973 (2.06x); 15s 1.825->1.438 (1.27x); 20s 2.388->1.498 (1.59x). Batched keeps word timestamps (options.word_timestamps honoured at :159-168).",
+          "kind": "measured",
+          "seconds": 0.89
+        },
+        {
+          "claim": "Batching the post-Stop polish chunks into one call is a 2.23x win, because the encoder runs one batched forward pass instead of four.",
+          "evidence": "Measured (bench7, tiny.en beam=2 wt=True, 4 chunks of 7s = the shape of _run_confidence_targeted_polish at src/dictation/stream/live_session.py:376-397): sequential 4x transcribe() 6.830s vs BatchedInferencePipeline 3.060s.",
+          "kind": "measured",
+          "seconds": 3.77
+        },
+        {
+          "claim": "BatchedInferencePipeline silently overrides three things the app's polish path sets on purpose: condition_on_previous_text is forced False, the temperature list is truncated to its first value, and hallucination_silence_threshold is forced None. max_initial_timestamp also changes from 1.0 to 0.0.",
+          "evidence": "transcribe.py:547 (condition_on_previous_text=False), :528-532 (temperature[:1]), :546 (hallucination_silence_threshold=None), :552 (max_initial_timestamp=0.0). The polish sites pass condition_on_previous_text=True: src/dictation/worker.py:466, :492 and src/dictation/stream/live_session.py:381, :393.",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "Batched output is NOT byte-identical to the current call: 6 of 10 eval clips differed. The medical-term direction leaned in favour of batched (pleural vs plural, lymphadenopathy vs lymphoidinopathy, ascites vs sides) but it lost one (Mediastinal -> Mediastinol). This is a lead, not a result: it has not been through scripts/eval.",
+          "evidence": "Measured (bench11, tiny.en beam=2 wt=True, data/eval/tts/report_000..009.wav): identical text 4/10; diffs printed above; sequential total 28.5s vs batched 23.1s (1.23x).",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "There is NO supported way to decode a window shorter than 30 seconds. chunk_length only resizes the feature extractor's stride; every window is still padded back to 3000 mel frames before the encoder, so setting it smaller just buys MORE full-cost windows.",
+          "evidence": "Hard-coded pad at faster_whisper/audio.py:111 (`def pad_or_trim(array, length: int = 3000)`), applied unconditionally at transcribe.py:1180 (sequential) and :515 (batched); chunk_length only mutates n_samples/nb_max_frames at feature_extractor.py:203-205. Measured (bench3, 15s clip): chunk_length=None min 1.734s, chunk_length=10 min 2.704s - slower, as the source predicts.",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "cpu_threads = max(4, cpu_count-2) = 14 is past the optimum on this 16-CPU machine. An interleaved sweep on the live model put the minimum at 6-8 threads, about 13% faster than 14.",
+          "evidence": "Setting at src/dictation/transcriber.py:167. Measured (bench6, tiny.en, 15s clip, beam=2, wt=True, 6 interleaved reps, min): 2 threads 1.734s, 4 1.268, 6 1.089, 8 1.062, 10 1.152, 14 1.233. Caveat: the machine carried ~60% background load throughout, so absolute numbers are inflated; the ranking is from interleaved reps so it is load-fair.",
+          "kind": "measured",
+          "seconds": 0.17
+        },
+        {
+          "claim": "num_workers is never passed, so ctranslate2 runs with inter_threads=1. Two decodes from two Python threads still overlap under inter_threads=1 (they are not serialised), but oversubscribing 2x14 threads on 16 CPUs costs about a quarter of the theoretical gain; num_workers=2 with cpu_threads=7 recovers nearly all of it.",
+          "evidence": "src/dictation/transcriber.py:180-183 passes only cpu_threads/download_root; faster_whisper/transcribe.py:694-695 maps cpu_threads->intra_threads, num_workers->inter_threads. Measured (bench5, tiny.en 15s clip, speedup vs 2x solo): 14/1 = 1.47x; 14/2 = 1.78x; 7/2 = 1.95x (and solo dropped from 2.228s to 1.764s).",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "The app never runs two decodes concurrently today, so num_workers only becomes a lever if the preview decode is deliberately overlapped with the committed-chunk decode. The web live loop explicitly refuses to start a cycle while one is in flight, and the desktop runs one QThread.",
+          "evidence": "src/ui/web_app.py:1043 (`if time.time() - last_cycle >= cycle_sec and (cycle_task is None or cycle_task.done())`); both decodes happen inside one session.cycle() at src/dictation/stream/live_session.py:267 then :305, sequentially.",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "Options faster-whisper 1.2.1 exposes that appear nowhere in the app: without_timestamps, best_of, patience, max_new_tokens, hallucination_silence_threshold, prefix, no_repeat_ngram_size, repetition_penalty, length_penalty, clip_timestamps, batch_size, num_workers, chunk_length. Of these, without_timestamps was measured and is NOT a win on its own.",
+          "evidence": "grep over src/ and scripts/ for all of these names returns no ASR hits (only unrelated tempfile prefix= uses). Sequential default is without_timestamps=False (transcribe.py:776) vs batched True (:283). Measured (bench8, 15s, interleaved x5): False min 1.740s vs True min 1.727s - inside noise, and it makes the segment span the whole clip, which arms the 8-second gate.",
+          "kind": "measured",
+          "seconds": null
+        }
+      ],
+      "levers": [
+        {
+          "lever": "Route the live committed-chunk decode through BatchedInferencePipeline with clip_timestamps=[{start:0, end:clip_len}] and batch_size=1, keeping word_timestamps=True. The app already hands transcribe() exactly one pre-cut VAD chunk, which is precisely the input clip_timestamps wants, so nothing about chunking changes.",
+          "mechanism": "The sequential path runs the seek loop twice per clip on tiny.en because transcribe.py:1291 re-seeks to last_word_end, which lands inside the clip. Batched has no seek loop: one encode(), one generate(). Measured generate() drops 2 -> 1.",
+          "est_seconds_saved": "0.5-0.9s per committed chunk on tiny.en (20s chunk: 2.388s -> 1.498s measured); roughly 1-1.5s of the 9-11s felt lag, since one committed chunk sits on the critical path at a time",
+          "risk": "Highest-risk item on the list for the veto metric: text is not identical (6/10 eval clips differed). The medical terms leaned better (pleural, lymphadenopathy, ascites all came out RIGHT in batched and WRONG in sequential) but Mediastinal regressed. Must go through scripts/eval before it ships. Batched also silently forces condition_on_previous_text=False (transcribe.py:547) - harmless here, the live chunk already passes False."
+        },
+        {
+          "lever": "Batch the post-Stop confidence-targeted polish: collect the low-confidence chunk indices and send them as one BatchedInferencePipeline call with their clip_timestamps, instead of the per-chunk loop.",
+          "mechanism": "One batched encoder forward for N chunks instead of N encoder passes, each of which currently pads to a 30s window regardless of the chunk being 6-20s.",
+          "est_seconds_saved": "2.23x on the polish pass (measured 6.830s -> 3.060s for 4x7s chunks on tiny.en); does not touch the 9-11s live lag, it shortens the post-Stop wait",
+          "risk": "Batched forces condition_on_previous_text=False, and the polish sites deliberately pass True (worker.py:466, live_session.py:381) so each re-decoded chunk currently inherits the prior chunk's tokens. Losing that could cost cross-chunk continuity, which is exactly where anatomy terms carry over. Also drops the temperature ladder (see next lever, which makes that a benefit). Progress reporting per chunk would need reworking."
+        },
+        {
+          "lever": "Pin temperature=0.0 on the two call sites that currently leave it None: src/dictation/worker.py:461-469 and :487-495 (desktop post-Stop polish) and src/ui/web_app.py:865-871 (upload path). The web live path already does this at live_session.py:448.",
+          "mechanism": "TranscribeContext's None default falls through to transcriber.py:276's 5-temperature ladder. When compression_ratio or log_prob trips, one transcribe() makes five generate() calls; measured 1.736s -> 13.458s on tiny.en, and the polish runs at beam=5 on small.en where each pass is far dearer. It is a tail-latency landmine, and it is inconsistent between the two front-ends, which is a known failure mode in this repo.",
+          "est_seconds_saved": "0 in the median case, up to ~8x the polish decode in the tail. Removes a multi-second unpredictable stall after Stop",
+          "risk": "Real, and it points the other way on accuracy: the ladder exists to rescue a chunk whose greedy decode collapsed into repetition. Deleting it means such a chunk keeps its garbage. The safer form is a 2-value ladder [0.0, 0.2] rather than 5, or leaving it and simply making both front-ends agree. Needs scripts/eval before choosing."
+        },
+        {
+          "lever": "Drop cpu_threads from max(4, cpu_count-2)=14 to a configured value around 6-8 in src/dictation/transcriber.py:167, and put it in dictation_settings.json rather than deriving it in source.",
+          "mechanism": "CTranslate2 intra-op threading on the small encoder/decoder matmuls of tiny.en saturates well before 14 threads; past the knee the synchronisation cost dominates. Measured minimum at 6-8 threads.",
+          "est_seconds_saved": "~0.17s per decode on tiny.en (1.233s -> 1.062s), so ~13%. Small but free and zero accuracy risk",
+          "risk": "None for accuracy - thread count cannot change the arithmetic result of a beam search in CTranslate2. The measurement was taken on a machine at ~60% background load; the optimum may sit higher on an idle machine, which is exactly why this belongs in config rather than a hard-coded formula."
+        },
+        {
+          "lever": "Overlap the open-tail preview decode with the committed-chunk decode: pass num_workers=2 to WhisperModel (transcriber.py:180-183), drop cpu_threads to ~7, and run the two decodes of one cycle on two threads instead of back to back at live_session.py:267 then :305.",
+          "mechanism": "Today one cycle pays chunk-decode time PLUS preview-decode time serially. Measured, two concurrent 15s decodes at cpu_threads=7/num_workers=2 finish in 1.95x the throughput of running them one after the other, and solo latency also improved (2.228s -> 1.764s).",
+          "est_seconds_saved": "roughly the preview decode's own cost per cycle, ~1-1.5s of the cycle time, which is what currently delays the next committed chunk",
+          "risk": "Memory: inter_threads=2 loads a second model replica. Ordering: the preview and the commit both mutate session state (_agreement, _ledger) and would need the commit to win. The 'no un-writing' invariant depends on the preview seeing the ledger AFTER the commit, so a naive parallelisation could show a word twice or take one back. Needs care, not a one-line change."
+        },
+        {
+          "lever": "Drop want_word_confidence from the committed-chunk decode AFTER first fixing the 8-second gate at src/dictation/transcriber.py:385 to skip rule 2 when the segment has no words.",
+          "mechanism": "Measured, word timestamps cost a whole extra 30s-padded encoder+decoder window on tiny.en (generate() 2 -> 1), not the small DTW pass the docs assumed. That is 0.42s on a 20s chunk and 1.13s on a 6s chunk.",
+          "est_seconds_saved": "0.4-1.1s per committed chunk",
+          "risk": "Refuted as written, and the refutation is real: without word timestamps a segment's end becomes the whole clip length (measured 15.0 vs 14.06), so any chunk decoding to <=2 words is silently deleted by transcriber.py:385. It also kills polish_confidence_ceiling targeting and the faint low-confidence underline, both of which are anatomy-safety surfaces. Only worth it if the batched lever above turns out not to be viable, since batched gets the same single-window benefit WITHOUT giving up confidence.",
+          "already_refuted": true
+        },
+        {
+          "lever": "Set without_timestamps=True on the decode kwargs at src/dictation/transcriber.py:255-278.",
+          "mechanism": "Fewer tokens for the decoder to emit autoregressively.",
+          "est_seconds_saved": "0 - measured 1.740s vs 1.727s on a 15s clip, inside noise, because the app's chunks produce a single segment and therefore only two timestamp tokens",
+          "risk": "It collapses segment end to the full clip length, which arms the same 8-second hallucination gate. No upside measured, real downside. Do not do this.",
+          "already_refuted": true
+        },
+        {
+          "lever": "Shorten the 30-second encoder window via chunk_length.",
+          "mechanism": "Would cut encoder work proportionally if the window were resizable.",
+          "est_seconds_saved": "0 - it is not supported. pad_or_trim's length=3000 is a hard-coded default (audio.py:111) applied at transcribe.py:1180 and :515",
+          "risk": "Measured net slower: chunk_length=10 on a 15s clip cost 2.704s vs 1.734s, because it splits one full-cost window into two full-cost windows. It also mutates the shared FeatureExtractor's n_samples in place (feature_extractor.py:203-205), which would leak across the process-wide model cache at transcriber.py:84.",
+          "already_refuted": true
+        }
+      ],
+      "uncertainties": [
+        "Every absolute timing here was taken on a machine running at roughly 60% background CPU load (a 'herdr' process, Chrome, several Claude sessions). Interleaved min-of-N was used throughout to make comparisons load-fair, but absolute seconds are inflated and medians swung 2-10x. Re-measure on an idle machine before quoting any number to the user.",
+        "The double-encoder-window effect from word_timestamps was measured on tiny.en (the live model, the one on the critical path) at every clip length. On small.en at beam=5 it did NOT appear (generate()=1 both ways) and the batched win shrank to 0.96-1.18x. The size of the batched win is therefore model- and content-dependent, and I only proved it for the model that actually decodes the committed chunks.",
+        "The 6-out-of-10 text differences between sequential and batched are a lead, not a measurement of accuracy. Nothing here went through scripts/eval, so no WER or medical-term-error number backs the claim that batched is accuracy-neutral or better. That harness run is the gate on the top two levers.",
+        "I did not test whether BatchedInferencePipeline is thread-safe or whether one pipeline instance can be shared across the live loop and the polish pass; the class holds mutable state (self.last_speech_timestamp, transcribe.py:117).",
+        "The estimated end-to-end seconds saved assume the committed-chunk decode sits directly on the critical path between speech and permanent text. The docs (docs/dictation-speed-review.md) say 6-20s of the 9-11s lag is chunk-close policy, not decode, so a decode win of 1s may show up as less than 1s of felt improvement.",
+        "I did not verify whether ctranslate2 4.6.0's int8 kernels behave differently from float32 with respect to the cpu_threads knee; only int8 (the app's resolved compute type) was measured."
+      ]
+    },
+    {
+      "lane": "MEASURE — hard decode-cost numbers taken on this machine, 2026-09-02",
+      "findings": [
+        {
+          "claim": "The machine was NOT idle during any measurement: total CPU sat at 37-60% from background processes, dominated by herdr.exe (two instances, 65,700 CPU-seconds accumulated). Every wall-clock number below is a best-of-N minimum on a ~50%-loaded 16-thread box; within-run comparisons are sound, cross-run ones are not.",
+          "evidence": "powershell Get-Counter '\\Processor(_Total)\\% Processor Time' x5 -> total_cpu_pct = 50.4, 59.8, 47.4, 37.6, 46.4. Get-Process herdr -> Id 26012 CPU 65701.3s, Id 34204 CPU 375.8s, Path C:\\Users\\Shaf\\AppData\\Local\\Programs\\Herdr\\bin\\herdr.exe. Also visible in medians: the same tiny.en 10s cell measured wall_min 1.076 in one run and 1.951 in another.",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "tiny.en decode wall-clock is close to flat with clip length on a best case, but NOT flat under load: best-of-6 rises only 0.98s->1.47s from 1s to 25s of audio (+50% over a 25x span), while the median rises 1.14s->3.85s (3.4x).",
+          "evidence": "b3.py tinyall, tiny.en int8 cpu_threads=14 beam2 word_timestamps=True prompt=radiology_prompt.txt, best-of-6 interleaved, source data/bench_audio/chest_long.wav loaded via faster_whisper.audio.decode_audio(sampling_rate=16000) -> 488788 samples = 30.55s. wall_min / wall_med by clip: 1s 0.981/1.135; 3s 1.030/1.381; 6s 1.056/1.835; 10s 1.076/2.218; 15s 1.155/2.181; 20s 1.187/2.695; 25s 1.474/3.852.",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "The reason it only LOOKS flat is that the extra work is absorbed by idle cores: tiny.en CPU-seconds per call double across the same span, 6.81 CPU-s at 1s to 13.80 CPU-s at 25s. The encoder is flat (30s pad, as the docs say) but the decoder is linear in tokens, so on a busy machine the linear half surfaces as wall time.",
+          "evidence": "b3.py tinyall, time.process_time() around each transcribe, min over 6 reps. cpu_min by clip: 1s 6.812; 3s 7.000; 6s 7.891; 10s 10.516; 15s 10.578; 20s 11.609; 25s 13.797.",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "small.en is not flat at all and is 3-6x the cost of tiny.en: 3.51s (3s clip) to 8.59s (25s clip) best-of-3 wall, and 28.4 to 69.4 CPU-seconds. Real-time factor for the post-Stop pass is about 0.34 at 25s on a best case, but 0.37 on the median.",
+          "evidence": "b3.py smallall, small.en int8 cpu_threads=14 beam2 wt=True, best-of-3 interleaved. wall_min / wall_med / cpu_min: 1s 5.871/8.320/50.9; 3s 3.507/4.556/28.4; 6s 3.724/5.081/35.1; 10s 4.608/7.518/45.8; 15s 6.756/7.422/49.7; 20s 5.687/8.980/59.3; 25s 8.590/9.156/69.4.",
+          "kind": "measured",
+          "seconds": 8.6
+        },
+        {
+          "claim": "word_timestamps=True (the app's want_word_confidence) costs roughly a fixed +0.45 to +0.6s of wall and +60-100% of CPU per tiny.en call: at 10s it is 1.076s vs 0.634s (1.7x wall, 10.52 vs 5.30 CPU-s); at 3s it is 1.030s vs 0.439s (2.3x).",
+          "evidence": "b3.py tinyall, same run, beam2, wt=True vs wt=False. wall_min True/False: 1s 0.981/0.420; 3s 1.030/0.439; 6s 1.056/0.565; 10s 1.076/0.634; 15s 1.155/0.671; 20s 1.187/0.978; 25s 1.474/1.375. cpu_min True/False: 6.81/3.95, 7.00/4.03, 7.89/5.28, 10.52/5.30, 10.58/6.47, 11.61/7.44, 13.80/8.64. Call site that switches it: src/dictation/stream/live_session.py:447 want_word_confidence, mapped at src/dictation/asr/engines/faster_whisper_engine.py:60.",
+          "kind": "measured",
+          "seconds": 0.5
+        },
+        {
+          "claim": "beam_size 1 and 2 are within noise of each other on tiny.en, but beam_size 5 costs 1.5-2.3x on clips of 6s or more.",
+          "evidence": "b3.py tinyall, wt=True, best-of-6. wall_min beam1/beam2/beam5: 1s 1.138/0.981/1.121; 3s 0.846/1.030/0.971; 6s 0.896/1.056/1.429; 10s 1.056/1.076/2.509; 15s 1.137/1.155/1.837; 20s 1.129/1.187/2.052; 25s 1.460/1.474/2.243. cpu_min beam1/beam2/beam5 at 10s: 9.73/10.52/20.53.",
+          "kind": "measured",
+          "seconds": null
+        },
+        {
+          "claim": "On small.en (the post-Stop accuracy model, settings final_beam_size=5) beam 5 costs 33% more wall and 22% more CPU than beam 2, and beam 2 costs 20% more than beam 1, on a 10s clip.",
+          "evidence": "b3.py smallall, 10s clip, best-of-3: beam1 wall_min 3.826 cpu_min 37.69; beam2 wall_min 4.608 cpu_min 45.80; beam5 wall_min 6.135 cpu_min 56.11. Settings: dictation_settings.json final_beam_size=5, live_beam_size=2.",
+          "kind": "measured",
+          "seconds": 1.5
+        },
+        {
+          "claim": "The app's cpu_threads setting is past the knee: 14 threads is SLOWER than 8 on this machine. A 10s tiny.en decode takes 1.007s at 8 threads vs 1.405s at 14 (28% faster) and uses 21% less CPU.",
+          "evidence": "b3.py threads, tiny.en 10s, best-of-5 interleaved. wall_min / cpu_min by cpu_threads: 2 -> 2.066/4.44; 4 -> 1.488/4.80; 6 -> 1.093/6.05; 8 -> 1.007/6.73; 10 -> 1.017/7.89; 14 -> 1.405/8.47; 16 -> 1.223/8.89. The app hardcodes cpu_threads = max(4, os.cpu_count()-2) = 14 at src/dictation/transcriber.py:167.",
+          "kind": "measured",
+          "seconds": 0.4
+        },
+        {
+          "claim": "Two concurrent decodes on ONE WhisperModel give exactly zero speed-up: ctranslate2 serialises them at num_workers=1 (the faster-whisper default). Overlapping only pays once you give it a second worker or a second model instance: two 10s decodes finish in 1.526s on two 7-thread models vs 2.132s sequential (28% faster), or 1.775s with num_workers=2 (17% faster).",
+          "evidence": "b3.py conc, tiny.en 10s clip, best-of-4 wall_min / cpu_min: 1 decode 14thr 1.147/11.81; 2 sequential 1 model 14thr 2.132/23.52; 2 parallel 1 model num_workers=1 14thr 2.133/22.81; 2 parallel 1 model num_workers=2 14thr 1.775/19.00; 2 sequential 7thr 2.103/14.44; 2 parallel 2 models 7thr each 1.526/16.17. The app never sets num_workers, so it is 1: src/dictation/transcriber.py:180-183 passes only model_ref, device, compute_type, cpu_threads, download_root.",
+          "kind": "measured",
+          "seconds": 0.6
+        },
+        {
+          "claim": "faster_whisper.BatchedInferencePipeline exists in 1.2.1 and is 27-36% faster in wall and 21-35% cheaper in CPU on tiny.en, but it takes ONE audio input, so batching four separate chunks is not a native operation, and part of the win is its forced internal VAD trimming silence rather than faster compute.",
+          "evidence": "b3.py batched, tiny.en, best-of-4 wall_min / cpu_min: plain 10s 1.951/10.50; batched 10s bs=1 1.285/6.97; batched 10s bs=4 1.240/6.83; plain 25s 2.592/12.66; batched 25s bs=4 2.589/10.03; plain 30.5s 3.033/14.83; batched 30.5s bs=8 2.554/11.70. bs=1 and bs=4 being identical on a continuous clip shows the batch axis is VAD segments inside one clip, not clips. BatchedInferencePipeline.transcribe rejects vad_filter=False, so the comparison is not like-for-like on audio decoded.",
+          "kind": "measured",
+          "seconds": 0.5
+        },
+        {
+          "claim": "small.en has a reproducible cost spike at ~1 second of audio: a 1.0s clip costs MORE than a 3s or 6s one (5.08s wall / 58.5 CPU-s vs 3.00s / 34.5 and 3.54s / 39.1). A 0.5s clip is cheap again (2.92s). Mechanism not established.",
+          "evidence": "anom.py, small.en int8 14 threads beam2 wt=True, clip order deliberately reversed and repeated (6,3,1,0.5,1,3,6) x3 so position bias cancels. wall_min/cpu_min/word-count: 0.5s 2.924/31.03/2 words; 1s 5.076/58.45/6; 3s 2.998/34.50/7; 6s 3.544/39.09/11. All six 1s samples were 5.08-7.02s. Also seen in an independent earlier run (diag.py: small.en 1s = 11.70s with prompt, 6.39s without).",
+          "kind": "measured",
+          "seconds": 2.1
+        },
+        {
+          "claim": "The 278-word radiology prompt is nearly free on its own but roughly doubles the word-timestamp alignment: at 10s with wt=True it costs 1.298s with the full prompt vs 0.695s with none; with wt=False the same swap is 0.751s vs 0.645s. A 40-word prompt sits between them at 1.119s.",
+          "evidence": "inter.py, tiny.en 10s, 4 interleaved reps, wall_min. wt=True: full278w 1.298, short40w 1.119, none 0.695. wt=False: full278w 0.751, short40w 0.702, none 0.645. At 25s wt=True: 1.610 / 1.547 / 1.062. Prompt is 2062 chars / 278 words, src/dictation/resources/radiology_prompt.txt, wired in at src/dictation/stream/rules.py:20 build_context_prompt and src/ui/web_app.py:954. Caveat: this run was under heavier background load than the b3.py runs and used only 4 reps, so treat the ratios, not the absolute values.",
+          "kind": "measured",
+          "seconds": 0.6
+        },
+        {
+          "claim": "The bench replicated the app's real decode configuration exactly, so these numbers are the app's numbers: compute_type int8, cpu_threads 14, live tiny.en beam 2 with word confidence on, final small.en beam 5, vad_filter False at the decode call, temperature 0.0, condition_on_previous_text False.",
+          "evidence": "src/dictation/transcriber.py:159-162 (compute_types tried int8 first), :167 (cpu_threads), :256-277 (kwargs incl. compression_ratio_threshold=2.4, log_prob_threshold=-1.0, no_speech_threshold=0.6); src/dictation/stream/live_session.py:438-449 (the single transcribe call site); dictation_settings.json live_model_size=tiny.en, model_size=small.en, live_beam_size=2, final_beam_size=5, chunk_min_sec=6.0, chunk_soft_max_sec=15.0, chunk_force_cut_sec=20.0, preview_max_lag_sec=3.0, preview_min_tail_sec=1.0.",
+          "kind": "read-from-code",
+          "seconds": null
+        },
+        {
+          "claim": "data/eval/own/ contains no audio at all: only manifest.jsonl and five *.script.txt files. The only usable audio on disk is data/eval/tts/*.wav (22050 Hz synthetic) and data/bench_audio/{chest_long,chest_short}.wav (22050 Hz, 30.55s and 9.01s).",
+          "evidence": "ls -la data/eval/own/ -> manifest.jsonl, own_00..own_04.script.txt only. soundfile.info: data/bench_audio/chest_long.wav 22050 Hz 30.55s mono; chest_short.wav 22050 Hz 9.01s; data/eval/tts/report_000.wav 22050 Hz 20.89s; report_004.wav 22050 Hz 27.32s. All bench audio was loaded with faster_whisper.audio.decode_audio(path, sampling_rate=16000), never index-picked.",
+          "kind": "measured",
+          "seconds": null
+        }
+      ],
+      "levers": [
+        {
+          "lever": "Make cpu_threads a config value and set it to 8 instead of the hardcoded max(4, os.cpu_count()-2) = 14 at src/dictation/transcriber.py:167.",
+          "mechanism": "Measured knee: a 10s tiny.en decode is 1.007s at 8 threads and 1.405s at 14, using 6.73 vs 8.47 CPU-seconds. Above 8 threads ctranslate2 oversubscribes the cores this machine actually has free (~50% are already busy), so extra threads add synchronisation cost and buy nothing. Every committed chunk decode pays this, so it comes straight off commit lag.",
+          "est_seconds_saved": "0.3-0.4s per decode; on a 30s dictation with 3-4 commits plus previews, roughly 1-2s of accumulated lag",
+          "risk": "None to transcription output: thread count does not change the decode result, only its schedule. The risk is that 8 is optimal for THIS machine at THIS background load; hardcoding 8 repeats the current mistake. It must be a settings key with a sane default, not a new constant."
+        },
+        {
+          "lever": "Give the live engine a second ctranslate2 worker (num_workers=2 on the WhisperModel constructed at src/dictation/transcriber.py:180-183), or run two 7-thread tiny.en instances, so a commit decode can overlap the open-tail preview instead of queueing behind it.",
+          "mechanism": "Measured: two 10s decodes take 2.132s sequentially but 1.526s on two 7-thread models and 1.775s at num_workers=2. Critically, two threads against the DEFAULT single-worker model give 2.133s, i.e. exactly zero gain, so any attempt to overlap decodes today silently serialises. Today a commit decode cannot start until the current preview call returns, which is the queueing half of commit lag.",
+          "est_seconds_saved": "0.6s per overlapped pair on the measured cell; more when a long preview would otherwise block a commit entirely",
+          "risk": "A second tiny.en int8 instance costs extra RAM and, more importantly, splits the thread pool: the preview and the commit each get half the cores, so a commit that was going to run alone gets slower. It also removes the accidental back-pressure that the current serialisation provides, so the preview throttle in rules.should_skip_preview becomes load-bearing in a way it is not today."
+        },
+        {
+          "lever": "Stop asking for word timestamps on the throwaway open-tail PREVIEW decode (want_word_confidence at src/dictation/stream/live_session.py:447), while keeping them on the decode that commits a chunk.",
+          "mechanism": "Measured: word_timestamps=True costs +0.44s wall at 10s (1.076 vs 0.634) and roughly doubles CPU (10.52 vs 5.30 CPU-s). The preview is re-decoded every cycle and its output is provisional; the confidence it computes is only durable for the chunk that gets frozen. Cutting the alignment pass out of the repeated call frees roughly 5 CPU-seconds per cycle for the commit decode to use.",
+          "est_seconds_saved": "0.4-0.6s per preview cycle, and about 5 CPU-seconds per cycle returned to the commit path",
+          "risk": "The faint low-confidence underline is currently drawn from live updates (rules.low_confidence_words); if the preview stops reporting confidence, uncertain words would appear unmarked until the chunk commits, then gain an underline. That is a visible flicker in a never-guess surface and must be checked against the front-end behaviour before shipping. Anatomy accuracy itself is unaffected: the same audio is decoded either way."
+        },
+        {
+          "lever": "Shorten the priming prompt for the preview decode only (the 278-word radiology_prompt.txt built at src/dictation/stream/rules.py:20), keeping the full prompt on the committing and final decodes.",
+          "mechanism": "Measured interaction: the full prompt is nearly free without word timestamps (0.751 vs 0.645 at 10s) but costs about +0.6s when word timestamps are on (1.298 vs 0.695); a 40-word prompt sits at 1.119s. The prompt tokens are being carried through the alignment pass, so prompt length and word timestamps multiply rather than add.",
+          "est_seconds_saved": "0.2-0.6s per preview cycle, and it stacks with the previous lever rather than duplicating it",
+          "risk": "This is the highest anatomy-accuracy risk on the list. The prompt is what steers the decoder toward radiology vocabulary, and rules.py:28-35 already records a case where the vocabulary being silently pushed out of the 223-token slot was invisible from the outside. Must be judged by scripts/eval, on medical-term error rate specifically, not overall WER, and only ever applied to the preview, never to a decode whose text is kept."
+        },
+        {
+          "lever": "Never hand small.en a chunk of about one second in finalize(): merge any sub-2s trailing or committed chunk into its neighbour before the confidence-targeted polish.",
+          "mechanism": "Measured and reproducible over six samples with the clip order reversed to cancel position bias: small.en costs 5.08s wall / 58.5 CPU-s on a 1.0s clip, against 3.00s / 34.5 on 3s and 3.54s / 39.1 on 6s. A 0.5s clip is cheap again (2.92s). So a single short chunk in the polish queue costs more than a chunk five times its length. Mechanism is not established, which is itself a reason to route around it rather than tune it.",
+          "est_seconds_saved": "about 2.1s per short chunk in the post-Stop polish queue",
+          "risk": "Merging changes the unit the ledger polishes, so the decode-once guarantee and the per-chunk confidence bookkeeping both need to agree on the merged boundary. Merging across a pause_threshold silence would also destroy the sentence break that ledger.close_sentence depends on, so the merge must be forbidden across a closed sentence."
+        },
+        {
+          "lever": "Reduce final_beam_size from 5 to 2 for the post-Stop polish (dictation_settings.json final_beam_size, consumed at src/dictation/stream/live_session.py:380-392).",
+          "mechanism": "Measured on small.en at 10s: beam 5 is 6.135s wall / 56.1 CPU-s against beam 2 at 4.608s / 45.8, a 25% wall saving. On tiny.en the beam 5 penalty is larger still (2.509s vs 1.076s at 10s). The polish re-decodes several committed chunks, so the saving multiplies by chunk count.",
+          "est_seconds_saved": "roughly 1.5s per polished chunk on small.en",
+          "risk": "Beam width is a direct accuracy knob and this is exactly the pass that exists to be accurate, so a speed win here is the one most likely to be vetoed by medical-term error rate. It also does not touch the user's stated complaint: Stop already hands back the live text without waiting, so the polish is off the critical path. Low priority, and only with an eval run behind it."
+        },
+        {
+          "lever": "Investigate whether Herdr should be running during dictation, and surface machine load in the developer console alongside the existing decode timings.",
+          "mechanism": "Measured: the box sat at 37-60% CPU from background processes throughout, and the SAME tiny.en 10s decode measured 1.076s in one run and 1.951s in another purely from load drift. Medians degrade far worse than minima (1.14s -> 3.85s across the length curve). A user complaining that committed text lands 9-11s behind may be describing the loaded case of a decode that costs 1.5s on a quiet machine, in which case no amount of decoder tuning fixes it.",
+          "est_seconds_saved": "potentially several seconds, but attributing it requires one dictation measured with the background load stopped",
+          "risk": "Not a code change, so no accuracy risk. The risk is misattribution in the other direction: treating a real algorithmic lag as an environment problem and shipping nothing. The measurement is cheap, so do it before acting on any other lever, so the other levers are judged against a clean baseline."
+        },
+        {
+          "lever": "Do NOT adopt BatchedInferencePipeline for the live path.",
+          "mechanism": "It is present in faster-whisper 1.2.1 and measured 27-36% faster on tiny.en (10s: 1.240s vs 1.951s; 30.5s: 2.554s vs 3.033s), but batch_size 1 and 4 were identical on a continuous clip, which shows the batch axis is VAD segments inside a single audio, not separate chunks. It also refuses vad_filter=False and imposes its own segmentation, so part of the measured win is silence it trimmed rather than compute it saved.",
+          "est_seconds_saved": "0.5s per call on paper, most of which is not a real saving for this pipeline",
+          "risk": "Its own VAD would re-cut audio the ledger has already cut and frozen, which directly contradicts the decode-once guarantee in src/dictation/stream/ledger.py, and it gives no way to decode four already-cut chunks as one batch. Listed here so the next person does not spend a day on it: the number looks attractive and the mechanism does not fit."
+        }
+      ],
+      "uncertainties": [
+        "Every wall-clock number was taken on a machine at 37-60% background CPU load (herdr.exe). Best-of-N minima are the closest thing to a clean figure here, but the true idle-machine costs are likely lower across the board, and the ratios between configurations are more trustworthy than any absolute value. Cross-run comparisons must not be made: the identical tiny.en 10s cell measured 1.076s in one run and 1.951s in another.",
+        "I did not establish WHY small.en costs more on a 1.0s clip than on a 3s or 6s one. It reproduced in two independent runs with the clip order reversed, and the final word counts are normal (6 words), so it is not visible runaway generation. It could be discarded tokens from the compression-ratio or log-prob gate, or something in the alignment pass on a near-empty window.",
+        "I measured cost, not accuracy. Nothing here says whether beam 1 vs 2 vs 5, a shortened prompt, or dropping word timestamps changes the medical-term error rate. Every lever that touches beam width or the prompt must go through scripts/eval before it is believed, and I did not read docs/dictation-accuracy.md, so some of these may already be refuted there.",
+        "I benchmarked the decode call in isolation. I did not instrument a live dictation end to end, so I cannot say how much of the reported 9-11s commit lag is decode cost, how much is the chunk policy (chunk_min_sec 6.0, soft_max 15.0, force_cut 20.0), and how much is queueing behind previews. The measured serialisation of concurrent decodes makes queueing a strong candidate, but that is inference from the concurrency numbers, not a direct measurement of the live loop.",
+        "The BatchedInferencePipeline comparison is not like-for-like: it requires vad_filter=True and applies its own segmentation, whereas the plain path was run with vad_filter=False to match the live call site. Some of its measured advantage is silence it never decoded.",
+        "The 8-thread optimum is specific to this machine at this load. On a genuinely idle 16-thread box the knee would sit higher, which is the argument for making it configurable rather than swapping one hardcoded number for another."
+      ]
+    }
+  ],
+  "verdicts": [
+    {
+      "stands": false,
+      "reason": "The mechanism is real but the 3-second figure is wrong by roughly 2-3x and is a worst case that cannot be reached.\n\nWHAT I CONFIRMED (read in code):\n- Ordering is as stated: `_commit_closed(...)` at src/dictation/stream/live_session.py:205, `_decode_open_tail(...)` at live_session.py:225, both inside the single-threaded `cycle()` (live_session.py:185).\n- Serialisation is real: the cycle runs on one worker thread (`anyio.to_thread.run_sync(session.cycle)`, src/ui/web_app.py:995) and a new cycle is refused while one is in flight (`cycle_task is None or cycle_task.done()`, web_app.py:1043). So a chunk that becomes closable mid-cycle cannot be committed until the in-flight preview decode returns.\n\nWHY THE NUMBER FAILS:\n1. The wait is bounded by exactly ONE preview call, not three seconds. I measured the model the app actually runs (`live_model_size: \"tiny.en\"`, src/core/settings.py:86 and dictation_settings.json:54) at beam 2 on data/eval/bench/chest_long.wav: best-of-three 0.76s / 1.03s / 1.38s / 1.76s / 1.55s for 3/6/10/15/20s clips (worst single call 2.55s). Matches the existing measured table in docs/dictation-speed-review.md:130-138. One preview cannot cost 3s.\n2. Previews only occupy about half the cycles anyway: `self._preview_earliest = time.time() + cost` (live_session.py:313) blocks the next preview for as long as the last one took (checked at live_session.py:212). So a closing chunk is delayed only ~50% of the time, and the expected wait is a fraction of one decode (~0.4-0.7s), not the worst case.\n3. There is already a MEASURED ceiling that contradicts 3s: deleting the open-tail preview decode entirely moved end-to-end lag from +10.5s to +9.1s, i.e. 1.4s total, \"about 13% of the lag\" (docs/dictation-speed-review.md:34-37) — and that was measured when the live path used a slower model. Removing the preview removes both its own cycle occupancy AND the serialisation the claim describes, so 1.4s is the hard upper bound on everything the claim covers.\n4. The \"3 seconds\" looks like it was read off `preview_max_lag_sec: 3.0` (src/core/settings.py:53, dictation_settings.json:47). That constant is the threshold above which a preview is SKIPPED (`should_skip_preview`, src/dictation/stream/rules.py), not a delay anyone waits. With measured preview cost ~0.8-1.8s it never fires, so that path contributes 0s.\n5. The claim also mis-locates the worse half of the same effect. Within one cycle the committed text is not sent until AFTER the preview: `_commit_closed` (205) → preview (225) → LiveUpdate built (231) → returned → `send()` (web_app.py:1017). So a freshly committed chunk waits behind the preview in its OWN cycle, not merely behind the previous one's. Same bound: one decode call.\n\nWHAT ACTUALLY OWNS THE 9-11s: chunk-close latency by construction — `chunk_min_sec` 6.0 / `chunk_soft_max_sec` 15.0 / `chunk_force_cut_sec` 20.0 (dictation_settings.json:40-42, src/dictation/stream/segmenter.py:31-33). Nothing is committed until a VAD pause at or after 6s, so 6-15s of the lag is policy, not queueing (docs/dictation-speed-review.md:19 records this as \"6-20 s by construction\").",
+      "correction": "Preview/commit serialisation is real but worth well under 1.5 seconds, not 3. Because `cycle()` is single-threaded and the socket refuses a new cycle while one is in flight (live_session.py:185/205/225, web_app.py:995,1043), a closing chunk can queue behind at most ONE open-tail preview decode — measured at 0.76-1.76s best-of-three on the live model the app runs (tiny.en, beam 2), worst single call 2.55s. The `_preview_earliest` throttle (live_session.py:313) means previews run in only about half of cycles, so the expected penalty is ~0.4-0.7s. The measured ceiling for the whole effect is 1.4s: deleting the preview decode outright moved lag 10.5s→9.1s (docs/dictation-speed-review.md:34-37). The \"3 seconds\" is `preview_max_lag_sec` (settings.py:53), a skip threshold that never fires at current decode costs, not a wait. The dominant term in the 9-11s committed lag remains chunk-close policy: `chunk_min_sec` 6.0 / `chunk_soft_max_sec` 15.0."
+    },
+    {
+      "stands": false,
+      "reason": "The constant and the code lines are correct (web_app.py:965, 1043; live_cycle_sec=0.5 in dictation_settings.json and src/core/settings.py:87, overridden nowhere), but the arithmetic is wrong in two ways. (1) The two waits are NOT additive. `last_cycle = time.time()` is stamped at web_app.py:1044 at task *creation*, before the cycle runs, so the 0.5 s timer elapses concurrently with the cycle. Spacing between cycle starts is max(0.5 s, previous cycle duration), not 0.5 s + duration; whenever a cycle costs more than 0.5 s the gate contributes exactly zero. (2) 0.5 s is a worst case quoted as typical. MEASURED on this machine (tiny.en, beam 2, via create_engine/TranscribeContext, HF_HUB_OFFLINE=1): one decode costs 0.8-2.7 s, mean ~1.2 s, flat in clip length (2 s clip 1.03/0.92 s; 20 s clip 1.79/0.86 s), matching the 1.33/1.36/1.52 s figures recorded in src/dictation/stream/rules.py:145. A decode-free cycle costs only VAD + post: MEASURED detect_speech (src/dictation/stream/vad.py:30) 25.1 ms on a 6 s tail, 86.0 ms on a 20 s tail, plus 5-14 ms post-processing (docs/dictation-speed-review.md:23). INFERRED from those: preview_max_lag_sec is 3.0 and a preview costs ~1.2 s, so should_skip_preview (rules.py:155-157) is essentially never true here; the pacing instead comes from `_preview_earliest = time.time() + cost` (live_session.py:313), which yields a steady-state gap pattern per ~2.4 s period of one 1.2 s gap (preview in flight) followed by ~2-3 gaps of 0.5 s. Expected wait for a ready cut to be picked up = sum(gap^2/2)/period ~= 0.42 s, of which the 0.5 s gate's share is ~0.12 s and the in-flight decode's share is ~0.30 s.",
+      "correction": "After a cut exists, the web loop's scheduling delay before the cut is picked up is max(live_cycle_sec, time left in the in-flight cycle), not their sum: `last_cycle` is stamped at task creation (web_app.py:1044), so the 0.5 s window overlaps the running cycle. Because a live-model decode measures ~1.2 s on this machine (0.8-2.7 s, flat in clip length) and `_preview_earliest` (live_session.py:313) then forces ~1.2 s of decode-free cycles costing only 25-86 ms of VAD, the steady-state gaps are one ~1.2 s gap followed by two or three 0.5 s gaps. Average scheduling wait before a ready cut is decoded is therefore ~0.4 s (worst case ~1.2 s), of which live_cycle_sec accounts for only ~0.1 s on average (0.5 s worst case); the larger share is the in-flight preview decode. Dropping live_cycle_sec to 0 would recover ~0.1 s of the 9-11 s committed lag, not 0.5 s."
+    },
+    {
+      "stands": false,
+      "reason": "The `within_soft[-1]` code at segmenter.py:107-111 is quoted correctly and the 6.0/15.0/20.0 defaults are real and not overridden in dictation_settings.json. But their evidence run — `cut_chunks(30s, marks)` in one shot → cuts at 13.7/27.7 — is a code path the app never executes. `cut_chunks` is only ever reached via `ChunkLedger.pending_cuts` (ledger.py:117-134), which slices just the open tail, and `LiveSession.cycle` (live_session.py:196-203) calls it every `live_cycle_sec` (0.5s) with `total = self._len`, i.e. only the audio that has arrived so far. So \"the latest pause within soft_max\" degenerates to \"the first pause past min_sec\", because later pauses have not been spoken yet when the cut fires. MEASURED by replaying their own scenario incrementally through the real ChunkLedger at 0.5s cycles: chunk lengths 7.7, 6.0, 6.0, 6.0, 6.0… — not 13.7. Other profiles measured the same way: 4.0s speech/0.5s gaps → 8.5 then 9.0s chunks; 9.0s speech/0.6s gaps → 9.6s chunks; no pause at all → 20.0s force-cut. chunk_soft_max_sec is effectively unreachable in the live loop (it could only bind if one cycle stalled by more than ~9s of audio). The claimed mechanism is backwards and the 7-second attribution is misassigned.",
+      "correction": "In the live path the policy pins committed chunks near chunk_min_sec, it does not lengthen them toward chunk_soft_max_sec. Because `cut_chunks` is re-run every 0.5s over only the audio received so far (live_session.py:196-203 → ledger.py:117-134), `within_soft[-1]` at segmenter.py:110-111 selects the FIRST pause past min_sec rather than the latest one before 15s; soft_max_sec=15.0 is effectively dead code in live operation. MEASURED live-replay chunk lengths: ~6.0s with frequent pauses, ~9.0-9.6s with 4-9s speech runs, 20.0s only when no pause exists at all. The audio-buffering share of committed latency is therefore roughly 6-9.6s typical (20s worst case), driven by chunk_min_sec=6.0 plus the requirement at segmenter.py:94-98 that a pause only becomes a cut candidate once the NEXT speech mark begins (measured: a cut at audio-time 7.7s is not committed until audio-time 8.5s), plus the decode cost on top. Lowering chunk_min_sec — not chunk_soft_max_sec — is the lever on this component."
+    },
+    {
+      "stands": false,
+      "reason": "The MECHANISM reproduces exactly; the ATTRIBUTION of 20 seconds does not. (a) MEASURED-by-running: `cut_chunks(45s, [SpeechMark(0,45s)])` returns (0,20) closed, (20,40) closed, (40,45) open, and the boundary probe gives no cut at total=20.0s but a cut at 20.0001s, so `elif force_pt < total_samples` (src/dictation/stream/segmenter.py:114-116) is strict as claimed. force_cut_sec=20.0 is genuinely the live value, not overridden: src/dictation/stream/segmenter.py:32, src/core/settings.py:41, dictation_settings.json:42, wired at src/ui/web_app.py:940-942 and src/ui/recording_session.py:266-268; the ledger passes tail-relative offsets so 20s is measured from the previous close (src/dictation/stream/ledger.py:117-134). (b) But the force-cut branch is the LAST resort of three (segmenter.py:107-116): it is reached only when NO VAD cut candidate falls in [min_sec=6s, force_cut=20s) of the tail. MEASURED-by-running a synthetic pause simulation: speech runs of 3/5/8/12s separated by 0.5s pauses give closed-chunk lengths of 8.5-14.5s, never 20; only a 25s unbroken run reaches 20. VAD splits on silences as short as 300ms (src/dictation/stream/vad.py:32-34), so ordinary between-sentence pauses supply candidates. (c) MEASURED, in the repo's own record: docs/dictation-speed-review.md:50 states max observed open tail was 11.6s, i.e. the 20s force-cut did not fire at all in the runs that were instrumented; and docs/dictation-speed-review.md:14 puts TOTAL speech-to-screen lag at +9 to +11s, so no single term can account for 20s. (d) INFERRED: even when it does fire, 20s is the wait of the FIRST word of that chunk only; words are spread through the chunk, so the average word waits about half the chunk length. Quoting 20s is a worst case of a rarely-taken path presented as a typical cost.",
+      "correction": "The force-cut is coded exactly as described (cut at exactly chunk_force_cut_sec = 20.0s, taken only once the open tail strictly exceeds it, segmenter.py:114-116), but it is the last of three branches and fires only when no VAD silence gap lands in [6s, 20s) of the tail, i.e. an unbroken >20s monologue. In normal dictation the cut lands on the latest pause at or before soft_max (15s): simulated chunk lengths 8.5-14.5s, and docs/dictation-speed-review.md:50 records a max observed open tail of 11.6s, so this path did not fire in the measured runs. Its honest contribution is chunk-close latency of 6-20s by construction (docs/dictation-speed-review.md:18), typically ~14s of chunk giving ~7s of average word wait, against a total measured lag of 9-11s (docs/dictation-speed-review.md:14). It does not account for 20 seconds of the observed lag."
+    },
+    {
+      "stands": false,
+      "reason": "The two constants are real and un-overridden (src/dictation/stream/vad.py:32-33, 45-48; the only two callers, src/dictation/stream/live_session.py:202 and src/dictation/worker.py:302, both use the defaults, and nothing in src/core/settings.py or dictation_settings.json exposes them). But the arithmetic, the mechanism and the magnitude are all wrong.\n\nMEASURED (I monkeypatched faster_whisper.vad.get_vad_model with deterministic speech probabilities and ran the real get_speech_timestamps + the real cut_chunks; scripts in the scratchpad):\n\n1. The 300ms is really 352ms. Silero's loop compares `(window*i) - temp_end < min_silence_samples` on 512-sample (32ms) windows (C:/Python312/Lib/site-packages/faster_whisper/vad.py:131-137), so 10 silence windows = 320ms still merges the marks; 11 windows = 352ms is the first gap that splits. Measured: gap=320ms -> 1 mark, gap=352ms -> 2 marks.\n\n2. The 200ms pad is not additive latency, and below ~400ms it is not even 200ms. faster_whisper/vad.py:157-168 caps the pad at half the gap when `silence_duration < 2*speech_pad_samples`, which makes the padded end exactly equal to the next padded start. src/dictation/stream/segmenter.py:94-98 requires a STRICT `marks[i].end_sample < marks[i+1].start_sample`, so those pauses are silently discarded. Measured through cut_chunks: gap=352ms and 384ms produce two marks but ZERO closed chunks; 416ms is the first usable pause. So the real floor is 416ms, not 300ms.\n\n3. The pad costs no wall clock at all for usable pauses. Measured, the cut lands at 7.176s for a true speech end at 6.976s (exactly +200ms) for every gap >= 416ms - but that sample is already in the past by the time the candidate exists, so it only makes the closed chunk 200ms longer, it does not delay the commit.\n\n4. The real delay is far worse than 0.5s and the claim misses it entirely: a chunk is NEVER closed while the speaker stays silent. get_speech_timestamps always emits the still-open final region with end = audio_length, so there is only one mark and segmenter.py:96-98's `range(len(marks)-1)` yields no candidate. Measured: 7s of speech followed by 352, 416, 608, 800, 900, 1000ms of silence -> marks=1, closed=[] every time; the chunk closes only once speech resumes, and 32ms of resumed speech is enough (marks=2, closed=[(0.0, 7.176)]).\n\n5. Scale (INFERRED from the measured behaviour): ChunkPolicy min_sec=6.0 / soft_max_sec=15.0 (segmenter.py:30-32, dictation_settings.json chunk_min_sec 6.0) means no cut is accepted before 6s of audio anyway, so this whole term is a small fraction of the 9-11s committed lag, not a headline cause.",
+      "correction": "The VAD/segmenter pause gate does not add a flat ~0.5s, and 300+200 is not additive. Measured: (a) the effective silence requirement is 352ms, not 300ms, because Silero tests silence in 512-sample (32ms) windows with a strict `<` (faster_whisper/vad.py:131-137); (b) the 200ms pad is halved to exactly half the gap for pauses under 400ms (faster_whisper/vad.py:157-168), which makes the padded marks touch and makes segmenter.py:94-98's strict `end < next_start` reject them, so the true floor for a usable pause is 416ms - pauses of 352-384ms produce marks but no chunk cut at all; (c) the 200ms pad adds zero wall-clock delay for pauses >= 416ms, it only extends the closed chunk 200ms into the silence (measured cut at 7.176s for speech ending at 6.976s); (d) the dominant delay the claim omits is that a chunk cannot close until the speaker STARTS TALKING AGAIN - with only one speech mark there is no `marks[i+1]`, so 7s of speech followed by 1000ms of continuing silence yields zero closed chunks, and the wait is the whole pause plus ~32ms, unbounded until force_cut_sec=20s. Net: the pause gate costs roughly (pause duration + 32ms), with a hard 416ms floor, not 0.5s - and it is dwarfed by ChunkPolicy min_sec=6.0 / soft_max_sec=15.0, which is the real structural source of the 9-11s committed lag."
+    }
+  ]
+}

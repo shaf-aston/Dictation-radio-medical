@@ -5,8 +5,8 @@ Trains a LoRA adapter over a Hugging Face Whisper model on the user's
 CTranslate2 model the local faster-whisper transcriber can load.
 
 Archive layout (consumed by ``scripts/lightning/train_whisper.py``):
-    manifest.json   — the correction triples + per-record audio_file pointers
-    audio/*.wav     — the de-identified clips (deduplicated; many records share one)
+    manifest.json, the correction triples + per-record audio_file pointers
+    audio/*.wav, the de-identified clips (deduplicated; many records share one)
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ class WhisperVoiceTask:
     ) -> Path:
         """Write a tar.gz of audio clips + manifest.json to a temp file."""
         manifest = {**base_manifest(batch_id, self.task_type, base_model), "records": []}
-        # Deduplicate audio clips — many records share one session clip.
+        # Deduplicate audio clips: many records share one session clip.
         audio_members: dict = {}
         for rec in records:
             entry = {

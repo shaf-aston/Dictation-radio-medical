@@ -1,4 +1,4 @@
-"""Local statistical analysis of completed reports — no cloud, no second model.
+"""Local statistical analysis of completed reports: no cloud, no second model.
 
 Mines the plain-text reports in ``data/autosave/`` for the patterns the user
 asked about: most-frequent terminology, common phrasing per section, repeated
@@ -126,7 +126,7 @@ class ReportAnalyzer:
 
     @staticmethod
     def _strip_header(raw: str) -> str:
-        """Return just the report body — no patient header, no footer.
+        """Return just the report body: no patient header, no footer.
 
         ``report_manager`` formats reports with full-width '=' rule lines: a
         title, rule, patient-info block, rule, the body, then a final rule and

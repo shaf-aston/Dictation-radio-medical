@@ -10,8 +10,8 @@ fuzzy dictionary, only to produce the same output for it as last cycle.
 the frozen prefix and running the pipeline only over the *un-committed tail*.
 
 Correctness is preserved by where it splits. Several stages are
-context-sensitive at their edges — capitalisation depends on being at a
-sentence start, terminology phrases can span words — so the text is only ever
+context-sensitive at their edges, capitalisation depends on being at a
+sentence start, terminology phrases can span words, so the text is only ever
 split at a **sentence boundary at or before the commit frontier**. Each piece
 handed to the pipeline therefore begins exactly where a sentence begins, which
 is the same condition it would have met inside the full document. When no such
@@ -85,14 +85,14 @@ class IncrementalPostprocessor:
                 optimisation for this call.
 
         Returns:
-            ``(processed_text, changes)`` — same contract as
+            ``(processed_text, changes)``: same contract as
             :func:`postprocess_transcript_with_changes`. ``changes`` covers the
             newly-processed tail only; callers already de-duplicate the
             cumulative list for the corrections banner.
         """
         split = _last_sentence_start(text, committed_len)
         if split <= 0:
-            # Nothing safely frozen yet — process the whole document.
+            # Nothing safely frozen yet: process the whole document.
             self.reset()
             return self._process_with_changes(text)
 

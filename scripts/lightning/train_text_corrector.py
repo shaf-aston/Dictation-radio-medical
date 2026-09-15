@@ -1,4 +1,4 @@
-"""Text-correction fine-tuning — runs ON Lightning AI, not locally.
+"""Text-correction fine-tuning: runs ON Lightning AI, not locally.
 
 Consumes a batch archive (``manifest.json`` with ``pairs: [{wrong, correct}]``)
 produced by ``src.cloud.tasks.text_corrector.TextCorrectorTask`` and fine-tunes a
@@ -8,7 +8,7 @@ strategy is conservative:
 
   * Small model + a few epochs; 10% held out for an exact-match validation gate.
   * The run is only considered a success if validation exact-match does not
-    regress versus the untuned base — the text analogue of the voice WER gate.
+    regress versus the untuned base: the text analogue of the voice WER gate.
 
 After training, the model directory is packed into ``model.tar.gz`` for download
 by the app's SyncManager. The local report-cleanup path can then load it.

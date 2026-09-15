@@ -18,7 +18,7 @@ from PySide6.QtCore import QObject, Signal
 
 logger = logging.getLogger(__name__)
 
-# Poll interval — training takes minutes, so a slow cadence is plenty and keeps
+# Poll interval: training takes minutes, so a slow cadence is plenty and keeps
 # API usage minimal.
 _POLL_INTERVAL_SEC = 60.0
 

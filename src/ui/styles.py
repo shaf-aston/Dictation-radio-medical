@@ -1,6 +1,6 @@
 """Qt stylesheets for the desktop UI.
 
-There is one sheet — `styles/app.qss` — rendered once per theme from the colours
+There is one sheet, `styles/app.qss`, rendered once per theme from the colours
 in `tokens.json`, the same file the web front-end reads (see `src/ui/theme.py`).
 `DARK` and `LIGHT` keep their names so existing callers are unchanged.
 """
@@ -14,6 +14,7 @@ LIGHT = render_qss("light")
 
 LEVEL_STATES = ("healthy", "low", "clipping")
 STATUS_STATES = ("idle", "busy", "rec", "warn", "ok")
+FINDINGS_STATES = ("clear", "outstanding", "acknowledged")
 
 
 def _set_state(widget, name: str, state: str, allowed: tuple[str, ...]) -> None:
@@ -23,7 +24,7 @@ def _set_state(widget, name: str, state: str, allowed: tuple[str, ...]) -> None:
     the active theme instead of staying dark-themed on a light window. This only
     sets the property the stylesheet selects on.
 
-    Qt does not re-evaluate a property selector on its own, hence the repolish —
+    Qt does not re-evaluate a property selector on its own, hence the repolish:
     and only doing it when the state actually changes keeps it off the hot path
     of the level timer, which fires many times a second.
     """
@@ -44,3 +45,8 @@ def set_level_state(bar, state: str) -> None:
 def set_status_state(label, state: str) -> None:
     """Show what the dictation is doing: idle, busy, recording, behind, done."""
     _set_state(label, "state", state, STATUS_STATES)
+
+
+def set_findings_state(label, state: str) -> None:
+    """Show whether the report's critical findings are outstanding or settled."""
+    _set_state(label, "findings", state, FINDINGS_STATES)

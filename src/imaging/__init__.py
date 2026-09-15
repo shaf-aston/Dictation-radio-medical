@@ -1,4 +1,4 @@
-"""Local scan-assistant subsystem — offline chest X-ray analysis.
+"""Local scan-assistant subsystem: offline chest X-ray analysis.
 
 Given a chest X-ray, this subsystem surfaces candidate findings **only when the
 model is confident**, and always shows *where* it is looking (a Grad-CAM region

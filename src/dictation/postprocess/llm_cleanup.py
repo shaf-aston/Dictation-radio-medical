@@ -1,13 +1,13 @@
 """Optional LLM cleanup of a dictated report via Groq.
 
-A consent-gated, on-demand polish for a *finished* report — fixing grammar,
+A consent-gated, on-demand polish for a *finished* report: fixing grammar,
 run-on sentences, and obvious transcription slips that the rule-based pipeline
 cannot. It is deliberately NOT part of the per-chunk live pipeline: it costs an
 API call and adds latency, so the user triggers it explicitly on the full
 document ("AI Cleanup"), and it is off by default.
 
 Safety / privacy:
-  * Off unless ``groq_cleanup_enabled`` AND ``cloud_training_consent`` are set —
+  * Off unless ``groq_cleanup_enabled`` AND ``cloud_training_consent`` are set:
     the same consent the cloud-training path uses (no extra surprise network).
   * Text is run through :class:`~src.medical.deid.DeIdentifier` BEFORE it leaves
     the device, so patient identifiers are not sent to Groq.
@@ -104,7 +104,7 @@ def clean_with_llm(
     """Polish *text* via Groq; return ``(cleaned_text, changes)``.
 
     Returns the input unchanged (with an empty change list) if cleanup is
-    disabled, the key is missing, or anything fails — never raises. ``patient_info``
+    disabled, the key is missing, or anything fails: never raises. ``patient_info``
     (if given) is used to de-identify the text before it is sent.
 
     Args:

@@ -5,13 +5,13 @@
 # faster-whisper keeps only the LAST 223 tokens of initial_prompt
 # (faster_whisper/transcribe.py::get_prompt keeps previous_tokens[-(448//2 - 1):])
 # and silently drops the rest. This file used to be ~1150 tokens, so 81% of it
-# never reached the decoder — including the whole musculoskeletal section, which
+# never reached the decoder: including the whole musculoskeletal section, which
 # sat at the front. tests/test_prompt_budget.py holds the line.
 #
 # Order still matters, because truncation eats the FRONT: the least valuable
 # terms come first, the ones Whisper most often mis-hears come last. Generic
 # imaging-physics vocabulary (T2-weighted, Hounsfield, echogenicity...) was
-# dropped outright — it is what used to survive, and it is the least valuable.
+# dropped outright: it is what used to survive, and it is the least valuable.
 # Learned custom vocabulary (adaptive_learning.get_custom_prompt_suffix) is
 # appended after this file and competes for the same 223 tokens, so pay for any
 # addition here with a deletion.
@@ -25,7 +25,7 @@ Radiology report.
 Pneumothorax, pulmonary embolism, subdural haematoma.
 Undisplaced, comminuted, avulsion fracture.
 
-# Musculoskeletal and trauma vocabulary — the highest-value priming, kept last
+# Musculoskeletal and trauma vocabulary: the highest-value priming, kept last
 ACL, PCL, MCL, LCL, TFCC, SLAP lesion, labral tear.
 Supraspinatus, infraspinatus, subscapularis, rotator cuff tear.
 Glenohumeral, acromioclavicular, patellofemoral, acetabular.

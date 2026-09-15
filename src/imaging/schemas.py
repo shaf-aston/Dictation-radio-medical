@@ -1,7 +1,7 @@
 """Data contracts for the scan-assistant subsystem.
 
 Plain dataclasses (no ML types) so they can be imported, serialised, and tested
-without torch installed — matching the project's lightweight, file-first style.
+without torch installed: matching the project's lightweight, file-first style.
 """
 
 
@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Tuple
 
 # Standard disclaimer attached to every result. Outputs are assistive only.
 DISCLAIMER = (
-    "AI-assisted suggestion for radiologist review only — NOT a diagnosis. "
+    "AI-assisted suggestion for radiologist review only: NOT a diagnosis. "
     "This model is not FDA-cleared or CE-marked. Confirm all findings clinically."
 )
 
@@ -72,7 +72,7 @@ class ReferenceCase:
     for diagnosis filtering; ``attributes`` carry optional clinical context
     (``age``, ``sex``, ``bmi``, ``view``, ``history``) used to narrow matches.
     Both default empty so a legacy sidecar (labels only) still produces a valid
-    case — attribute filters simply don't apply to it.
+    case: attribute filters simply don't apply to it.
     """
 
     path: str

@@ -2,7 +2,7 @@
 
 Runs ON Lightning AI after ``train_whisper.py``. The local app uses
 faster-whisper (CTranslate2), which cannot load a Hugging Face / LoRA model
-directly — so this script:
+directly: so this script:
 
   1. Loads the base Whisper model and applies the saved LoRA adapter.
   2. Merges the adapter weights into the base (``merge_and_unload``).

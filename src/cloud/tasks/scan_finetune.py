@@ -7,24 +7,24 @@ more sensitive than text, so this task only runs when the user has explicitly
 enabled scan training and provided labelled data.
 
 Unlike the voice/text tasks, the training examples are images, not correction
-triples — so this task bundles a labelled-image directory rather than reading the
+triples: so this task bundles a labelled-image directory rather than reading the
 correction staging DB. The framework still handles upload/poll/download/register
 unchanged.
 
 Archive layout (consumed by ``scripts/lightning/train_scan_classifier.py``):
-    manifest.json   — [{image_file, labels: {pathology: 0|1}}]
-    images/*.png    — the (locally de-identified) images
+    manifest.json, [{image_file, labels: {pathology: 0|1}}]
+    images/*.png, the (locally de-identified) images
 
 Safety gate: the training script holds out a validation split and **rejects the
-run** if the fine-tuned model's mean AUC regresses versus the base weights — the
+run** if the fine-tuned model's mean AUC regresses versus the base weights: the
 mirror of the voice path's WER gate. A model that does not beat the validated
 baseline is never registered.
 
-Specialty focus — chest trauma: rib/clavicle fractures correlate clinically with
+Specialty focus: chest trauma: rib/clavicle fractures correlate clinically with
 pneumothorax and haemothorax (the latter reads as effusion on a plain film), and
 plain films are documented to miss a large share of rib fractures. So when a
 batch contains labelled positives for :data:`_TRAUMA_FOCUS_LABELS`, this task
-oversamples them — the standard, training-script-agnostic way to sharpen a
+oversamples them: the standard, training-script-agnostic way to sharpen a
 multi-label fine-tune toward a chosen subset without touching model code or the
 abstention thresholds (those stay a separate, per-site calibration lever; see
 ``data/imaging/thresholds.json``).
@@ -76,7 +76,7 @@ class ScanClassifierTask:
         Datasets are aggregated: if multiple datasets are registered, the manifest
         includes examples from all of them. Trauma-positive examples
         (see :data:`_TRAUMA_FOCUS_LABELS`) are listed :data:`_TRAUMA_OVERSAMPLE`
-        times in the manifest — the underlying image is still archived only once.
+        times in the manifest: the underlying image is still archived only once.
 
         Backward compatibility: If no datasets are registered, falls back to
         reading from the legacy ``imaging_training_dir()``.

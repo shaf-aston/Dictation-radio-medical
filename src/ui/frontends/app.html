@@ -16,12 +16,17 @@
 
     <header class="bar">
         <span class="mark" aria-hidden="true"><i class="fas fa-stethoscope"></i></span>
-        <span class="wordmark">Radio Dictate</span>
+        <h1 class="wordmark">Radio Dictate</h1>
 
         <div id="statusIndicator" class="status" aria-live="polite" aria-label="Status">
             <span id="statusDot" class="dot" aria-hidden="true"></span>
             <span id="statusText">Ready</span>
         </div>
+
+        <!-- Always visible, including when the report is clear: a warning that
+             only ever appears is one the radiologist cannot tell apart from a
+             warning that failed to appear. -->
+        <span id="findingsPill" class="findings-pill" data-findings="clear"></span>
 
         <div class="bar-actions">
             <button id="copyBtn" class="btn btn-primary" type="button" title="Copy the report to the clipboard">
@@ -48,6 +53,11 @@
                         <span>Export to Word</span>
                     </button>
                     <hr>
+                    <button id="devBtn" type="button" role="menuitem" aria-pressed="false">
+                        <i class="fas fa-sliders" aria-hidden="true"></i>
+                        <span>Developer console</span>
+                        <kbd class="menu-kbd">Ctrl+Shift+D</kbd>
+                    </button>
                     <button id="themeBtn" type="button" role="menuitem" aria-pressed="false">
                         <i id="themeIcon" class="fas fa-moon" aria-hidden="true"></i>
                         <span id="themeText">Dark</span>
@@ -72,13 +82,27 @@
                  underlay holding a transparent copy of the text, with the
                  suspect words underlined. Nothing is inserted into what the
                  radiologist typed, so every export is byte-for-byte unmarked. -->
+            <!-- The report needs a head of its own. Without it the count and
+                 the "words to check" line were orphans floating under the
+                 editor, right-aligned against nothing. -->
+            <div class="stage-head">
+                <h2 class="stage-title">Report</h2>
+                <p id="marksHint" class="marks-hint" hidden></p>
+                <span id="wordCount" class="stage-count" aria-live="polite">0 words</span>
+            </div>
+
             <div class="editor-wrap">
+                <!-- One tick per critical or urgent finding, in a strip of its
+                     own beside the text. A finding is a statement about the
+                     report, not about a word, so nothing is ever drawn on the
+                     radiologist's characters: contrast the underlay above,
+                     which does underline the word it points at. -->
+                <div id="findingGutter" class="finding-gutter"
+                     title="Critical and urgent findings: click a mark to jump to it"></div>
                 <div id="editorMarks" class="editor-marks" aria-hidden="true"></div>
                 <textarea id="editor" class="editor" spellcheck="true"
                           placeholder="Press the microphone and start speaking."></textarea>
             </div>
-            <p id="marksHint" class="marks-hint" hidden></p>
-
             <!-- Highlight a word and its neighbourhood appears here: terms that
                  look like it above, terms that go with it below. Nothing is
                  applied until the radiologist clicks one. -->
@@ -91,16 +115,95 @@
             </div>
 
             <div class="stage-foot">
-                <button id="dictateBtn" class="rec" type="button"
-                        aria-label="Start or stop recording" aria-pressed="false">
-                    <i id="micIcon" class="fas fa-microphone" aria-hidden="true"></i>
-                </button>
+                <div class="rec-row">
+                    <!-- Left of the button and right of it, so the controls sit
+                         where the eye already is instead of in the far header. -->
+                    <button id="cancelBtn" class="btn btn-quiet" type="button" hidden>
+                        Discard
+                    </button>
+
+                    <button id="dictateBtn" class="rec" type="button"
+                            aria-label="Start or stop recording" aria-pressed="false">
+                        <i id="micIcon" class="fas fa-microphone" aria-hidden="true"></i>
+                    </button>
+
+                    <!-- Elapsed time and the microphone's real level. Without
+                         these you cannot tell a working microphone from a dead
+                         one until the whole dictation is over. -->
+                    <div id="recMeter" class="rec-meter" hidden>
+                        <span id="recTimer" class="rec-timer">00:00</span>
+                        <span class="rec-level" aria-hidden="true"><i></i></span>
+                    </div>
+                </div>
+
+                <!-- What has happened since you pressed record, drawn along
+                     time instead of replaced in place. The ribbon is the shape
+                     of the audio: solid is a sentence saved, faint is the one
+                     still being written, hatched is where the machine fell
+                     behind. The hairline inside it is how far the text trails
+                     your voice, deliberately faint: it is there to be looked
+                     for, not to be watched. The trail underneath says the same
+                     thing in words, so nothing depends on reading a graph. -->
+                <div id="sessionTimeline" class="timeline" hidden>
+                    <div id="tlRibbon" class="tl-ribbon" role="img"
+                         aria-label="Progress of this dictation over time">
+                        <svg id="tlPulse" class="tl-pulse" viewBox="0 0 1000 40"
+                             preserveAspectRatio="none" aria-hidden="true"></svg>
+                        <span id="tlNow" class="tl-now"></span>
+                    </div>
+                    <p class="tl-live"><b id="tlLiveMsg">Ready</b><span id="tlLiveSub"></span></p>
+                    <ol id="tlTrail" class="tl-trail" aria-label="Recent steps"></ol>
+                </div>
+
                 <p class="hint"><kbd>Space</kbd> to record · <kbd>Ctrl</kbd>+<kbd>Z</kbd> to undo</p>
             </div>
         </section>
 
-        <!-- Everything below folds. What you leave open is what you get next time. -->
-        <div class="panels">
+        <!-- On a wide screen this is a rail beside the report, not a stack
+             under it: a template you have to scroll down and unfold to reach
+             is a template nobody uses mid-dictation. Each section still folds,
+             and what you leave open is what you get next time. -->
+        <aside class="panels" aria-label="Templates, phrases and settings">
+
+            <details data-panel="template" class="panel">
+                <summary>
+                    <span class="p-title">Template</span>
+                    <span class="p-note">starter text for an exam type</span>
+                </summary>
+                <div class="p-body">
+                    <div class="p-toolbar">
+                        <p class="field field-inline field-grow">
+                            <label for="templateSelect">Report template</label>
+                            <select id="templateSelect"></select>
+                        </p>
+                        <button id="loadTemplateBtn" class="btn btn-quiet" type="button">
+                            <i class="fas fa-file-import" aria-hidden="true"></i>
+                            <span id="loadTemplateText">Load template</span>
+                        </button>
+                    </div>
+                </div>
+            </details>
+
+            <details data-panel="phrases" class="panel">
+                <summary>
+                    <span class="p-title">Quick phrases</span>
+                    <span class="p-note">tap to insert at the cursor</span>
+                </summary>
+                <div class="p-body">
+                    <div class="p-toolbar">
+                        <p class="field field-inline">
+                            <label for="macroRegionSelect">Region</label>
+                            <select id="macroRegionSelect"></select>
+                        </p>
+                        <button id="reloadMacrosBtn" class="btn btn-quiet" type="button"
+                                title="Reload phrases from macros.json">
+                            <i class="fas fa-rotate-right" aria-hidden="true"></i>
+                            <span>Reload</span>
+                        </button>
+                    </div>
+                    <div id="macroButtons" class="chips" aria-live="polite"></div>
+                </div>
+            </details>
 
             <details data-panel="patient" class="panel">
                 <summary>
@@ -137,46 +240,6 @@
                 </div>
             </details>
 
-            <details data-panel="phrases" class="panel">
-                <summary>
-                    <span class="p-title">Quick phrases</span>
-                    <span class="p-note">tap to insert at the cursor</span>
-                </summary>
-                <div class="p-body">
-                    <div class="p-toolbar">
-                        <p class="field field-inline">
-                            <label for="macroRegionSelect">Region</label>
-                            <select id="macroRegionSelect"></select>
-                        </p>
-                        <button id="reloadMacrosBtn" class="btn btn-quiet" type="button"
-                                title="Reload phrases from macros.json">
-                            <i class="fas fa-rotate-right" aria-hidden="true"></i>
-                            <span>Reload</span>
-                        </button>
-                    </div>
-                    <div id="macroButtons" class="chips" aria-live="polite"></div>
-                </div>
-            </details>
-
-            <details data-panel="template" class="panel">
-                <summary>
-                    <span class="p-title">Template</span>
-                    <span class="p-note">starter text for an exam type</span>
-                </summary>
-                <div class="p-body">
-                    <div class="p-toolbar">
-                        <p class="field field-inline field-grow">
-                            <label for="templateSelect">Report template</label>
-                            <select id="templateSelect"></select>
-                        </p>
-                        <button id="loadTemplateBtn" class="btn btn-quiet" type="button">
-                            <i class="fas fa-file-import" aria-hidden="true"></i>
-                            <span id="loadTemplateText">Load template</span>
-                        </button>
-                    </div>
-                </div>
-            </details>
-
             <details data-panel="settings" class="panel">
                 <summary>
                     <span class="p-title">Settings</span>
@@ -208,7 +271,7 @@
                 </div>
             </details>
 
-        </div>
+        </aside>
     </main>
 </div>
 
@@ -227,6 +290,67 @@
         </div>
     </div>
 </div>
+
+<!-- The developer console. A drawer rather than a separate page, because the
+     question it answers ("why was that slow?") is asked while dictating, and a
+     page you have to navigate to is a page you check after the fact.
+
+     Everything in here is read from this process over loopback: the server's
+     own event diary (src/core/event_log.py) and its rolling stage timings
+     (src/core/perf.py), plus what the browser itself measured. Nothing is
+     stored and nothing is sent anywhere -- the offline rule is untouched. -->
+<section id="devDrawer" class="dev-drawer" aria-label="Developer console" hidden>
+    <header class="dev-drawer-bar">
+        <span class="dev-drawer-title">Developer console</span>
+
+        <!-- The five numbers a slow dictation is judged on. Each carries the
+             sentence that says what it means, because "behind mic" is only
+             readable to someone who already knows the answer. -->
+        <div class="dev-stat-row" id="devStats" aria-live="off">
+            <span class="dev-stat" title="How long from pressing record to the first words appearing.">
+                <b id="devFirstWords">–</b><i>first words</i></span>
+            <span class="dev-stat" title="Gap since the previous time new text appeared.">
+                <b id="devLastUpdate">–</b><i>last update</i></span>
+            <span class="dev-stat" title="How far the text on screen is behind the microphone right now.">
+                <b id="devBehind">–</b><i>behind mic</i></span>
+            <span class="dev-stat" title="How many times new text has appeared this recording.">
+                <b id="devUpdates">0</b><i>updates</i></span>
+            <span class="dev-stat" title="Seconds of audio this browser has sent to the server.">
+                <b id="devAudioSent">0.0s</b><i>audio sent</i></span>
+        </div>
+
+        <div class="dev-drawer-actions">
+            <label class="dev-filter">
+                <span class="sr-only">Filter the console</span>
+                <input id="devFilter" type="text" placeholder="filter…" autocomplete="off">
+            </label>
+            <button id="devPauseBtn" class="btn btn-quiet" type="button" aria-pressed="false">Pause</button>
+            <button id="devCopyBtn" class="btn btn-quiet" type="button">Copy</button>
+            <button id="devClearBtn" class="btn btn-quiet" type="button">Clear</button>
+            <a class="btn btn-quiet" href="/developer" target="_blank" rel="noopener">Run history</a>
+            <button id="devCloseBtn" class="btn btn-quiet" type="button" aria-label="Close the developer console">Close</button>
+        </div>
+    </header>
+
+    <div class="dev-drawer-body">
+        <!-- The stream, newest at the bottom, exactly like a terminal. -->
+        <div id="devConsole" class="dev-console" role="log" aria-live="off" tabindex="0"></div>
+
+        <!-- The rolling averages beside it: the console says which decode was
+             slow, this says whether that is normal. -->
+        <aside class="dev-perf" tabindex="0">
+            <h3 class="dev-perf-h">Where the time goes</h3>
+            <table class="dev-perf-table">
+                <thead>
+                    <tr><th scope="col">Stage</th><th scope="col" class="num">n</th>
+                        <th scope="col" class="num">mean</th><th scope="col" class="num">p95</th></tr>
+                </thead>
+                <tbody id="devPerfRows"></tbody>
+            </table>
+            <p id="devPerfEmpty" class="dev-perf-empty">Nothing measured yet: dictate something.</p>
+        </aside>
+    </div>
+</section>
 
 <script>__BOOTSTRAP_SCRIPT__</script>
 <script src="/static/app.js"></script>

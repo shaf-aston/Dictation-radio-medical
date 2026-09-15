@@ -1,4 +1,4 @@
-"""PHI de-identification — the shared safety gate before data leaves the device.
+"""PHI de-identification: the shared safety gate before data leaves the device.
 
 This lives in the medical (core-domain) layer, not under ``src.cloud``, because
 three callers need it and must NOT all depend on the optional cloud subsystem:
@@ -13,8 +13,8 @@ is deliberately conservative: when in doubt, a record is dropped rather than ris
 a breach.
 
 Two surfaces are scrubbed:
-  * **Text** — the correction strings and any context (names, IDs, dates).
-  * **Audio** — segments whose transcript contains PHI are silenced, using the
+  * **Text**: the correction strings and any context (names, IDs, dates).
+  * **Audio**: segments whose transcript contains PHI are silenced, using the
     timestamps already produced by ``Transcriber.transcribe``.
 """
 
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 class PrivacyError(Exception):
-    """De-identification failed validation — data must NOT leave the device.
+    """De-identification failed validation: data must NOT leave the device.
 
     Re-exported from :mod:`src.cloud.exceptions` for back-compat with existing
     cloud-side callers.
@@ -92,7 +92,7 @@ class DeIdentifier:
     def validate_clean(self, text: str) -> bool:
         """Return True only if no known patient identifier remains verbatim.
 
-        Raises :class:`PrivacyError` if a known identifier survived — callers
+        Raises :class:`PrivacyError` if a known identifier survived: callers
         should treat the record as un-uploadable.
         """
         for pat in self._identifier_patterns:

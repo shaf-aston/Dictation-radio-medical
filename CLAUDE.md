@@ -1,4 +1,4 @@
-# CLAUDE.md — Architecture & Module Map
+# CLAUDE.md: Architecture & Module Map
 
 Radio Dictate is an **offline medical dictation workstation** for radiologists.
 Speech-to-text runs locally via Whisper (`faster-whisper` / CTranslate2); by
@@ -6,26 +6,6 @@ default **no audio or text leaves the device**. Two front-ends share one
 dictation core: a PySide6 desktop GUI and a FastAPI web app.
 
 Read this first. For conventions, see [CODING_STANDARDS.md](CODING_STANDARDS.md).
-For project-specific automation, see **Tooling** below — check it before doing
-manual multi-file work that an existing agent/skill/workflow already covers.
-
-## Tooling — `.claude/` (check this before manual multi-step work)
-
-```
-.claude/
-├── agents/      sub-agents — delegate research/review here to keep the
-│                 main context clean (separate context window, returns a summary)
-├── skills/      on-demand procedures — loaded only when their description
-│                 matches the task; no cost until triggered
-└── workflows/   multi-step pipelines composing the above
-```
-
-If a task matches an existing agent/skill/workflow's stated purpose, use it
-instead of re-deriving the steps inline. If something here *should* trigger
-but doesn't, the fix is almost always the `description` field in that item's
-own frontmatter (too vague → never fires; too narrow → only fires for an exact
-phrasing) — not this file. New session required after adding/editing a skill
-or agent for it to be picked up.
 
 ## Module map
 
@@ -35,24 +15,42 @@ src/
 │                  json_store.py (shared atomic JSON + JSONL read/write) ·
 │                  keychain.py (OS-keychain secret helpers, wraps keyring) ·
 │                  patient_schema.py (the patient-info fields, declared once) ·
-│                  perf.py (stage timings — rolling count/mean/p95/max, local only)
-├── dictation/   the offline pipeline — has NO cloud dependency
+│                  perf.py (stage timings: rolling count/mean/p95/max, local only) ·
+│                  event_log.py (the diary: a bounded ring of what just happened,
+│                    with a duration on anything that took time. perf answers
+│                    "what does this stage usually cost"; this answers "what
+│                    happened just now, in what order": the developer console
+│                    needs both. Mirrors ordinary log lines in too, so the
+│                    warning and the timing that explains it sit together)
+├── dictation/   the offline pipeline, has NO cloud dependency
 │   ├── audio.py          microphone capture
 │   ├── worker.py         live transcription QThread (chunk-once; reads only
 │   │                       the still-open tail off the growing WAV, never the
-│   │                       whole file — see Live-speed design)
-│   ├── asr/               AsrEngine swap-seam over transcriber.py — port.py
+│   │                       whole file, see Live-speed design)
+│   ├── asr/               AsrEngine swap-seam over transcriber.py, port.py
 │   │                       (Protocol) · types.py (Word/AsrSegment/AsrResult/
-│   │                       TranscribeContext — confidence is part of the
+│   │                       TranscribeContext, confidence is part of the
 │   │                       contract) · factory.py (create_engine, the only
-│   │                       name→engine mapping) · engines/faster_whisper_engine.py
-│   ├── stream/             chunk-once streaming — vad.py (Silero VAD, bundled
+│   │                       name→engine mapping; default is a 3-tier chain:
+│   │                       deepgram → parakeet (if installed) → faster-whisper)
+│   │                       · engines/deepgram_engine.py (cloud, nova-2-medical,
+│   │                       key in OS keychain, the only network-dependent
+│   │                       engine here — see the invariants note below) ·
+│   │                       engines/fallback_engine.py (ChainEngine: tries each
+│   │                       provider in order, degrades past any that raises) ·
+│   │                       engines/faster_whisper_engine.py
+│   ├── stream/             chunk-once streaming, vad.py (Silero VAD, bundled
 │   │                       with faster-whisper, no new dep) · segmenter.py
-│   │                       (pure VAD-marks→chunk-cuts policy) · ledger.py
+│   │                       (pure VAD-marks→chunk-cuts policy) · live_session.py
+│   │                       (the Qt-free live loop: a push-fed audio buffer
+│   │                        instead of the desktop's growing WAV, so the web
+│   │                        app streams over a WebSocket using these same
+│   │                        chunk rules. Owns the shared build_context_prompt /
+│   │                        mean_confidence / should_skip_preview) · ledger.py
 │   │                       (freezes each closed chunk's decode permanently,
 │   │                       the "decode once" guarantee) · tail.py
 │   │                       (LocalAgreement-2 stable preview of the open tail)
-│   ├── transcriber.py    faster-whisper / CTranslate2 wrapper — the AsrEngine
+│   ├── transcriber.py    faster-whisper / CTranslate2 wrapper, the AsrEngine
 │   │                       port's implementation detail, not used directly
 │   │                       outside src/dictation/asr/
 │   ├── postprocess/      10-stage correction pipeline (pipeline.py orchestrates)
@@ -62,39 +60,52 @@ src/
 ├── ui/          main_window.py · views.py · recording_session.py · dialogs.py
 │   ├── postprocess_worker.py  runs the pipeline OFF the UI thread, latest-only
 │   ├── web_app.py        FastAPI single-page app (host/port from settings),
-│   │                       plus /developer — the local diagnostics table of
-│   │                       recorded runs (unlisted; no link from the report UI)
+│   │                       plus /developer, the local diagnostics table of
+│   │                       recorded runs (unlisted; no link from the report UI),
+│   │                       and GET /api/debug/events + /api/debug/perf, which
+│   │                       are what the in-page developer console reads
 │   ├── term_popup.py · term_marks.py   highlight a word → suggestions; and the
 │   │                       marks saying which word to highlight. Both are view
-│   │                       overlays (ExtraSelection / an underlay div) — never
+│   │                       overlays (ExtraSelection / an underlay div): never
 │   │                       text, so no mark can reach an exported report
+│   ├── finding_marks.py  the critical-findings gutter: a strip beside the
+│   │                       editor, one mark per finding, click to jump to it.
+│   │                       Never draws on the radiologist's characters: a
+│   │                       finding is a statement about the report, not about
+│   │                       a word (contrast term_marks.py, which underlines).
+│   │                       Marks sit by position in the DOCUMENT, not by where
+│   │                       the text is scrolled, so a finding further down the
+│   │                       report still has a mark to click. The web app draws
+│   │                       the same strip and count from the same
+│   │                       features/report_release.OutstandingFindings, the
+│   │                       rules live there, both front-ends only draw
 │   ├── tokens.json       the ONLY place a UI colour is written down
-│   ├── theme.py          the only reader of tokens.json — renders the Qt sheet
+│   ├── theme.py          the only reader of tokens.json, renders the Qt sheet
 │   │                       and the web page's CSS custom properties, so the two
 │   │                       front-ends cannot drift apart
 │   ├── styles.py · styles/app.qss · frontends/   desktop + web assets
 │   │                       (neither stylesheet contains a hex value;
-│   │                        scripts/verify_theme.py fails the build if one does)
+│   │                        keep it that way, colour has one home)
 │   └── __main__.py       enables `python -m src.ui`
 ├── medical/     critical_findings.py (NegEx) · macros.py ·
-│   ├── medical_dict.py   the two wordlists, plus is_english_word — the single
+│   ├── medical_dict.py   the two wordlists, plus is_english_word, the single
 │   │                       "is this a real word?" answer the fuzzy corrector and
 │   │                       the marking scan both ask, so they cannot disagree
 │   ├── term_lookup.py    highlight a word → what it might have been + what goes
 │   │                       with it (lookup); and which words to highlight at all
-│   │                       (suspect_terms — three gates, the last of which
+│   │                       (suspect_terms, three gates, the last of which
 │   │                       guarantees every mark has something to offer)
-│   └── deid.py           DeIdentifier + PrivacyError — PHI de-id, the upload
+│   └── deid.py           DeIdentifier + PrivacyError, PHI de-id, the upload
 │                           safety gate; lives here so dictation/training/cloud
 │                           all import it downward without dictation touching
 │                           src.cloud.*
 ├── features/    accent_corrections.py · adaptive_learning.py · audit_log.py
 │   ├── run_log.py        one capped JSONL record per dictation (timings +
-│   │                       optional report text) — the history behind /developer
+│   │                       optional report text), the history behind /developer
 │   └── file_manager.py · report_manager.py · report_analyzer.py
 ├── imaging/     OPTIONAL local chest X-ray assistant (offline inference)
 │   ├── classifier.py     TorchXRayVision DenseNet121 wrapper (lazy torch)
-│   ├── abstention.py     calibrated rejection gate — the imaging safety gate
+│   ├── abstention.py     calibrated rejection gate, the imaging safety gate
 │   ├── localization.py   hand-rolled Grad-CAM → region + overlay PNG
 │   ├── analyzer.py       orchestrator: classify → abstain → localize → result
 │   ├── schemas.py        ImagingFinding / ImagingResult / DISCLAIMER ·
@@ -102,7 +113,7 @@ src/
 │   ├── retrieval.py      orchestration: build/cache reference index, attribute-
 │   │                      aware "find similar prior cases" for a query film
 │   ├── retrieval_embed.py  EmbeddingExtractor (DenseNet embeddings, lazy torch)
-│   ├── retrieval_index.py  EmbeddingIndex — HNSW (hnswlib) / numpy search + I/O
+│   ├── retrieval_index.py  EmbeddingIndex, HNSW (hnswlib) / numpy search + I/O
 │   ├── datasets.py       local labelled-image dataset loading for fine-tune/eval
 │   └── resources/        thresholds.json (default per-pathology cutoffs)
 ├── cloud/       OPTIONAL Lightning AI fine-tuning (consent-gated)
@@ -118,42 +129,65 @@ src/
 │                          re-exports PrivacyError from medical/deid.py
 ├── training/    collector.py · schemas.py · staging_db.py (SQLite)
 ├── templates/   plain-text report templates (RSNA / MSK / generic)
-└── resources/   medical_terms.txt (broad generic wordlist — membership net) ·
-                  radiology_lexicon.txt (curated radiology terms — the clean
+└── resources/   medical_terms.txt (broad generic wordlist, membership net) ·
+                  radiology_lexicon.txt (curated radiology terms, the clean
                   spelling-correction snap targets)
 ```
 
 Other optional, off-by-default add-ons:
-- `dictation/postprocess/llm_cleanup.py` — on-demand Groq report polish (NOT in
+- `dictation/postprocess/llm_cleanup.py`: on-demand Groq report polish (NOT in
   the per-chunk pipeline); de-identifies first, key in keychain, consent-gated.
-- `scripts/lightning/` — training entrypoints run ON Lightning AI: `train_whisper`
+- `scripts/lightning/`: training entrypoints run ON Lightning AI: `train_whisper`
   + `convert_to_ct2` (voice), `train_text_corrector`, `train_scan_classifier`.
   Their requirements are separate optional extras (`requirements_*.txt`).
 
 ## Dictation data-flow (always local)
 
 ```
-microphone → audio.py → worker.py (QThread, chunk-once)
-           → asr/ (AsrEngine port → transcriber.py/Whisper) → postprocess/ (10 stages)
-           → UI (views.py / web_app.py) → report_manager.py (.docx / .txt export)
+desktop:  microphone → audio.py → worker.py (QThread, chunk-once, growing WAV)
+web:      microphone → AudioWorklet → /ws/dictate (16-bit PCM @16k)
+                     → stream/live_session.py (chunk-once, in-memory buffer)
+both:     → asr/ (AsrEngine port → transcriber.py/Whisper) → postprocess/ (10 stages)
+          → UI (views.py / web_app.py) → report_manager.py (.docx / .txt export)
 ```
+
+Both front-ends use two models: `live_model_size` (fast) decodes what appears
+while you speak, and `model_size` re-decodes the low-confidence chunks after
+Stop. **Stop never waits on that second pass in either front-end**: the live
+text is handed back at once and the polish upgrades it in the background.
+Which makes one rule load-bearing, and it is written in both places: if the
+report has been edited since it was handed over, the polished version is
+dropped rather than applied. Overwriting a clinical report someone has already
+corrected is the worst outcome the feature could have. Because Record comes
+back before the polish ends, a second recording can start on top of an
+unfinished one: the desktop disconnects the old worker's signals before the new
+session exists (`recording_session._abandon_unfinished_session`), so a stale
+pass cannot reach the new document.
+
+Front-end files are cached in memory keyed on the file's modification time
+(`web_app._frontend_cache`), and every page and asset is served `no-store`. Both
+halves matter: without the mtime key an edit to app.js needed a server restart,
+and without `no-store` the browser kept running the previous release's script
+against the current server: which is how the page went on using the old
+record-then-upload path, and felt many seconds slower, long after live dictation
+had landed.
 
 ## Live-speed design (why dictation keeps up)
 
 The live worker re-emits the *whole* transcript every cycle. Four rules keep the
-per-cycle cost flat instead of growing with the length of the report — a long
+per-cycle cost flat instead of growing with the length of the report: a long
 dictation used to get slower the longer it ran:
 
 1. **The pipeline never runs on the UI thread.** `ui/postprocess_worker.py` owns
    a `QThread` with a one-slot mailbox: only the *latest* transcript is
    processed (older ones are stale by definition), and each result carries a
    sequence number so a late pass can't overwrite a newer one. Worker signals
-   are connected to **bound `MainWindow` slots, never lambdas** — a signal
+   are connected to **bound `MainWindow` slots, never lambdas**: a signal
    connected to a plain callable has no receiver thread affinity, so Qt would
    run it in the *emitting* thread and mutate the editor off the UI thread.
 2. **Only the un-committed tail is post-processed.** `postprocess/incremental.py`
    caches the processed form of the frozen prefix and splits at a *sentence
-   boundary at or before the commit frontier* — so every piece the pipeline sees
+   boundary at or before the commit frontier*: so every piece the pipeline sees
    starts where a sentence starts, exactly as it would inside the full document.
    No safe boundary yet → it falls back to whole-document processing. The final
    pass after recording stops always reprocesses the whole document, so the
@@ -164,15 +198,34 @@ dictation used to get slower the longer it ran:
 3. **Each chunk is decoded exactly once.** `dictation/stream/` finds VAD silence
    boundaries in the still-open tail (`vad.py`), turns them into chunk cuts
    (`segmenter.py`), and permanently freezes each closed chunk's decode
-   (`ledger.py`) — nothing ever re-decodes committed audio. Only the still-open
+   (`ledger.py`): nothing ever re-decodes committed audio. Only the still-open
    tail (bounded by `ChunkPolicy.force_cut_sec`, default 20s) is re-decoded
    cycle to cycle, purely for a stable live preview via LocalAgreement-2
-   (`tail.py`) — and that preview is dropped altogether (`should_skip_preview`,
-   `preview_max_lag_sec`) once the machine is measured to decode slower than
-   speech AND the open tail has grown past the knob, so preview decodes can
-   never starve the committed chunks queued behind them
-   (`stream.decode_ratio` in `core/perf.py` is the measured proof —
-   target ≤1.4x versus the old sliding window's ~8x). After recording stops
+   (`tail.py`). **The first decode is shown at once and may be corrected
+   exactly once; after that the preview never takes a word back.** Text that
+   un-writes itself mid-sentence reads as the app losing the dictation, so
+   confirmed words are pinned until the chunk closes. But requiring agreement
+   before showing anything means the earliest words possible are the SECOND
+   decode, and a decode costs over a second whatever it is handed: measured end
+   to end in the browser, that put the first words of a dictation 13.8 seconds
+   after the button was pressed. The first decode is therefore shown
+   provisionally, the next decode may revise it, and the pin applies from then
+   on. One bounded correction at the very start is not the failure this rule
+   exists to prevent. **Corrected 2026-09-02, read this before trusting the paragraph below.** The flat-cost premise holds only while the cores are idle. Measured again on a loaded machine: wall time still looks flat (0.98s at 1s of audio, 1.47s at 25s) but CPU-seconds double (6.81 to 13.80), because the encoder is flat at a 30s pad while the decoder is linear in tokens. On a busy box the linear half surfaces as wall time and the throttle switches previews off on long tails, which is the failure it exists to prevent. Full measurements and what else turned out false: [docs/lag-map-2026-09-02.md](docs/lag-map-2026-09-02.md).
+
+**The preview is priced per call, not per second of audio.**
+   Measured on this machine, one `transcribe()` on the live model costs about
+   the same whatever it is handed, 1.33s for a 3s clip, 1.36s for 6s, 1.52s
+   for 25s, because Whisper pads every clip to a 30-second window, so the
+   encoder does identical work each time. Two rules follow, and both live in
+   `rules.should_skip_preview` and its callers: a preview is dropped when *its
+   own last measured cost* exceeds `preview_max_lag_sec`, and a new one never
+   starts until as long has passed as the last one took. That caps previews at
+   half the wall clock and leaves the other half for the committed chunks,
+   which are the text that is kept. Pricing the preview by tail length instead
+   (`open_tail_sec * decode_cost`, the version this replaced) switched it off
+   part-way through every chunk: exactly the stretch where the radiologist has
+   said the most and can see the least. After recording stops
    there is no full re-transcribe: a confidence-targeted polish
    (`worker._run_confidence_targeted_polish`) re-decodes only the committed
    chunks whose mean word confidence (from the `AsrEngine` port's
@@ -180,140 +233,90 @@ dictation used to get slower the longer it ran:
 4. **Only the un-decoded tail is ever read off disk.** `worker._read_audio(from_sample)`
    seeks from the ledger's open-tail frontier; it never re-decodes the entire
    growing WAV.
+5. **A cloud engine holds its connection open.** `deepgram_engine._http_client`
+   is one `httpx.Client` for the life of the process, built in `preload()`.
+   A fresh connection per call put a TLS handshake in front of every decode:
+   measured against the live API, 1.29s for a 2s clip and 1.36s for a 6s one,
+   against 0.18s and 0.16s over a kept-alive connection. Since rule 3 holds the
+   next preview back for as long as the last one took, that handshake alone
+   stretched live updates to about five seconds apart and tripped
+   `preview_max_lag_sec`, so the report arrived in one lump at Stop. Never call
+   `httpx.post` directly from an engine.
 
-`core/perf.py` is the evidence for all of the above: stage timings (count / mean
-/ p95 / max) plus point-in-time gauges like `stream.decode_ratio` are logged
-when a recording ends and served at `GET /api/debug/perf`. It is in-process
-only — nothing is persisted or sent anywhere, so it does not weaken the
-offline invariant.
+`core/perf.py` and the in-app developer console are the evidence for all of
+the above. Both are in-process only, read on loopback, and persist nothing, so
+they do not weaken the offline invariant. What they show and how to read them:
+[src/ui/CLAUDE.md](src/ui/CLAUDE.md).
 
-The pipeline (`dictation/postprocess/pipeline.py`) runs, in order: hallucination
-removal → voice commands → punctuation → measurements → terminology →
-accent-specific → fuzzy medical-dictionary match → learned corrections →
-capitalization. Each stage owns one file; the pipeline only sequences them.
+**The first words arrive in about three seconds, and three things had to
+change to get there** (all measured in the browser, not estimated). The Silero
+VAD was loading lazily inside the first cycle of the first dictation after a
+restart, costing 11 seconds cold: it is a startup warmer now
+(`warmup._warm_vad`). The opening cycle spent a whole decode on 0.048s of
+audio, because a decode costs the same whatever it is handed, so nothing under
+`preview_min_tail_sec` (default 1.0s) is decoded at all. And the agreement rule
+above threw the first decode away. Together: 13.8s to 2.1s.
 
-The fuzzy stage (`medical_dict_match.py`) is where mis-transcribed medical terms
-get fixed, and it leans on **two** wordlists with distinct jobs (`medical_dict.py`):
-the broad generic list answers *"is this already a real word? leave it alone"*
-(membership), while the **curated `radiology_lexicon.txt`** is the only thing a
-typo is *snapped to* (correction targets). Keeping snap targets radiology-only is
-what stops a misspelling from being pulled toward the generic list's chemistry /
-drug / obscure-procedure junk. To improve correction of a term, add it to the
-lexicon (the spelling authority) or add a precise rule to `corrections.yaml`.
-Never feed PDF/OCR-extracted text into the lexicon — extraction noise (ligature
-splits, hyphenation artefacts) pollutes the snap targets.
+**A long pause ends the sentence.** A silence at or beyond `pause_threshold`
+breaks the paragraph, and `stream/ledger.close_sentence` puts a full stop on the
+text before it. Whisper decodes each chunk in isolation and never hears the
+silence that followed, so without this a dictation reads back as one run-on line
+per paragraph and the capitalisation stage has no boundary to work from. A
+trailing comma is left alone: the speaker was mid-list.
 
-## Cloud fine-tuning path (opt-in, off by default)
+**Words the decoder guessed at say so.** Any word below
+`uncertain_word_confidence` (default 0.6) is collected by
+`rules.low_confidence_words`, travels with each socket update, and is drawn as a
+faint thin underline in the browser: deliberately fainter than the suspect-term
+mark, which is a solid dotted line and *does* have alternatives to offer when
+clicked. The confidence-targeted polish after Stop replaces a chunk's flagged
+words along with its text, so nothing stays underlined that the accurate model
+has since settled.
 
-Inert unless **both** `cloud_enabled` and `cloud_training_consent` are true in
-settings. With default settings nothing is retained, staged, or uploaded.
+The 10-stage correction pipeline and the two wordlists behind the fuzzy stage
+are described in [src/dictation/postprocess/CLAUDE.md](src/dictation/postprocess/CLAUDE.md),
+which loads when work touches that folder.
 
-```
-dictation corrections → training/collector.py (consent-gated capture)
-   → medical/deid.py  de-identify TEXT + AUDIO, validate_clean()
-   → training/staging_db.py  (SQLite: data/training/staging.db)
-   → cloud/tasks/<task>.build_archive()  tar.gz batch (manifest + de-id clips)
-   → cloud/framework/client.py  upload + submit Lightning AI job (key from keychain)
-   → cloud/framework/job_monitor.py polls → framework/sync.py downloads + extracts
-   → cloud/framework/registry.py registers the version (data/models/registry.json)
-   → user activates it; the consuming model loads that artifact directory
-```
-
-`collector.py` is the **only** bridge from dictation into the cloud subsystem,
-and the dependency is one-directional: dictation/features call into the
-collector but never import `src.cloud.*`.
-
-**Multi-task framework.** The framework is task-agnostic; a `TrainingTask`
-(`cloud/tasks/`) supplies only what differs per model — how to bundle its batch
-and how to describe its Lightning job (`JobSpec`). Three tasks exist: voice
-(Whisper LoRA → CT2), text-correction (small seq2seq), and scan-classifier
-(DenseNet head fine-tune). Each is keyed by `task_type`; the registry holds one
-active model **per task**. Every training script enforces a *do-not-regress*
-gate on a held-out split (WER for voice, exact-match for text, mean-AUC for
-scans) and rejects a run that doesn't beat its validated baseline.
-
-## Scan assistant path (opt-in, local inference)
-
-`src/imaging/` analyses a chest X-ray locally and surfaces findings **only when
-confident and localisable**. Pipeline: `classifier` (TorchXRayVision DenseNet121)
-→ `abstention` (drop untrained heads + anything below the calibrated
-per-pathology threshold) → `localization` (Grad-CAM region per kept finding) →
-`analyzer` (withhold any finding it can't point to; render an overlay; attach
-the non-diagnostic disclaimer). Needs the optional imaging extra
-(`scripts/lightning/requirements_imaging.txt`); without it the feature degrades
-gracefully and the rest of the app is unaffected.
-
-**Specialty focus: chest trauma.** Rib/clavicle fractures correlate clinically
-with pneumothorax and haemothorax, and plain films are documented to miss a
-large share of rib fractures — the highest-leverage gap for this assistant to
-close. The local fine-tune (`scan_classifier` task, `ScanClassifierTask` in
-`cloud/tasks/scan_finetune.py`) oversamples `Fracture`, `Pneumothorax`, and
-`Effusion` positives (`_TRAUMA_FOCUS_LABELS`) when building a batch, so a site's
-fine-tune sharpens on trauma cases rather than diluting evenly across all 18
-baseline labels. This changes *what the model trains on*, not the safety gate —
-per-label abstention thresholds remain the calibration lever for a site's own
-validated data (`data/imaging/thresholds.json`).
-
-## Measuring dictation quality (`scripts/eval/`)
-
-Any change to transcription or post-processing is judged by numbers, not by
-reading a sample. The harness transcribes a *gold set* (audio + known-correct
-text), runs the pipeline, and reports four things:
-
-- **WER** — the general yardstick.
-- **medical-term error rate** — WER restricted to `radiology_lexicon.txt` terms.
-  A report can post a respectable WER while mangling every anatomical word in
-  it; this is the number that catches that.
-- **false-correction rate** — of the edits the post-processing pipeline made,
-  the share that took a *correct* word and made it wrong. A correction layer
-  that fixes 10 words and breaks 12 is worse than none, and this is what says
-  which side of that line it is on.
-- **real-time factor** — decode seconds per second of audio. Above 1.0 the
-  machine cannot keep up with live speech even decoding each second once.
-
-Four gold sets, each measuring something different — never blend them into one
-figure. `own` (the user's own voice: the only set that measures real acoustics)
-· `tts` (synthesised radiology reports: medical *vocabulary* under
-unrealistically clean audio) · `libri` (public-domain read speech: general
-English regression + per-engine RTF) · `bench` (the existing `data/bench_audio/`
-clips, once hand-corrected).
-
-What the harness has actually decided so far — including the two changes that
-moved the false-correction rate and the one that was measured and switched back
-off — is in [docs/dictation-accuracy.md](docs/dictation-accuracy.md). Read it
+**Five folders keep their guidance in their own `CLAUDE.md`**: each loads only
+when work touches that folder: the front-ends and their diagnostics
+(`src/ui/CLAUDE.md`), the correction pipeline
+(`src/dictation/postprocess/CLAUDE.md`), cloud fine-tuning (`src/cloud/CLAUDE.md`,
+opt-in), the scan assistant (`src/imaging/CLAUDE.md`, opt-in), and the
+accuracy-measuring harness (`scripts/eval/CLAUDE.md`). Any change to transcription or
+post-processing is judged by that harness's numbers, not by reading a sample:
+read `scripts/eval/CLAUDE.md` and [docs/dictation-accuracy.md](docs/dictation-accuracy.md)
 before proposing an accuracy change; several obvious ones are already refuted
 there.
 
-Sets live in `data/eval/<name>/` (gitignored — the `own` set is the user's
-recorded voice). A reference still marked `[UNREVIEWED]` is a machine draft, and
-`corpus.load_set` refuses to score against one: grading a model on its own
-output produces a flattering number that measures nothing.
-
-`metrics.py` is pure — no I/O, no model — and its normalisation is the single
-place scoring rules live. It canonicalises what the pipeline changes *on
-purpose* (spoken units → `mm`, hyphen joins) but deliberately leaves spelling
-variants (`calibre`/`caliber`) visible, because silently Americanising a British
-report is a real change to the radiologist's text.
-
 ## Invariants (do not break)
 
-- **Offline by default.** No network call unless cloud training is explicitly
-  enabled *and* consented. Dictation never imports cloud.
+- **Offline by default, one named exception.** No network call unless cloud
+  training is explicitly enabled *and* consented, or dictation itself is using
+  the `deepgram` ASR engine (the current `DEFAULT_ENGINE` in
+  `dictation/asr/factory.py`): that engine sends raw audio to Deepgram's cloud
+  API for transcription, a deliberate, explicit product decision (2026-09-05),
+  not a leak. It has no PHI-scrubbing step of its own — audio can't be
+  de-identified before it's transcribed — so treat this the same as any other
+  BAA/compliance question before using it on real patient dictation. Falls
+  back to the local Parakeet/Whisper chain on any network or auth failure
+  (`engines/fallback_engine.py`), so a Deepgram outage degrades quality, not
+  uptime. Every other engine and everything else in `dictation/` stays
+  offline; cloud training itself never imports cloud.
 - **PHI is scrubbed before anything leaves the device** via `DeIdentifier` +
   `validate_clean()` (raises `PrivacyError`); a record that still contains a
   known identifier is dropped, not uploaded.
-- **Untrusted artifacts are validated** — a downloaded model archive is
+- **Untrusted artifacts are validated**: a downloaded model archive is
   extracted only after every member is confirmed to resolve inside the
   destination (`cloud/framework/sync.py::_extract_model`).
 - **Secrets live in the OS keychain only** (`keyring`), never in
   `dictation_settings.json` or logs. The Lightning project id (not a secret)
   is in settings; the Groq key follows the same rule
   (`llm_cleanup.get_groq_key`).
-- **Scan suggestions abstain by default and must be localisable** — a finding
+- **Scan suggestions abstain by default and must be localisable**: a finding
   reaches the radiologist only if its label was trained AND its probability ≥
   the calibrated threshold AND Grad-CAM produced a region. Always an assistive
-  suggestion with a non-diagnostic disclaimer — never a diagnosis.
-- **AI cleanup is off by default, scrubbed, and lossless on failure** — Groq
+  suggestion with a non-diagnostic disclaimer: never a diagnosis.
+- **AI cleanup is off by default, scrubbed, and lossless on failure**: Groq
   cleanup runs only when enabled + consented, de-identifies before sending,
   edits only language (never clinical content), and returns the input
   unchanged on any error.
@@ -324,7 +327,7 @@ report is a real change to the radiologist's text.
 - **Every rebuildable cache lives under `data/cache/`** (`cache_dir()`:
   SymSpell index, Whisper model downloads via `whisper_cache_dir()`, imaging
   embeddings via `imaging_embeddings_dir()`). Deleting the folder is always
-  safe — caches rebuild or re-download on next use. Never write derived,
+  safe: caches rebuild or re-download on next use. Never write derived,
   regenerable data anywhere else.
 
 ## Run & test
@@ -332,16 +335,10 @@ report is a real change to the radiologist's text.
 ```bash
 python -m src.ui            # desktop GUI
 python -m src.ui.web_app    # web app on 127.0.0.1:8005
-python scripts/verify_setup.py
-python -m pytest tests/ -q
 ruff check src tests
 npx pyright src              # type check (optional-dep import warnings expected)
 
-# Dictation accuracy + speed measurement (scripts/eval/) — see below
-python -m scripts.eval.build_sets --set tts       # synthesise the gold set
-python -m scripts.eval.build_sets --set own --record   # record the own set (mic)
-python -m scripts.eval.run_eval --set tts --label my-change \
-       --baseline data/eval/reports/<earlier>.json
+# Accuracy + speed measurement: see scripts/eval/CLAUDE.md
 
 # Optional extras (lazy-imported; core app runs without them):
 pip install -r scripts/lightning/requirements_imaging.txt   # Scan Assistant (local)

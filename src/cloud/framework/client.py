@@ -1,9 +1,9 @@
-"""Lightning AI REST client — task-agnostic.
+"""Lightning AI REST client: task-agnostic.
 
 Wraps the Lightning AI HTTP API for the four operations every training task
 needs: upload a batch archive, submit a job, poll job status, and download the
 resulting artifact. The REST surface (rather than the heavier SDK or SSH) keeps
-this dependency-light and firewall-friendly — only ``httpx`` is required, which
+this dependency-light and firewall-friendly: only ``httpx`` is required, which
 the project already ships.
 
 Credentials: the API key is read from the OS keychain via :mod:`keyring` and is

@@ -3,11 +3,11 @@
 Trains a small seq2seq model (default ``t5-small``) to map a raw transcript span
 to its corrected form, learning the radiologist's recurring fixes that the rule
 -based post-processing pipeline misses. Unlike the voice task this needs no
-audio — only the (wrong → correct) text pairs already staged for voice training,
+audio: only the (wrong → correct) text pairs already staged for voice training,
 so its archive is a single ``manifest.json``.
 
 Archive layout (consumed by ``scripts/lightning/train_text_corrector.py``):
-    manifest.json   — list of {wrong, correct} pairs
+    manifest.json: list of {wrong, correct} pairs
 """
 
 from __future__ import annotations

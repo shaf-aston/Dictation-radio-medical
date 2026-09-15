@@ -4,14 +4,14 @@ Why this exists
 ---------------
 The live worker re-emits the whole transcript several times a second. Running
 the ten-stage correction pipeline inline in the ``partial`` slot ran it on the
-Qt **main thread** — so every cycle the UI stopped repainting and stopped
+Qt **main thread**: so every cycle the UI stopped repainting and stopped
 accepting input until terminology regexes and the fuzzy medical dictionary had
 finished scanning the entire document. That is the freeze the user feels.
 
 This moves the pipeline onto its own thread, with two properties that matter:
 
 * **Coalescing.** Only the *latest* transcript is ever processed. If three
-  cycles land while a pass is running, the two older ones are dropped — they
+  cycles land while a pass is running, the two older ones are dropped: they
   are stale by definition (each emission supersedes the last), so processing
   them would burn CPU to produce text that is immediately overwritten.
 * **Ordering.** Results carry the sequence number they were submitted with, so
@@ -43,7 +43,7 @@ class PostprocessWorker(QObject):
     connection.
     """
 
-    #: ``(processed_text, changes, seq)`` — emitted on the UI thread.
+    #: ``(processed_text, changes, seq)``: emitted on the UI thread.
     processed = Signal(str, list, int)
 
     #: Internal: wakes the worker thread. Never connect from outside.
