@@ -61,6 +61,7 @@ from src.dictation.asr import (
     create_engine,
 )
 from src.dictation.stream.ledger import ChunkLedger
+from src.dictation.stream.polish import polish
 from src.dictation.stream.rules import (
     build_context_prompt,
     mean_confidence,
@@ -439,20 +440,9 @@ class LiveTranscribeWorker(QObject):
         t0 = time.time()
         prompt = build_context_prompt()
 
-        # This pass can take several seconds per chunk, and it runs after the
-        # radiologist has already pressed Stop: say what it is doing rather
-        # than leaving the window looking hung.
-        targets = list(self._ledger.low_confidence_indices(self.polish_confidence_ceiling))
-        for done, i in enumerate(targets, start=1):
-            if self._cancelled:
-                return
-            self.progress.emit(f"Polishing chunk {done}/{len(targets)}...")
-            c = self._ledger.committed[i]
-            clip = audio[c.start_sample:c.end_sample]
-            if not len(clip):
-                continue
+        def decode(clip: np.ndarray, stage: str) -> Optional[AsrResult]:
             try:
-                result = engine.transcribe(
+                return engine.transcribe(
                     clip,
                     TranscribeContext(
                         language=self.language,
@@ -465,41 +455,26 @@ class LiveTranscribeWorker(QObject):
                     ),
                 )
             except Exception as exc:
-                logger.warning("Confidence-targeted polish failed for chunk %d: %s", i, exc)
-                continue
-            self._decode_sec_total += len(clip) / sr
-            self._ledger.replace(i, result.text, mean_confidence(result))
+                logger.warning("Polish decode failed (%s): %s", stage, exc)
+                return None
 
-        # Whatever never closed before the recording stopped gets its only
-        # decode here, at final quality.
+        def decoded(result: AsrResult, index: Optional[int], start: int, end: int) -> None:
+            self._decode_sec_total += (end - start) / sr
+            if index is None:
+                self._emit_absolute_segments(result, start, sr)
+
+        # This pass can take several seconds per chunk, and it runs after the
+        # radiologist has already pressed Stop: say what it is doing rather
+        # than leaving the window looking hung.
+        polish(
+            self._ledger, audio, decode,
+            ceiling=self.polish_confidence_ceiling,
+            on_progress=self.progress.emit,
+            on_decoded=decoded,
+            cancelled=lambda: self._cancelled,
+        )
         if self._cancelled:
             return
-        tail = audio[self._ledger.open_start_sample:]
-        if len(tail) and detect_speech(tail):
-            self.progress.emit("Polishing final section...")
-            try:
-                result = engine.transcribe(
-                    tail,
-                    TranscribeContext(
-                        language=self.language,
-                        vad_filter=self.vad_enabled,
-                        beam_size=self.final_beam_size,
-                        pause_threshold=self.pause_threshold,
-                        condition_on_previous_text=True,
-                        initial_prompt=prompt,
-                        want_word_confidence=True,
-                    ),
-                )
-            except Exception as exc:
-                logger.warning("Final open-tail transcription failed: %s", exc)
-                result = None
-            if result is not None:
-                self._decode_sec_total += len(tail) / sr
-                text = result.text.strip()
-                if text:
-                    self._emit_absolute_segments(result, self._ledger.open_start_sample, sr)
-                    closing = Chunk(self._ledger.open_start_sample, len(audio), closed=True)
-                    self._ledger.commit(closing, text, mean_confidence(result))
 
         full_text = self._ledger.committed_text
         logger.info(

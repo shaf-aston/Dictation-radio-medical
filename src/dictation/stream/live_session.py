@@ -27,6 +27,7 @@ from src.dictation.asr import AsrEngine, TranscribeContext
 from src.dictation.asr.types import AsrResult
 from src.dictation.postprocess.incremental import IncrementalPostprocessor
 from src.dictation.stream.ledger import ChunkLedger, close_sentence
+from src.dictation.stream.polish import polish
 from src.dictation.stream.rules import (
     low_confidence_words,
     mean_confidence,
@@ -386,40 +387,25 @@ class LiveSession:
         kept as-is, which is why this is seconds and not a full re-transcribe.
         """
         t0 = time.time()
-        say = on_progress or (lambda _msg: None)
 
-        targets = list(self._ledger.low_confidence_indices(self.polish_confidence_ceiling))
+        def decoded(result: AsrResult, index: Optional[int], _start: int, _end: int) -> None:
+            self._note_uncertain(result, index)
+            if index is None:
+                self._chunks_decoded += 1
+
         # The tail closed at Stop was decoded fast on purpose; a confident fast
         # decode is still a fast decode, so it is re-done here either way.
-        if self._forced_polish_index is not None and self._forced_polish_index not in targets:
-            targets.append(self._forced_polish_index)
-        for done, i in enumerate(targets, start=1):
-            say(f"Improving section {done} of {len(targets)}")
-            c = self._ledger.committed[i]
-            clip = self._audio(c.start_sample, c.end_sample)
-            if not len(clip):
-                continue
-            result = self._decode(
+        polished = polish(
+            self._ledger, self._audio(),
+            lambda clip, stage: self._decode(
                 self.final_engine, clip, self.final_beam_size,
-                want_confidence=True, stage="final.polish", condition=True,
-            )
-            if result is not None:
-                self._ledger.replace(i, result.text, mean_confidence(result))
-                self._note_uncertain(result, i)
-
-        end = self._len
-        tail = self._buf[self._ledger.open_start_sample:end]
-        if len(tail) and detect_speech(tail):
-            say("Improving the last section")
-            result = self._decode(
-                self.final_engine, tail, self.final_beam_size,
-                want_confidence=True, stage="final.tail", condition=True,
-            )
-            if result is not None and (text := result.text.strip()):
-                closing = Chunk(self._ledger.open_start_sample, end, closed=True)
-                self._ledger.commit(closing, text, mean_confidence(result))
-                self._note_uncertain(result)
-                self._chunks_decoded += 1
+                want_confidence=True, stage=stage, condition=True,
+            ),
+            ceiling=self.polish_confidence_ceiling,
+            force=() if self._forced_polish_index is None else (self._forced_polish_index,),
+            on_progress=on_progress or (lambda _msg: None),
+            on_decoded=decoded,
+        )
 
         raw = self._ledger.committed_text
         # committed_len=0: everything here just got an authoritative decode, so
@@ -428,7 +414,7 @@ class LiveSession:
         final = close_sentence(self._post.process(raw, 0)[0]) if raw else ""
         logger.info(
             "final polish  audio=%.1fs  elapsed=%.2fs  polished=%d  chars=%d",
-            self.audio_sec, time.time() - t0, len(targets), len(final),
+            self.audio_sec, time.time() - t0, polished, len(final),
         )
         return final
 
