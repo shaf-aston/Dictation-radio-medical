@@ -1,7 +1,7 @@
 # CLAUDE.md: Architecture & Module Map
 
 Radio Dictate is an **offline medical dictation workstation** for radiologists.
-Speech-to-text runs locally via Whisper (`faster-whisper` / CTranslate2); by
+ASR (automatic speech recognition) runs locally via Whisper (`faster-whisper` / CTranslate2); by
 default **no audio or text leaves the device**. Two front-ends share one
 dictation core: a PySide6 desktop GUI and a FastAPI web app.
 
@@ -27,7 +27,7 @@ src/
 │   ├── worker.py         live transcription QThread (chunk-once; reads only
 │   │                       the still-open tail off the growing WAV, never the
 │   │                       whole file, see Live-speed design)
-│   ├── asr/               AsrEngine swap-seam over transcriber.py, port.py
+│   ├── asr/               the AsrEngine swap-seam: port.py
 │   │                       (Protocol) · types.py (Word/AsrSegment/AsrResult/
 │   │                       TranscribeContext, confidence is part of the
 │   │                       contract) · factory.py (create_engine, the only
@@ -38,7 +38,10 @@ src/
 │   │                       engine here — see the invariants note below) ·
 │   │                       engines/fallback_engine.py (ChainEngine: tries each
 │   │                       provider in order, degrades past any that raises) ·
-│   │                       engines/faster_whisper_engine.py
+│   │                       engines/faster_whisper_engine.py (the CTranslate2
+│   │                       wrapper and its port adapter, one file) · prompt.py
+│   │                       (the radiology priming vocabulary, same for every
+│   │                       engine) · models.py (known model names + fallback)
 │   ├── stream/             chunk-once streaming, vad.py (Silero VAD, bundled
 │   │                       with faster-whisper, no new dep) · segmenter.py
 │   │                       (pure VAD-marks→chunk-cuts policy) · live_session.py
@@ -50,9 +53,6 @@ src/
 │   │                       (freezes each closed chunk's decode permanently,
 │   │                       the "decode once" guarantee) · tail.py
 │   │                       (LocalAgreement-2 stable preview of the open tail)
-│   ├── transcriber.py    faster-whisper / CTranslate2 wrapper, the AsrEngine
-│   │                       port's implementation detail, not used directly
-│   │                       outside src/dictation/asr/
 │   ├── postprocess/      10-stage correction pipeline (pipeline.py orchestrates)
 │   │   └── incremental.py  live path: processes only the un-committed tail,
 │   │                        caching the frozen prefix (see Live-speed design)
@@ -139,7 +139,7 @@ Other optional, off-by-default add-ons:
   the per-chunk pipeline); de-identifies first, key in keychain, consent-gated.
 - `scripts/lightning/`: training entrypoints run ON Lightning AI: `train_whisper`
   + `convert_to_ct2` (voice), `train_text_corrector`, `train_scan_classifier`.
-  Their requirements are separate optional extras (`requirements_*.txt`).
+  Their dependencies are the `train` extra in `pyproject.toml`.
 
 ## Dictation data-flow (always local)
 
@@ -147,7 +147,7 @@ Other optional, off-by-default add-ons:
 desktop:  microphone → audio.py → worker.py (QThread, chunk-once, growing WAV)
 web:      microphone → AudioWorklet → /ws/dictate (16-bit PCM @16k)
                      → stream/live_session.py (chunk-once, in-memory buffer)
-both:     → asr/ (AsrEngine port → transcriber.py/Whisper) → postprocess/ (10 stages)
+both:     → asr/ (AsrEngine port → Deepgram, Parakeet or Whisper) → postprocess/ (10 stages)
           → UI (views.py / web_app.py) → report_manager.py (.docx / .txt export)
 ```
 
@@ -341,6 +341,7 @@ npx pyright src              # type check (optional-dep import warnings expected
 # Accuracy + speed measurement: see scripts/eval/CLAUDE.md
 
 # Optional extras (lazy-imported; core app runs without them):
-pip install -r scripts/lightning/requirements_imaging.txt   # Scan Assistant (local)
+pip install -e ".[imaging]"     # Scan Assistant (local)
+pip install -e ".[parakeet]"    # Parakeet ASR engine (local)
 pip install groq                                            # AI Cleanup
 ```

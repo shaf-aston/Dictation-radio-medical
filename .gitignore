@@ -19,3 +19,8 @@ dictation_settings.json
 .pytest_temp/
 .mypy_cache/
 .ruff_cache/
+
+# One-off outputs: lint dumps, screenshot captures
+ruff_*.txt
+ux_screenshots/
+*.egg-info/

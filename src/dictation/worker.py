@@ -62,15 +62,14 @@ from src.dictation.asr import (
 )
 from src.dictation.stream.ledger import ChunkLedger
 from src.dictation.stream.rules import (
-    AdaptiveFloor,
     build_context_prompt,
     mean_confidence,
-    rms,
+    has_speech,
     should_skip_preview,
 )
 from src.dictation.stream.segmenter import Chunk, ChunkPolicy
 from src.dictation.stream.tail import LocalAgreement2
-from src.dictation.stream.vad import detect_speech
+from src.dictation.stream.vad import SpeechMark, detect_speech
 
 logger = logging.getLogger(__name__)
 
@@ -117,8 +116,6 @@ class LiveTranscribeWorker(QObject):
         live_model_size: Optional[str] = None,
         model_path: Optional[Union[str, Path]] = None,
         chunk_policy: Optional[ChunkPolicy] = None,
-        silence_rms_floor: float = 0.0005,
-        silence_rms_margin: float = 2.5,
         live_beam_size: int = 2,
         final_beam_size: int = 5,
         polish_confidence_ceiling: float = 0.75,
@@ -138,7 +135,6 @@ class LiveTranscribeWorker(QObject):
         # inside each chunk decode.
         self.vad_enabled = vad_enabled
         self.pause_threshold = pause_threshold
-        self._noise_floor = AdaptiveFloor(silence_rms_floor, silence_rms_margin)
         self.live_beam_size = max(1, int(live_beam_size))
         self.final_beam_size = max(1, int(final_beam_size))
         self.polish_confidence_ceiling = float(polish_confidence_ceiling)
@@ -308,9 +304,9 @@ class LiveTranscribeWorker(QObject):
                 continue
             local = slice(chunk.start_sample - tail_start, chunk.end_sample - tail_start)
             chunk_audio = tail_audio[local]
-            if self._noise_floor.is_silence(rms(chunk_audio)):
-                # Genuinely silent (e.g. a long unspoken pause force-cut by
-                # the segmenter): nothing to decode, nothing to hallucinate.
+            if not has_speech(marks, local.start, local.stop):
+                # The VAD heard nothing (e.g. a long unspoken pause force-cut
+                # by the segmenter): nothing to decode, nothing to hallucinate.
                 self._ledger.commit(chunk, "", None)
                 committed_any = True
                 continue
@@ -357,7 +353,7 @@ class LiveTranscribeWorker(QObject):
         else:
             self._emit_state(STATE_LIVE)
             stable_tail = self._decode_open_tail(
-                engine, chunks, tail_audio, tail_start, sr
+                engine, chunks, marks, tail_audio, tail_start, sr
             )
             self._last_stable = stable_tail
 
@@ -381,8 +377,8 @@ class LiveTranscribeWorker(QObject):
             self.progress.emit(state)
 
     def _decode_open_tail(
-        self, engine: AsrEngine, chunks: List[Chunk], tail_audio: np.ndarray,
-        tail_start: int, sr: int,
+        self, engine: AsrEngine, chunks: List[Chunk], marks: List[SpeechMark],
+        tail_audio: np.ndarray, tail_start: int, sr: int,
     ) -> str:
         """Re-decode the still-open portion for a stable live preview only.
 
@@ -397,7 +393,7 @@ class LiveTranscribeWorker(QObject):
 
         local = slice(open_chunk.start_sample - tail_start, open_chunk.end_sample - tail_start)
         open_audio = tail_audio[local]
-        if self._noise_floor.is_silence(rms(open_audio)):
+        if not has_speech(marks, local.start, local.stop):
             return self._agreement.update("")
 
         decode_started = time.time()
@@ -479,7 +475,7 @@ class LiveTranscribeWorker(QObject):
         if self._cancelled:
             return
         tail = audio[self._ledger.open_start_sample:]
-        if len(tail) and not self._noise_floor.is_silence(rms(tail)):
+        if len(tail) and detect_speech(tail):
             self.progress.emit("Polishing final section...")
             try:
                 result = engine.transcribe(

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from src.core import perf
 from src.dictation.stream.segmenter import ChunkPolicy
-from src.dictation.transcriber import resolve_model
+from src.dictation.asr.models import resolve_model
 from src.dictation.worker import LiveTranscribeWorker
 from src.features.file_manager import create_temp_wav
 from src.features import run_log
@@ -268,8 +268,6 @@ def on_start_recording(window: MainWindow) -> None:
             force_cut_sec=float(window.settings.get("chunk_force_cut_sec")),
             trailing_silence_sec=float(window.settings.get("chunk_trailing_silence_sec")),
         ),
-        silence_rms_floor=float(window.settings.get("silence_rms_floor")),
-        silence_rms_margin=float(window.settings.get("silence_rms_margin")),
         live_beam_size=int(window.settings.get("live_beam_size")),
         final_beam_size=int(window.settings.get("final_beam_size")),
         polish_confidence_ceiling=float(window.settings.get("polish_confidence_ceiling")),

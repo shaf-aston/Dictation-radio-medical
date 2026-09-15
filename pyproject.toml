@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "radio-dictate"
+version = "0.1.0"
+description = "Offline radiology dictation: local ASR, correction pipeline, desktop and web front-ends"
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6>=6.6",                # desktop GUI
+    "faster-whisper>=0.10.0",      # offline Whisper via CTranslate2 (also bundles Silero VAD)
+    "sounddevice>=0.4.7",          # microphone capture
+    "soundfile>=0.12.1",
+    "numpy>=1.23.0",
+    "hnswlib>=0.8",                # nearest-neighbour search for embedding retrieval
+    "rapidfuzz>=3.0.0",            # medical dictionary fuzzy matching (also the eval metrics)
+    "pyspellchecker>=0.8",         # offline English wordlist, the non-word guard
+    "symspellpy>=6.7.7",           # fast fuzzy index over the 98k-term wordlist
+    "editdistpy>=0.1.3",           # symspellpy's C distance backend; without it lookups
+                                   #   silently fall to a ~200x slower scan
+    "PyYAML>=6.0",                 # corrections.yaml rules
+    "python-docx>=1.1.0",          # .docx export
+    "fastapi>=0.100.0",            # web app
+    "uvicorn>=0.23.0",
+    "websockets>=12.0",            # bare uvicorn answers /ws/dictate with 404 without it
+    "python-multipart>=0.0.6",
+    "jinja2>=3.1.2",
+    "httpx>=0.24.0",               # Deepgram engine + Lightning REST transport
+    "keyring>=24.0",               # every secret lives in the OS keychain
+]
+
+[project.optional-dependencies]
+# Each extra is lazy-imported; the app runs without any of them.
+parakeet = ["onnx-asr>=0.12.0"]                       # the Parakeet ASR engine (local)
+imaging = [                                          # the chest X-ray assistant (local)
+    "torch>=2.2", "torchvision>=0.17", "torchxrayvision>=1.2",
+    "scikit-image>=0.22", "matplotlib>=3.8", "scikit-learn>=1.4", "pydicom>=2.4",
+]
+eval = ["pyttsx3>=2.90"]                             # synthesises the tts gold set
+train = [                                            # installed ON Lightning AI, not locally
+    "lightning>=2.3", "torch>=2.2", "transformers>=4.40", "peft>=0.11",
+    "datasets>=2.19", "accelerate>=0.30", "ctranslate2>=4.0",
+    "soundfile>=0.12", "librosa>=0.10", "jiwer>=3.0", "sentencepiece>=0.2",
+]
+dev = ["pytest>=8", "ruff>=0.5", "pyright>=1.1"]
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.txt", "*.json", "*.yaml", "*.qss", "*.html", "*.css", "*.js"]
+
+[tool.pytest.ini_options]
+addopts = "-p no:randomly"
+testpaths = ["tests"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+ignore = ["scripts/"]
+reportMissingModuleSource = "none"
+reportMissingImports = "warning"

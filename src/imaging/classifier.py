@@ -87,7 +87,7 @@ class ChestXRayClassifier:
         except ImportError as exc:
             raise ImagingError(
                 "Scan analysis requires the imaging extra "
-                "(pip install -r scripts/lightning/requirements_imaging.txt)."
+                "(pip install -e '.[imaging]')."
             ) from exc
         try:
             model = xrv.models.DenseNet(weights=self._weights)

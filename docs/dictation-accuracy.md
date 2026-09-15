@@ -33,7 +33,7 @@ output.**
 
 The harness started asking the engine for word confidence in the same change, and in
 this codebase word timestamps are not inert: the 8-second hallucination gate in
-`transcriber.py` keys off them, so they can change the text. That makes "the prompt did
+`faster_whisper_engine.py` (then `transcriber.py`) keys off them, so they can change the text. That makes "the prompt did
 it" a claim worth checking rather than asserting.
 
 Checked directly: the same 12 clips, the same harness, reverting **only** the prompt and
@@ -60,7 +60,7 @@ it. Whether the trade is right for the radiologist using this app is a question 
 
 The plan called for gating every correction on the decoder's own per-word confidence, so
 a stage could not rewrite a word Whisper was sure about. It is built
-(`src/dictation/postprocess/confidence_gate.py`, 24 tests) and it is **shipped
+(`src/dictation/postprocess/confidence_gate.py`) and it is **shipped
 disabled**.
 
 | ceiling | WER | medical-term error | false-correction | true fixes / false | spans blocked |
@@ -156,6 +156,25 @@ slow. That is why the preview-skip fix (`should_skip_preview`) recovered the lag
 without touching the model, and it is why a faster engine is a smaller live-speed
 win than it first appears: worth having for the post-Stop polish, not a cure for
 a lag that has already been fixed.
+
+## Shorter chunks: faster and, unexpectedly, more accurate (2026-09-06)
+
+`replay.py --realtime` on the six `tts_paused` clips, Whisper tiny.en live /
+small.en polish, same machine, same run. Commit lag is how long a spoken word
+waits before it becomes permanent text.
+
+| chunk min / soft max | commit lag p50 | p90 | mean chunk | WER | term error |
+|---|---|---|---|---|---|
+| 6 s / 15 s (was the default) | 4.78 s | 8.57 s | 9.15 s | 3.64 % | 6.99 % |
+| 3 s / 8 s | 3.47 s | 7.01 s | 6.41 s | 2.24 % | 3.57 % |
+| **2 s / 5 s (now the default)** | **2.93 s** | **5.28 s** | 5.06 s | 1.89 % | 3.57 % |
+
+The lag never depended on the engine: Deepgram and the Whisper fallback gave
+the same commit lag to within 0.2 s at the old policy, because a word waits
+for its chunk to close, not for its decode. The accuracy gain is likely the
+shorter clips giving the small model less room to drift, but six synthetic
+clips is not proof of that; the `own` set is still the instrument that would
+settle it.
 
 ## What would move the needle next
 

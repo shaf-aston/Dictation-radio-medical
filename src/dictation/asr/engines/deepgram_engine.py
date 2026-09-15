@@ -15,7 +15,7 @@ matches the existing call shape instead of adding a second connection
 lifecycle only this engine would own.
 
 ``nova-2-medical`` is Deepgram's clinical-dictation model, not general
-English — the whole reason to reach for Deepgram over a generic STT API here.
+English — the whole reason to reach for Deepgram over a generic ASR API here.
 Never default this to the plain ``nova-2`` model.
 """
 

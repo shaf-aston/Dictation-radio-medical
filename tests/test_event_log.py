@@ -84,3 +84,13 @@ def test_ordinary_log_lines_land_in_the_same_stream():
     messages = [e["message"] for e in event_log.events()]
     assert "Decode failed (tail)" in messages
     assert event_log.events()[-1]["level"] == "warning"
+
+
+def test_running_shows_an_open_timed_block_and_only_while_open():
+    from src.core import event_log
+    assert event_log.running() == []
+    with event_log.timed("asr", "live.chunk decode"):
+        (open_block,) = event_log.running()
+        assert open_block["message"] == "live.chunk decode"
+        assert open_block["started"] > 0
+    assert event_log.running() == []

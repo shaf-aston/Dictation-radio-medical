@@ -196,7 +196,7 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
 
     blurb = QLabel(
         "Polish a finished report with a fast cloud LLM (Groq): fixing grammar, "
-        "punctuation, and obvious speech-to-text slips only. Clinical content is "
+        "punctuation, and obvious ASR slips only. Clinical content is "
         "never changed. Patient identifiers are removed before any text is sent, "
         "and this requires cloud consent (granted in Cloud Voice Training).\n\n"
         "Optional and off by default; the app works fully offline without it."
@@ -301,7 +301,7 @@ def show_scan_assistant_dialog(window: MainWindow) -> None:
             window, "Scan Analysis Unavailable",
             f"Could not analyse the scan: {exc}\n\n"
             "The imaging feature needs the optional imaging dependencies "
-            "(see scripts/lightning/requirements_imaging.txt).")
+            "(pip install -e '.[imaging]').")
         return
 
     _show_scan_result(window, path, result)

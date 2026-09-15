@@ -1991,6 +1991,7 @@ const DEV_POLL_MS = 700;          // how often the server diary is drained
 const DEV_PERF_MS = 2500;         // the rolling averages move slowly
 const DEV_MAX_LINES = 800;        // scroll-back, matched to the server's ring
 const DEV_SLOW_MS = 1500;         // a decode over this is worth the eye landing on
+const DEV_LONG_CHARS = 220;       // past this a line is folded until clicked
 
 const devDrawer = document.getElementById('devDrawer');
 const devConsole = document.getElementById('devConsole');
@@ -1998,13 +1999,17 @@ const devFilterInput = document.getElementById('devFilter');
 
 const dev = {
     open: false,
+    size: 'normal',   // or 'min' (bar only) / 'max' (fills the window)
     paused: false,
     lastSeq: 0,
     pollTimer: null,
+    nowTimer: null,
     perfTimer: null,
     entries: [],
     filter: '',
+    showAll: false,   // off: only lines that took time or went wrong
     dirty: false,
+    running: [],      // the server's open timed blocks, from the last poll
     // What this browser measured about the recording in progress.
     recordStart: 0,
     firstWordsMs: null,
@@ -2046,9 +2051,17 @@ function devPush(entry) {
     if (!dev.dirty && dev.open && !dev.paused) devAppend(entry);
 }
 
+// `k=v k=v`: the one spelling of an entry's fields, drawn, filtered and copied.
+function devPairs(entry) {
+    return Object.entries(entry.fields || {}).map(([k, v]) => `${k}=${v}`).join(' ');
+}
+
 function devMatches(entry) {
+    // Chatter mirrored from the ordinary log (model loaded, rules read) is
+    // hidden unless asked for: what you came to see is what took time.
+    if (!dev.showAll && entry.fields && entry.fields.mirrored && entry.level === 'info') return false;
     if (!dev.filter) return true;
-    const hay = `${entry.source} ${entry.message} ${JSON.stringify(entry.fields || {})}`.toLowerCase();
+    const hay = `${entry.source} ${entry.message} ${devPairs(entry)}`.toLowerCase();
     return hay.includes(dev.filter);
 }
 
@@ -2079,8 +2092,7 @@ function devAppend(entry) {
     add('src', entry.browser ? 'browser' : entry.source);
     add('msg', entry.message);
 
-    const fields = entry.fields || {};
-    const pairs = Object.keys(fields).map((k) => `${k}=${fields[k]}`).join(' ');
+    const pairs = devPairs(entry);
     if (pairs) add('kv', pairs);
 
     if (entry.ms !== null && entry.ms !== undefined) {
@@ -2088,6 +2100,14 @@ function devAppend(entry) {
         el.className = entry.ms >= DEV_SLOW_MS ? 'ms over' : 'ms';
         el.textContent = `${Math.round(entry.ms)}ms`;
         line.appendChild(el);
+    }
+
+    if (line.textContent.length > DEV_LONG_CHARS) {
+        line.classList.add('is-long');
+        line.setAttribute('role', 'button');
+        line.setAttribute('tabindex', '0');
+        line.setAttribute('aria-expanded', 'false');
+        line.title = 'Click to show the whole line';
     }
 
     devConsole.appendChild(line);
@@ -2112,6 +2132,8 @@ async function devPoll() {
         const response = await fetch(`/api/debug/events?after=${dev.lastSeq}`);
         if (!response.ok) return;
         const data = await response.json();
+        dev.running = data.running || [];
+        devDrawNow();
         (data.events || []).forEach((event) => {
             dev.lastSeq = Math.max(dev.lastSeq, event.seq);
             devPush(Object.assign({}, event, { browser: false }));
@@ -2121,6 +2143,22 @@ async function devPoll() {
         // The console failing must never be louder than what it reports on.
         console.warn('Developer console poll failed:', err);
     }
+}
+
+// "now": the oldest open timed block on the server and how long it has been
+// open, ticking between polls so a decode that is taking too long is visible
+// while it is still taking too long.
+function devDrawNow() {
+    const el = document.getElementById('devNow');
+    const first = dev.running[0];
+    if (!first) {
+        el.textContent = 'idle';
+        el.className = 'idle';
+        return;
+    }
+    const sec = Math.max(0, Date.now() / 1000 - first.started);
+    el.textContent = `${first.message} ${sec.toFixed(1)}s`;
+    el.className = sec * 1000 >= DEV_SLOW_MS ? 'over' : '';
 }
 
 async function devPollPerf() {
@@ -2152,6 +2190,16 @@ async function devPollPerf() {
     }
 }
 
+// Minimise and Maximise each toggle: pressing the active one restores the
+// normal height, so there is no third "restore" button to explain.
+function devSetSize(size) {
+    dev.size = dev.size === size ? 'normal' : size;
+    devDrawer.classList.toggle('is-min', dev.size === 'min');
+    devDrawer.classList.toggle('is-max', dev.size === 'max');
+    document.getElementById('devMinBtn').setAttribute('aria-pressed', String(dev.size === 'min'));
+    document.getElementById('devMaxBtn').setAttribute('aria-pressed', String(dev.size === 'max'));
+}
+
 function devSetOpen(open) {
     dev.open = open;
     devDrawer.hidden = !open;
@@ -2165,12 +2213,14 @@ function devSetOpen(open) {
 
     clearInterval(dev.pollTimer);
     clearInterval(dev.perfTimer);
+    clearInterval(dev.nowTimer);
     if (!open) return;
 
     devRedraw();
     devPoll();
     devPollPerf();
     dev.pollTimer = setInterval(devPoll, DEV_POLL_MS);
+    dev.nowTimer = setInterval(devDrawNow, 200);
     dev.perfTimer = setInterval(devPollPerf, DEV_PERF_MS);
 }
 
@@ -2252,6 +2302,29 @@ function initDevConsole() {
     if (btn) btn.addEventListener('click', () => devSetOpen(!dev.open));
 
     document.getElementById('devCloseBtn').addEventListener('click', () => devSetOpen(false));
+    document.getElementById('devMinBtn').addEventListener('click', () => devSetSize('min'));
+    document.getElementById('devMaxBtn').addEventListener('click', () => devSetSize('max'));
+
+    // One listener for every folded line, present or future.
+    const toggleLine = (event) => {
+        const line = event.target.closest('.dev-line.is-long');
+        if (!line) return;
+        if (event.type === 'keydown') {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+        }
+        const open = line.classList.toggle('is-open');
+        line.setAttribute('aria-expanded', String(open));
+    };
+    devConsole.addEventListener('click', toggleLine);
+    devConsole.addEventListener('keydown', toggleLine);
+
+    const allBtn = document.getElementById('devAllBtn');
+    allBtn.addEventListener('click', () => {
+        dev.showAll = !dev.showAll;
+        allBtn.setAttribute('aria-pressed', String(dev.showAll));
+        devRedraw();
+    });
 
     const pauseBtn = document.getElementById('devPauseBtn');
     pauseBtn.addEventListener('click', () => {
@@ -2270,7 +2343,7 @@ function initDevConsole() {
 
     document.getElementById('devCopyBtn').addEventListener('click', async () => {
         const text = dev.entries.filter(devMatches).map((entry) => {
-            const pairs = Object.entries(entry.fields || {}).map(([k, v]) => `${k}=${v}`).join(' ');
+            const pairs = devPairs(entry);
             const ms = (entry.ms === null || entry.ms === undefined) ? '' : ` ${Math.round(entry.ms)}ms`;
             const who = entry.browser ? 'browser' : entry.source;
             return `${devClock(entry.t)} ${who} ${entry.message} ${pairs}${ms}`.trim();

@@ -861,6 +861,11 @@ select:disabled, input:disabled { opacity: .5; }
     border-top: 1px solid var(--edge);
     background: var(--room-2);
 }
+/* Minimised keeps only the bar with its five numbers; maximised leaves just
+   the top bar of the app, so the mic button stays reachable either way. */
+.dev-drawer.is-min { height: auto; }
+.dev-drawer.is-min .dev-drawer-body { display: none; }
+.dev-drawer.is-max { height: calc(100vh - var(--bar-h) - 1rem); }
 
 .dev-drawer-bar {
     display: flex; align-items: center; gap: .8rem;
@@ -893,6 +898,8 @@ select:disabled, input:disabled { opacity: .5; }
    belongs to recording and to clinical severity in this app, and a slow
    decode is neither. */
 .dev-stat b.over { color: var(--warn-text); }
+.dev-now b { color: var(--glow); }
+.dev-now b.idle { color: var(--text-dim); }
 
 .dev-drawer-actions { margin-left: auto; display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
 .dev-drawer-actions .btn { text-decoration: none; }
@@ -924,6 +931,14 @@ select:disabled, input:disabled { opacity: .5; }
 }
 
 .dev-line { display: block; }
+/* A line past the length budget is folded to one row until clicked: one
+   request URL carrying a hundred boosted keywords used to fill the screen. */
+.dev-line.is-long {
+    cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dev-line.is-long.is-open { white-space: normal; }
+.dev-line.is-long:focus-visible { outline: 1px solid var(--glow); outline-offset: 1px; }
 .dev-line .t { color: var(--text-dim); }
 .dev-line .src {
     display: inline-block;

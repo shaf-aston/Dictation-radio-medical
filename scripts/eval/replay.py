@@ -143,8 +143,6 @@ def replay(
         pause_threshold=float(settings.get("pause_threshold")),
         live_beam_size=int(settings.get("live_beam_size")),
         final_beam_size=int(settings.get("final_beam_size")),
-        silence_rms_floor=float(settings.get("silence_rms_floor")),
-        silence_rms_margin=float(settings.get("silence_rms_margin")),
         preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
         preview_min_tail_sec=float(settings.get("preview_min_tail_sec")),
         polish_confidence_ceiling=float(settings.get("polish_confidence_ceiling")),
