@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.core import event_log, perf
 from src.core.patient_schema import PATIENT_KEYS, empty_patient_info
+from src.core.logging_setup import setup_logging
 from src.core.settings import Settings, get_default
 from src.dictation.postprocess.pipeline import (
     CLEANUP_LEVEL_LABELS,
@@ -29,7 +30,7 @@ from src.dictation.asr import AsrEngine, TranscribeContext, create_engine
 from src.dictation.stream.live_session import LiveSession
 from src.dictation.stream.rules import build_context_prompt
 from src.dictation.stream.segmenter import ChunkPolicy
-from src.dictation.transcriber import SUPPORTED_MODELS, resolve_model
+from src.dictation.asr.models import SUPPORTED_MODELS, resolve_model
 from src.features.accent_corrections import ACCENT_LABELS
 from src.features.clinical_disclaimer import (
     DISCLAIMER_TEXT,
@@ -351,7 +352,7 @@ def _get_engine(model_size: Optional[str] = None) -> AsrEngine:
     Engines are cached per model name, so the live dictation loop's fast model
     and the accurate one that re-decodes after Stop are each built once and
     then reused for the life of the process. Whisper's own weights cache holds
-    two (``transcriber._MODEL_CACHE_MAX``), which is what makes holding exactly
+    two (``faster_whisper_engine._MODEL_CACHE_MAX``), which is what makes holding exactly
     this pair free.
     """
     name = resolve_model(model_size or _settings().get("model_size"))
@@ -1127,7 +1128,7 @@ if __name__ == "__main__":
     import uvicorn
 
     settings = _settings()
-    logging.basicConfig(level=logging.INFO)
+    setup_logging()
     uvicorn.run(
         app,
         host=str(settings.get("web_host", get_default("web_host"))),

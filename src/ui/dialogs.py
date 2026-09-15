@@ -301,7 +301,7 @@ def show_scan_assistant_dialog(window: MainWindow) -> None:
             window, "Scan Analysis Unavailable",
             f"Could not analyse the scan: {exc}\n\n"
             "The imaging feature needs the optional imaging dependencies "
-            "(see scripts/lightning/requirements_imaging.txt).")
+            "(pip install -e '.[imaging]').")
         return
 
     _show_scan_result(window, path, result)

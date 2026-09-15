@@ -8,7 +8,7 @@ confident and localisable**. Pipeline: `classifier` (TorchXRayVision DenseNet121
 per-pathology threshold) → `localization` (Grad-CAM region per kept finding) →
 `analyzer` (withhold any finding it can't point to; render an overlay; attach
 the non-diagnostic disclaimer). Needs the optional imaging extra
-(`scripts/lightning/requirements_imaging.txt`); without it the feature degrades
+(`pip install -e ".[imaging]"`); without it the feature degrades
 gracefully and the rest of the app is unaffected.
 
 **Specialty focus: chest trauma.** Rib/clavicle fractures correlate clinically

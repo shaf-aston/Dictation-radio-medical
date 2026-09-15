@@ -53,44 +53,7 @@ ruff check src tests               # lint
 
 ## Project layout
 
-```
-src/
-├── core/                settings.py · logging_setup.py
-├── dictation/           audio.py · transcriber.py · worker.py
-│   ├── asr/             swappable speech engines behind one AsrEngine port
-│   ├── stream/          vad.py · segmenter.py · ledger.py · tail.py (decode each chunk once)
-│   ├── postprocess/     pipeline.py · hallucinations.py · voice_commands.py · text_utils.py
-│   │                    measurements.py · terminology.py · medical_dict_match.py · analysis.py
-│   └── resources/       radiology_prompt.txt
-├── ui/                  main_window.py · views.py · recording_session.py · dialogs.py
-│   ├── web_app.py       FastAPI single-page app
-│   └── styles.py · styles/*.qss · frontends/
-├── medical/             medical_dict.py · critical_findings.py · macros.py
-├── features/            accent_corrections.py · adaptive_learning.py · audit_log.py
-│   └── file_manager.py · report_manager.py · report_analyzer.py
-├── cloud/               Lightning AI fine-tuning (opt-in): client · privacy · uploader
-│   └── sync_manager.py · job_monitor.py · model_registry.py · exceptions.py
-├── training/            collector.py · schemas.py · staging_db.py
-├── templates/           plain-text report templates (RSNA / MSK / generic)
-└── resources/           medical_terms.txt
-
-data/                    temp WAVs · autosave/ · macros.json · audit.log · training/ · medical_reference/
-dictation_settings.json  app settings
-scripts/                 lightning/ (cloud training) · download_medical_references.py · eval/
-```
-
-See [CLAUDE.md](CLAUDE.md) for architecture details and [CODING_STANDARDS.md](CODING_STANDARDS.md) for style rules.
-
-### Medical Reference Library
-
-Radio Dictate includes open-access radiology textbooks in `data/medical_reference/` for terminology extraction, clinical reasoning, and synthetic training data generation:
-
-- **A to Z of Chest Radiology** (Misra et al.): chest trauma, pneumothorax, rib fractures
-- **A to Z of Emergency Radiology** (Holmes & Misra): acute pathology patterns
-- **Basic Radiology** (Chen et al.): fundamental imaging principles
-- **Principles of Radiographic Imaging** (Carlton et al.): radiographic physics
-
-See [data/ORGANIZATION.md](data/ORGANIZATION.md) for folder structure and [data/medical_reference/metadata.json](data/medical_reference/metadata.json) for corpus inventory.
+The per-module map lives in [CLAUDE.md](CLAUDE.md), style rules in [CODING_STANDARDS.md](CODING_STANDARDS.md).
 
 ## Customisation
 
@@ -103,7 +66,7 @@ See [data/ORGANIZATION.md](data/ORGANIZATION.md) for folder structure and [data/
 ## Troubleshooting
 
 - **Microphone errors**: check input device in OS Sound Settings; close other apps using the mic
-- **Import errors**: activate venv: `pip install -r requirements.txt`
+- **Import errors**: activate the venv and run `pip install -e .`
 - **Slow transcription**: switch to a smaller Whisper model (`tiny` / `base`)
 - **Over-correction**: raise the fuzzy cutoff or add the term to `_PROTECTED_TERMS` (see Customisation)
 - **Missing Word export**: `pip install python-docx`

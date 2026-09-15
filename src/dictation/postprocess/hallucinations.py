@@ -1,6 +1,6 @@
 """Stage 0: strip Whisper hallucinations that survived segment filtering.
 
-Segment-level filtering happens in :mod:`src.dictation.transcriber`; this stage
+Segment-level filtering happens in :mod:`src.dictation.asr.engines.faster_whisper_engine`; this stage
 catches phrases that span segment boundaries or appear only after the
 transcript is reassembled.
 """

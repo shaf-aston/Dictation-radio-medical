@@ -80,7 +80,7 @@ _DEFAULTS: dict = {
     # Two models, one dictation. This small one decodes the words that appear
     # while you are still speaking; `model_size` above re-decodes after Stop,
     # where being right matters more than being quick. Whisper's model cache
-    # holds two (transcriber._MODEL_CACHE_MAX), so this pair costs no reloads:
+    # holds two (faster_whisper_engine._MODEL_CACHE_MAX), so this pair costs no reloads:
     # naming a third distinct model here would make them evict each other.
     "live_model_size": "tiny.en",
     "live_cycle_sec": 0.5,      # how often the live loop looks for new audio

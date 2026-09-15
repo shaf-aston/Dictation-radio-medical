@@ -33,7 +33,7 @@ output.**
 
 The harness started asking the engine for word confidence in the same change, and in
 this codebase word timestamps are not inert: the 8-second hallucination gate in
-`transcriber.py` keys off them, so they can change the text. That makes "the prompt did
+`faster_whisper_engine.py` (then `transcriber.py`) keys off them, so they can change the text. That makes "the prompt did
 it" a claim worth checking rather than asserting.
 
 Checked directly: the same 12 clips, the same harness, reverting **only** the prompt and
@@ -60,7 +60,7 @@ it. Whether the trade is right for the radiologist using this app is a question 
 
 The plan called for gating every correction on the decoder's own per-word confidence, so
 a stage could not rewrite a word Whisper was sure about. It is built
-(`src/dictation/postprocess/confidence_gate.py`, 24 tests) and it is **shipped
+(`src/dictation/postprocess/confidence_gate.py`) and it is **shipped
 disabled**.
 
 | ceiling | WER | medical-term error | false-correction | true fixes / false | spans blocked |

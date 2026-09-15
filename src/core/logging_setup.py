@@ -1,7 +1,7 @@
 """Single source of truth for logging configuration.
 
 Call ``setup_logging()`` exactly once from each entry point (the desktop
-``app.py`` and the FastAPI ``web_app.py``).  Library modules use the
+``main_window.py`` and the FastAPI ``web_app.py``).  Library modules use the
 standard ``logger = logging.getLogger(__name__)`` pattern and inherit
 from the root handler installed here.
 """

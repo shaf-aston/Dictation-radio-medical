@@ -222,7 +222,7 @@ def mine(top: int, min_count: int) -> str:
                 "",
             ]
         lines.append("# After pasting, add an input->expected pair to "
-                     "tests/corpus/corrections.yaml and run pytest.")
+                     "src/dictation/postprocess/resources/corrections.yaml.")
 
     return "\n".join(lines)
 

@@ -6,7 +6,7 @@ live elsewhere and call into this package.
 
 Public surface (see submodules for details):
     audio.Recorder              microphone → growing WAV
-    transcriber.Transcriber     faster-whisper wrapper
+    asr.create_engine           the AsrEngine port (Deepgram → Parakeet → Whisper)
     worker.LiveTranscribeWorker QThread sliding-window worker
     postprocess.postprocess_transcript  correction pipeline entry point
 """

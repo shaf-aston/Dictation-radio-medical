@@ -16,7 +16,7 @@ import numpy as np
 
 from src.dictation.asr.types import AsrResult
 from src.dictation.stream.vad import SpeechMark
-from src.dictation.transcriber import RADIOLOGY_PROMPT
+from src.dictation.asr.prompt import RADIOLOGY_PROMPT
 from src.features.adaptive_learning import get_custom_prompt_suffix
 
 

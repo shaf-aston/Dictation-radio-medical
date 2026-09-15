@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from src.core import perf
 from src.dictation.stream.segmenter import ChunkPolicy
-from src.dictation.transcriber import resolve_model
+from src.dictation.asr.models import resolve_model
 from src.dictation.worker import LiveTranscribeWorker
 from src.features.file_manager import create_temp_wav
 from src.features import run_log

@@ -39,7 +39,7 @@ from src.features.file_manager import onnx_asr_cache_dir
 logger = logging.getLogger(__name__)
 
 #: The onnx-asr model id this engine defaults to. Pinned here (with the pinned
-#: ``onnx-asr`` version in requirements.txt) so a download is reproducible:
+#: ``onnx-asr`` version in pyproject.toml's ``parakeet`` extra) so a download is reproducible:
 #: the id resolves to one HuggingFace repo, and the copy under data/cache/ is
 #: fetched exactly once and reused offline from then on.
 DEFAULT_MODEL = "nemo-parakeet-tdt-0.6b-v3"

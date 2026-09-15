@@ -26,6 +26,7 @@ from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor
 
 from src.dictation.audio import Recorder
+from src.core.logging_setup import setup_logging
 from src.core.settings import Settings
 from src.core.patient_schema import normalize_patient_info
 from src.features.file_manager import report_filename
@@ -63,10 +64,7 @@ from src.ui.dialogs import show_learning_consent_if_needed, show_disclaimer_if_n
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="pkg_resources")
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -285,7 +283,7 @@ class MainWindow(QMainWindow):
                 warm_up_async,
             )
 
-            from src.dictation.transcriber import resolve_model
+            from src.dictation.asr.models import resolve_model
 
             model_size = resolve_model(self.settings.get("model_size"))
             # Warm the model the recording worker will actually load: an active

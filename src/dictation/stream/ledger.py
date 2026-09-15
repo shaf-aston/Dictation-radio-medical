@@ -79,7 +79,7 @@ class ChunkLedger:
         sr: int = SAMPLE_RATE,
     ) -> None:
         self.policy = policy
-        # Mirrors transcriber.py's own segment-join rule (gap >= pause_threshold
+        # Mirrors faster_whisper_engine.py's own segment-join rule (gap >= pause_threshold
         # -> newline) so a pause that spans a chunk boundary still reads as a
         # paragraph break, not just one that happens to land inside one chunk.
         self._pause_threshold = pause_threshold
