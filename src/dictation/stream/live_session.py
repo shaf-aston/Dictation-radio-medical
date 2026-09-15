@@ -378,7 +378,11 @@ class LiveSession:
         self._chunks_decoded += 1
         self._forced_polish_index = len(self._ledger.committed) - 1
 
-    def finalize(self, on_progress: Optional[Callable[[str], None]] = None) -> str:
+    def finalize(
+        self,
+        on_progress: Optional[Callable[[str], None]] = None,
+        cancelled: Callable[[], bool] = lambda: False,
+    ) -> str:
         """Re-decode what is worth re-decoding, with the accurate engine.
 
         Bounded cost, spent only where it buys something: committed chunks the
@@ -405,6 +409,7 @@ class LiveSession:
             force=() if self._forced_polish_index is None else (self._forced_polish_index,),
             on_progress=on_progress or (lambda _msg: None),
             on_decoded=decoded,
+            cancelled=cancelled,
         )
 
         raw = self._ledger.committed_text

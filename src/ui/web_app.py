@@ -62,6 +62,11 @@ logger = logging.getLogger(__name__)
 LIVE_SAMPLE_RATE = 16000
 
 transcriber_lock = Lock()
+#: Bumped by every new dictation. An older one still polishing sees it change
+#: and stops between sections, so its polish stops taking the CPU from the new
+#: recording's live text. The desktop does the same in
+#: recording_session._abandon_unfinished_session.
+_dictation_generation = 0
 # One engine per model name: the live model and the final model coexist.
 asr_engines: dict = {}
 
@@ -959,7 +964,10 @@ def _live_session(settings, prefs: dict) -> LiveSession:
 
 @app.websocket("/ws/dictate")
 async def dictate_socket(ws: WebSocket) -> None:
+    global _dictation_generation
     await ws.accept()
+    _dictation_generation += 1
+    generation = _dictation_generation
     settings = _settings()
     prefs = _current_preferences()
     session = _live_session(settings, prefs)
@@ -1093,9 +1101,15 @@ async def dictate_socket(ws: WebSocket) -> None:
                     words=len(session.committed_text().split()),
                 )
                 with event_log.timed("live", "accuracy pass", stage="web.finalize") as note:
-                    text_out = await anyio.to_thread.run_sync(session.finalize)
+                    text_out = await anyio.to_thread.run_sync(
+                        lambda: session.finalize(cancelled=lambda: generation != _dictation_generation)
+                    )
                     note["words"] = len(text_out.split())
                     note["unsure_words"] = len(session.uncertain_words)
+                if generation != _dictation_generation:
+                    # The report was already handed back; a newer recording owns the page now.
+                    event_log.emit("live", "polish dropped: a new recording started")
+                    return
                 await send({
                     "type": "final",
                     "text": text_out,

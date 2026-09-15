@@ -1151,7 +1151,9 @@ function openSocket() {
 
     socket.onmessage = (event) => {
         const msg = safeParseJson(event.data, null);
-        if (!msg) return;
+        // A previous recording still polishing must never write into the one
+        // being dictated now.
+        if (!msg || socket !== liveSocket) return;
         if (msg.type === 'partial') {
             tlUpdate(msg, devUpdateArrived(msg));
             committedText = msg.committed || '';
@@ -1217,8 +1219,11 @@ function openSocket() {
     // Only meaningful once recording has actually started: startRecording()
     // has its own one-time 'error' listener for the connect attempt itself,
     // and both firing on the same failure raced to set the status text.
-    socket.onerror = () => { if (isRecording) showError('Lost the connection to the dictation service.'); };
-    socket.onclose = () => { if (isRecording) teardownMic(); };
+    // Only this recording's socket may end it: the previous one closing when its
+    // polish finishes used to switch off the microphone mid-dictation.
+    const current = () => isRecording && socket === liveSocket;
+    socket.onerror = () => { if (current()) showError('Lost the connection to the dictation service.'); };
+    socket.onclose = () => { if (current()) teardownMic(); };
     return socket;
 }
 
@@ -1301,6 +1306,7 @@ async function startRecording() {
         URL.revokeObjectURL(workletUrl);
 
         const socketAskedAt = performance.now();
+        liveSocket = null;  // the previous recording's socket stops being heard from here
         liveSocket = await connectDictationSocket();
         devMark('browser', 'dictation socket open', {}, { ms: performance.now() - socketAskedAt });
         tlStep('Connected', (performance.now() - socketAskedAt) / 1000);
