@@ -5,7 +5,8 @@ Run: python -m pytest tests/test_stream_rules.py
 
 from src.dictation.asr.types import AsrResult, AsrSegment, Word
 from src.dictation.stream.ledger import ChunkLedger, close_sentence
-from src.dictation.stream.rules import low_confidence_words
+from src.dictation.stream.rules import has_speech, level_db, low_confidence_words
+import numpy as np
 import pytest
 
 from src.dictation.stream.segmenter import Chunk, ChunkPolicy, cut_chunks
@@ -29,6 +30,23 @@ def test_a_long_pause_ends_the_sentence_and_breaks_the_paragraph():
     ledger.commit(Chunk(sr * 5, sr * 10, closed=True), "", None)
     ledger.commit(Chunk(sr * 10, sr * 15, closed=True), "the spine is intact", 0.9)
     assert ledger.committed_text == "no acute fracture.\nthe spine is intact"
+
+
+def test_has_speech_is_the_vad_verdict_not_a_loudness():
+    marks = [SpeechMark(1000, 2000)]
+    assert has_speech(marks, 0, 1500)          # overlaps the start of the mark
+    assert has_speech(marks, 1500, 3000)       # overlaps the end
+    assert has_speech(marks, 1200, 1300)       # sits inside it
+    assert not has_speech(marks, 2000, 3000)   # touches, does not overlap
+    assert not has_speech(marks, 0, 1000)
+    assert not has_speech([], 0, 5000)         # nothing heard: nothing to decode
+
+
+def test_level_db_tells_quiet_from_silent():
+    quiet = (np.random.default_rng(0).standard_normal(16000) * 0.01).astype(np.float32)
+    assert -42 < level_db(quiet) < -38
+    assert level_db(np.zeros(16000, dtype=np.float32)) == -120.0
+    assert level_db(np.zeros(0, dtype=np.float32)) == -120.0
 
 
 def test_a_short_pause_leaves_the_sentence_open():

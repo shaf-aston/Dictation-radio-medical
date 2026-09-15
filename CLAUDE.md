@@ -1,7 +1,7 @@
 # CLAUDE.md: Architecture & Module Map
 
 Radio Dictate is an **offline medical dictation workstation** for radiologists.
-Speech-to-text runs locally via Whisper (`faster-whisper` / CTranslate2); by
+ASR (automatic speech recognition) runs locally via Whisper (`faster-whisper` / CTranslate2); by
 default **no audio or text leaves the device**. Two front-ends share one
 dictation core: a PySide6 desktop GUI and a FastAPI web app.
 

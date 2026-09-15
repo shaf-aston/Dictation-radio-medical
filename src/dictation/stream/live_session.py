@@ -28,15 +28,15 @@ from src.dictation.asr.types import AsrResult
 from src.dictation.postprocess.incremental import IncrementalPostprocessor
 from src.dictation.stream.ledger import ChunkLedger, close_sentence
 from src.dictation.stream.rules import (
-    AdaptiveFloor,
     low_confidence_words,
     mean_confidence,
-    rms,
+    has_speech,
+    level_db,
     should_skip_preview,
 )
 from src.dictation.stream.segmenter import Chunk, ChunkPolicy
 from src.dictation.stream.tail import LocalAgreement2
-from src.dictation.stream.vad import SAMPLE_RATE, detect_speech
+from src.dictation.stream.vad import SAMPLE_RATE, SpeechMark, detect_speech
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +82,6 @@ class LiveSession:
         pause_threshold: float = 2.5,
         live_beam_size: int = 2,
         final_beam_size: int = 5,
-        silence_rms_floor: float = 0.0005,
-        silence_rms_margin: float = 2.5,
         preview_max_lag_sec: float = 3.0,
         preview_min_tail_sec: float = 1.0,
         polish_confidence_ceiling: float = 0.85,
@@ -97,7 +95,6 @@ class LiveSession:
         self.pause_threshold = pause_threshold
         self.live_beam_size = live_beam_size
         self.final_beam_size = final_beam_size
-        self._noise_floor = AdaptiveFloor(silence_rms_floor, silence_rms_margin)
         self.preview_max_lag_sec = preview_max_lag_sec
         self.preview_min_tail_sec = preview_min_tail_sec
         self.polish_confidence_ceiling = polish_confidence_ceiling
@@ -212,7 +209,7 @@ class LiveSession:
         marks = detect_speech(tail_audio)
         chunks = self._ledger.pending_cuts(total, marks)
 
-        committed_any = self._commit_closed(chunks, tail_audio, tail_start)
+        committed_any = self._commit_closed(chunks, marks, tail_audio, tail_start)
         if committed_any:
             self._agreement.reset()
             self._last_stable = ""
@@ -240,7 +237,7 @@ class LiveSession:
             preview = self._last_stable
         else:
             state = STATE_LIVE
-            preview = self._decode_open_tail(chunks, tail_audio, tail_start)
+            preview = self._decode_open_tail(chunks, marks, tail_audio, tail_start)
             self._last_stable = preview
 
         committed_raw = self._ledger.committed_text
@@ -261,7 +258,8 @@ class LiveSession:
         return update
 
     def _commit_closed(
-        self, chunks: List[Chunk], tail_audio: np.ndarray, tail_start: int
+        self, chunks: List[Chunk], marks: List[SpeechMark],
+        tail_audio: np.ndarray, tail_start: int,
     ) -> bool:
         committed_any = False
         for chunk in chunks:
@@ -276,9 +274,15 @@ class LiveSession:
                 logger.warning("Chunk runs past the sliced tail; deferring")
                 break
             clip = tail_audio[chunk.start_sample - tail_start : stop]
-            if self._noise_floor.is_silence(rms(clip)):
-                # Genuinely silent (a long pause the segmenter force-cut):
-                # nothing to decode, nothing to hallucinate.
+            if not has_speech(marks, chunk.start_sample - tail_start, stop):
+                # The VAD heard nothing (a long pause the segmenter force-cut):
+                # nothing to decode, nothing to hallucinate. Said out loud with
+                # the loudness, so a dictation that came back empty can be told
+                # apart from one that was too quiet for the VAD.
+                event_log.emit(
+                    "live", "chunk skipped, no speech heard",
+                    clip_sec=round(len(clip) / self.sr, 1), level_db=level_db(clip),
+                )
                 self._ledger.commit(chunk, "", None)
                 committed_any = True
                 continue
@@ -295,7 +299,8 @@ class LiveSession:
         return committed_any
 
     def _decode_open_tail(
-        self, chunks: List[Chunk], tail_audio: np.ndarray, tail_start: int
+        self, chunks: List[Chunk], marks: List[SpeechMark],
+        tail_audio: np.ndarray, tail_start: int,
     ) -> str:
         """Re-decode the still-open portion for a stable preview only.
 
@@ -316,7 +321,7 @@ class LiveSession:
         # out. Keep whatever is already shown rather than clearing it.
         if len(clip) < self.preview_min_tail_sec * self.sr:
             return self._agreement.stable()
-        if self._noise_floor.is_silence(rms(clip)):
+        if not has_speech(marks, open_chunk.start_sample - tail_start, open_chunk.end_sample - tail_start):
             return self._agreement.update("")
 
         started = time.time()
@@ -358,7 +363,7 @@ class LiveSession:
         """
         end = self._len
         tail = self._buf[self._ledger.open_start_sample:end]
-        if not len(tail) or self._noise_floor.is_silence(rms(tail)):
+        if not len(tail) or not detect_speech(tail):
             return
         result = self._decode(
             self.live_engine, tail, self.live_beam_size,
@@ -404,7 +409,7 @@ class LiveSession:
 
         end = self._len
         tail = self._buf[self._ledger.open_start_sample:end]
-        if len(tail) and not self._noise_floor.is_silence(rms(tail)):
+        if len(tail) and detect_speech(tail):
             say("Improving the last section")
             result = self._decode(
                 self.final_engine, tail, self.final_beam_size,
@@ -451,7 +456,7 @@ class LiveSession:
             # individual call, which is what shows *which* decode blew out.
             with event_log.timed(
                 "asr", f"{stage} decode", stage=f"stream.{stage}",
-                clip_sec=round(len(clip) / self.sr, 1), beam=beam_size,
+                clip_sec=round(len(clip) / self.sr, 1), level_db=level_db(clip), beam=beam_size,
             ) as note:
                 result = engine.transcribe(
                     clip,

@@ -72,14 +72,6 @@ _DEFAULTS: dict = {
     # worth a second look from the radiologist, and marking every third word
     # would make the marks worth nothing.
     "uncertain_word_confidence": 0.6,
-    # Hard safety-net minimum below which a clip is always silence, however
-    # quiet the room has been. The working threshold is adaptive above this,
-    # see silence_rms_margin (rules.AdaptiveFloor), so a quiet talker isn't
-    # judged against a level tuned for someone else's voice.
-    "silence_rms_floor": 0.0005,
-    # A clip counts as silence only when it is this many times quieter than
-    # the session's own learned ambient level, not against one fixed number.
-    "silence_rms_margin": 2.5,
     "autosave_retention_days": 30,  # days to keep autosave files
     # --- Web front-end (src/ui/web_app.py) ---
     "web_host": "127.0.0.1",    # loopback only: the app is offline by default

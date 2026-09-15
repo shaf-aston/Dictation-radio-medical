@@ -36,7 +36,7 @@ _TIMEOUT = 30.0
 
 _SYSTEM_PROMPT = (
     "You are a careful copy-editor for radiology dictation. Fix only grammar, "
-    "punctuation, capitalisation, spacing, and obvious speech-to-text errors. "
+    "punctuation, capitalisation, spacing, and obvious ASR (speech recognition) errors. "
     "NEVER add, remove, or change clinical findings, measurements, laterality, "
     "or negations. If unsure, leave the text unchanged. Preserve the report's "
     "structure and headings. Return strict JSON."

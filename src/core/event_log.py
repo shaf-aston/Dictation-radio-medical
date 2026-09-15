@@ -47,6 +47,8 @@ _lock = threading.Lock()
 _events: Deque[Dict[str, Any]] = deque(maxlen=DEFAULT_CAPACITY)
 _seq = 0
 _handler: Optional[logging.Handler] = None
+# What is in flight right now, keyed by id(): the console's "running now".
+_running: Dict[int, Dict[str, Any]] = {}
 
 
 def configure(capacity: int) -> None:
@@ -103,6 +105,9 @@ def timed(source: str, message: str, *, stage: Optional[str] = None, **fields: A
     extra: Dict[str, Any] = {}
     start = time.perf_counter()
     level = "info"
+    token = {"source": source, "message": message, "started": time.time()}
+    with _lock:
+        _running[id(token)] = token
     try:
         yield extra
     except BaseException:
@@ -110,6 +115,8 @@ def timed(source: str, message: str, *, stage: Optional[str] = None, **fields: A
         raise
     finally:
         elapsed = time.perf_counter() - start
+        with _lock:
+            _running.pop(id(token), None)
         if stage:
             perf.record(stage, elapsed)
         emit(source, message, level=level, ms=elapsed * 1000, **{**fields, **extra})
@@ -124,6 +131,12 @@ def events(after: int = 0, limit: int = 500) -> List[Dict[str, Any]]:
     with _lock:
         recent = [e for e in _events if e["seq"] > after]
     return recent[-limit:]
+
+
+def running() -> List[Dict[str, Any]]:
+    """Timed blocks still open, oldest first: what the app is doing right now."""
+    with _lock:
+        return sorted(_running.values(), key=lambda r: r["started"])
 
 
 def latest_seq() -> int:
@@ -153,7 +166,9 @@ class _LoggingBridge(logging.Handler):
             message = record.getMessage()
         except Exception:  # a bad format string must never break logging
             message = record.msg if isinstance(record.msg, str) else "<unformattable>"
-        emit(record.name.split(".")[-1], message, level=record.levelname.lower())
+        # Marked, so the console can hide ordinary chatter (model loaded,
+        # rules read) and show only what took time or went wrong.
+        emit(record.name.split(".")[-1], message, level=record.levelname.lower(), mirrored=True)
 
 
 def attach_to_logging(level: int = logging.INFO) -> None:

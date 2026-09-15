@@ -1,6 +1,6 @@
 # Radio Dictate: Architecture, Flows & Performance
 
-Offline medical dictation workstation. Speech-to-text runs **locally** (Whisper
+Offline medical dictation workstation. ASR (automatic speech recognition) runs **locally** (Whisper
 via `faster-whisper`/CTranslate2); by default nothing leaves the device. Two
 front-ends (PySide6 desktop, FastAPI web) share one dictation core.
 

@@ -1,6 +1,6 @@
 # Radio Dictate
 
-Offline medical dictation workstation for radiologists. Speech-to-text via local Whisper (`faster-whisper`): no audio or text leaves the machine.
+Offline medical dictation workstation for radiologists. ASR (automatic speech recognition) via local Whisper (`faster-whisper`): no audio or text leaves the machine.
 
 Two interfaces:
 - **Desktop**: PySide6 GUI with templates, macros, and live transcription

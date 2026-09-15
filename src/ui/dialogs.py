@@ -196,7 +196,7 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
 
     blurb = QLabel(
         "Polish a finished report with a fast cloud LLM (Groq): fixing grammar, "
-        "punctuation, and obvious speech-to-text slips only. Clinical content is "
+        "punctuation, and obvious ASR slips only. Clinical content is "
         "never changed. Patient identifiers are removed before any text is sent, "
         "and this requires cloud consent (granted in Cloud Voice Training).\n\n"
         "Optional and off by default; the app works fully offline without it."

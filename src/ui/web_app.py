@@ -816,6 +816,7 @@ async def events_endpoint(after: int = 0, limit: int = 500):
     return {
         "events": event_log.events(after=max(0, int(after)), limit=max(1, min(int(limit), 2000))),
         "latest": event_log.latest_seq(),
+        "running": event_log.running(),
     }
 
 
@@ -945,8 +946,6 @@ def _live_session(settings, prefs: dict) -> LiveSession:
         pause_threshold=float(settings.get("pause_threshold", 2.5)),
         live_beam_size=int(settings.get("live_beam_size")),
         final_beam_size=int(settings.get("final_beam_size")),
-        silence_rms_floor=float(settings.get("silence_rms_floor")),
-        silence_rms_margin=float(settings.get("silence_rms_margin")),
         preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
         polish_confidence_ceiling=float(settings.get("polish_confidence_ceiling")),
         uncertain_word_confidence=float(

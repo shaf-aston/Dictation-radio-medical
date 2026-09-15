@@ -10,9 +10,12 @@ made a front-end look like core.
 
 from __future__ import annotations
 
+from typing import Sequence
+
 import numpy as np
 
 from src.dictation.asr.types import AsrResult
+from src.dictation.stream.vad import SpeechMark
 from src.dictation.transcriber import RADIOLOGY_PROMPT
 from src.features.adaptive_learning import get_custom_prompt_suffix
 
@@ -75,48 +78,30 @@ def low_confidence_words(result: AsrResult, ceiling: float) -> set:
     return out
 
 
-def rms(clip: np.ndarray) -> float:
-    """Loudness of one clip. Accumulates in float64 because a long clip of
-    float32 squares loses enough precision to move the silence decision."""
+def level_db(clip: np.ndarray) -> float:
+    """How loud a clip is, in dB below full scale (0 is as loud as the
+    microphone can carry, -60 is near silence). For the developer console:
+    a dictation that came back empty is either quiet or was never spoken, and
+    this number is what tells the two apart. Accumulates in float64 because a
+    long clip of float32 squares loses precision."""
     if clip.size == 0:
-        return 0.0
-    return float(np.sqrt(np.mean(np.square(clip, dtype=np.float64))))
+        return -120.0
+    root_mean_square = float(np.sqrt(np.mean(np.square(clip, dtype=np.float64))))
+    return round(20 * np.log10(max(root_mean_square, 1e-6)), 1)
 
 
-class AdaptiveFloor:
-    """Is this clip silence: judged against THIS room, not one fixed number.
+def has_speech(marks: Sequence[SpeechMark], start: int, end: int) -> bool:
+    """Does any VAD speech mark overlap ``[start, end)``?
 
-    A single fixed loudness threshold cannot be right for two different
-    radiologists: a quiet talker's real speech can sit below a number tuned
-    for a normal voice, and gets thrown away before the decoder ever sees it;
-    a noisy room's background hum can sit above that same number and get fed
-    to the decoder as if it were speech, which is what the confidence gate
-    calls the decoder's own hallucination anti-measure exists to catch
-    upstream of. This tracks the room's own ambient level instead and gates
-    relative to *it*.
-
-    Only clips already judged quiet feed the estimate, so a loud sentence
-    never drags its own gate up and locks out the next quiet word: the
-    estimate follows the room, not the voice. ``floor_min`` is a hard safety
-    net for literal digital silence, so the very first clip (before any
-    estimate exists) is never mistaken for speech.
+    This is the only "is there anything to decode?" test in both live loops,
+    and it is the VAD's verdict on purpose. The loudness gate it replaced
+    (2026-09-06) dropped a quiet talker: measured on the tts set, Silero still
+    hears speech at -46 dB, but an RMS floor of 0.002 called everything under
+    -40 dB silence, and each dropped clip then fed the ambient estimate and
+    raised the bar further. Two detectors disagreeing means one of them is
+    redundant, and the VAD is the one the segmenter already trusts to cut on.
     """
-
-    def __init__(self, floor_min: float, margin: float = 2.5, smoothing: float = 0.2):
-        self.floor_min = max(0.0, float(floor_min))
-        self.margin = max(1.0, float(margin))
-        self.smoothing = min(1.0, max(0.0, float(smoothing)))
-        self._estimate = self.floor_min
-
-    @property
-    def threshold(self) -> float:
-        return max(self.floor_min, self._estimate * self.margin)
-
-    def is_silence(self, level: float) -> bool:
-        quiet = level < self.threshold
-        if quiet:
-            self._estimate = (1 - self.smoothing) * self._estimate + self.smoothing * level
-        return quiet
+    return any(m.start_sample < end and m.end_sample > start for m in marks)
 
 
 def should_skip_preview(preview_cost_sec: float, max_lag_sec: float) -> bool:

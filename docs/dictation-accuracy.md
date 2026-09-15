@@ -157,6 +157,25 @@ without touching the model, and it is why a faster engine is a smaller live-spee
 win than it first appears: worth having for the post-Stop polish, not a cure for
 a lag that has already been fixed.
 
+## Shorter chunks: faster and, unexpectedly, more accurate (2026-09-06)
+
+`replay.py --realtime` on the six `tts_paused` clips, Whisper tiny.en live /
+small.en polish, same machine, same run. Commit lag is how long a spoken word
+waits before it becomes permanent text.
+
+| chunk min / soft max | commit lag p50 | p90 | mean chunk | WER | term error |
+|---|---|---|---|---|---|
+| 6 s / 15 s (was the default) | 4.78 s | 8.57 s | 9.15 s | 3.64 % | 6.99 % |
+| 3 s / 8 s | 3.47 s | 7.01 s | 6.41 s | 2.24 % | 3.57 % |
+| **2 s / 5 s (now the default)** | **2.93 s** | **5.28 s** | 5.06 s | 1.89 % | 3.57 % |
+
+The lag never depended on the engine: Deepgram and the Whisper fallback gave
+the same commit lag to within 0.2 s at the old policy, because a word waits
+for its chunk to close, not for its decode. The accuracy gain is likely the
+shorter clips giving the small model less room to drift, but six synthetic
+clips is not proof of that; the `own` set is still the instrument that would
+settle it.
+
 ## What would move the needle next
 
 Ranked by expected value, given everything above:

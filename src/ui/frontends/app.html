@@ -317,6 +317,8 @@
                 <b id="devUpdates">0</b><i>updates</i></span>
             <span class="dev-stat" title="Seconds of audio this browser has sent to the server.">
                 <b id="devAudioSent">0.0s</b><i>audio sent</i></span>
+            <span class="dev-stat dev-now" title="What the server is doing right now, and for how long.">
+                <b id="devNow">idle</b><i>now</i></span>
         </div>
 
         <div class="dev-drawer-actions">
@@ -324,10 +326,16 @@
                 <span class="sr-only">Filter the console</span>
                 <input id="devFilter" type="text" placeholder="filter…" autocomplete="off">
             </label>
+            <button id="devAllBtn" class="btn btn-quiet" type="button" aria-pressed="false"
+                    title="Also show ordinary log lines, not just what took time or went wrong">Show all</button>
             <button id="devPauseBtn" class="btn btn-quiet" type="button" aria-pressed="false">Pause</button>
             <button id="devCopyBtn" class="btn btn-quiet" type="button">Copy</button>
             <button id="devClearBtn" class="btn btn-quiet" type="button">Clear</button>
             <a class="btn btn-quiet" href="/developer" target="_blank" rel="noopener">Run history</a>
+            <button id="devMinBtn" class="btn btn-quiet" type="button" aria-pressed="false"
+                    aria-label="Shrink the console to its bar">Minimise</button>
+            <button id="devMaxBtn" class="btn btn-quiet" type="button" aria-pressed="false"
+                    aria-label="Make the console fill the window">Maximise</button>
             <button id="devCloseBtn" class="btn btn-quiet" type="button" aria-label="Close the developer console">Close</button>
         </div>
     </header>
