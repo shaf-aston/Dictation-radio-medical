@@ -53,6 +53,8 @@ src/
 │   │                       (freezes each closed chunk's decode permanently,
 │   │                       the "decode once" guarantee) · tail.py
 │   │                       (LocalAgreement-2 stable preview of the open tail)
+│   │                       · polish.py (the polish after Stop: which chunks the
+│   │                        accurate model redoes, one rule for both front-ends)
 │   ├── postprocess/      10-stage correction pipeline (pipeline.py orchestrates)
 │   │   └── incremental.py  live path: processes only the un-committed tail,
 │   │                        caching the frozen prefix (see Live-speed design)
