@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _KEYRING_KEY = "lightning_api_key"
-_BASE_URL = "https://lightning.ai/api/v1"
+_BASE_URL = "https://lightning.ai/v1"
 _TIMEOUT = 60.0
 
 

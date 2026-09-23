@@ -48,3 +48,17 @@
   replacement: "cholecystitis"
   regex: true
   note: "Whisper mishears 'cholecystitis' as 'coalescistic' and variants"
+
+- id: hila-homophone
+  pattern: "hyla"
+  replacement: "hila"
+  note: >-
+    real-word homophone: "hyla" is a genus of tree frog, so the spell-checker
+    and the fuzzy stage both pass it through untouched and nothing underlines
+    it. It never occurs in a report, so no context guard is needed. Observed
+    2026-09-19: "the hyla are unremarkable in contour".
+
+- id: hilar-homophone
+  pattern: "hylar"
+  replacement: "hilar"
+  note: "same mishear, adjectival form; 'hylar' is not an English word"

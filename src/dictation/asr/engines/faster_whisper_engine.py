@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from src.core.settings import Settings, get_default
 from src.dictation.asr.prompt import RADIOLOGY_PROMPT
 from src.dictation.asr.types import AsrResult, AsrSegment, EngineCaps, TranscribeContext, Word
 from src.features.file_manager import whisper_cache_dir
@@ -34,6 +35,21 @@ _MODEL_CACHE_LOCK = threading.Lock()
 # 2 tolerates one warmup/worker mismatch without reload thrash; live callers
 # holding an evicted model keep their own reference and are unaffected.
 _MODEL_CACHE_MAX = 2
+
+
+def _cpu_threads_setting() -> int:
+    """CTranslate2 intra-op thread count, read from settings.
+
+    A non-integer value in the JSON falls back to the shipped default. The
+    result is clamped between 1 and the host's core count, so a number larger
+    than the machine cannot oversubscribe it and slow every decode down.
+    """
+    default = get_default("asr_cpu_threads")
+    try:
+        value = int(Settings().get("asr_cpu_threads", default))
+    except (TypeError, ValueError):
+        value = default
+    return max(1, min(value, os.cpu_count() or 8))
 
 
 class Transcriber:
@@ -109,8 +125,9 @@ class Transcriber:
             )
 
             # On CPU, CTranslate2 defaults to 4 intra-op threads regardless of core
-            # count: leave the OS a couple of cores and use the rest.
-            cpu_threads = 0 if self.device == "cuda" else max(4, (os.cpu_count() or 4) - 2)
+            # count. Thread count is measured, not derived from core count: see
+            # "asr_cpu_threads" in core/settings.py for the numbers.
+            cpu_threads = 0 if self.device == "cuda" else _cpu_threads_setting()
 
             last_err: Optional[Exception] = None
             seen: set = set()

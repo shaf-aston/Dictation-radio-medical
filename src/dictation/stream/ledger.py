@@ -92,6 +92,17 @@ class ChunkLedger:
         return list(self._committed)
 
     @property
+    def sample_rate(self) -> int:
+        """Samples per second of the audio these chunk windows count in.
+
+        Public because a word time is in seconds and a chunk window is in
+        samples: anything lining the two up (the after-Stop polish) needs this
+        exact number, and a wrong one puts words in the wrong chunk while
+        still looking plausible.
+        """
+        return self._sr
+
+    @property
     def open_start_sample(self) -> int:
         """Where the still-open (undecided) tail begins."""
         return self._open_start

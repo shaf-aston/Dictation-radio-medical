@@ -2,8 +2,19 @@
 
 import pytest
 
+from src.dictation.asr.engines import fallback_engine
 from src.dictation.asr.engines.fallback_engine import ChainEngine
 from src.dictation.asr.types import AsrResult, ProviderUnavailable, TranscribeContext
+
+
+@pytest.fixture(autouse=True)
+def _reset_dead_providers():
+    # _DEAD_PROVIDERS is process-lifetime by design (that's the point: one
+    # rejection anywhere skips the provider everywhere); tests need a clean
+    # slate so one test's dead key can't leak into the next.
+    fallback_engine._DEAD_PROVIDERS.clear()
+    yield
+    fallback_engine._DEAD_PROVIDERS.clear()
 
 
 class _Engine:
@@ -38,3 +49,17 @@ def test_last_provider_error_still_reaches_caller():
     for _ in range(2):
         with pytest.raises(ProviderUnavailable):
             chain.transcribe(None, TranscribeContext())
+
+
+def test_dead_key_skipped_across_separate_chain_instances():
+    # web_app builds one ChainEngine per model name (live tier, polish tier);
+    # a rejection learned by one instance must not be re-paid by the other.
+    dead1, local1 = _Engine(ProviderUnavailable("401")), _Engine()
+    live_chain = ChainEngine([("deepgram", dead1), ("whisper", local1)])
+    assert live_chain.transcribe(None, TranscribeContext()).text == "ok"
+    assert dead1.calls == 1
+
+    dead2, local2 = _Engine(ProviderUnavailable("401")), _Engine()
+    polish_chain = ChainEngine([("deepgram", dead2), ("whisper", local2)])
+    assert polish_chain.transcribe(None, TranscribeContext()).text == "ok"
+    assert dead2.calls == 0  # never called: learned dead by the other instance

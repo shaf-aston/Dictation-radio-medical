@@ -215,25 +215,30 @@ class LiveSession:
             self._agreement.reset()
             self._last_stable = ""
 
-        # Two different reasons to skip the preview, and only one of them is
-        # bad news. `behind` means a decode measured slower than the lag
-        # ceiling: the machine genuinely cannot keep up, and the radiologist
-        # should be told. `pacing` is the healthy half of the design, which
-        # never starts a preview until as long has passed as the last one
-        # took, so previews can never eat more than half the wall clock. That
-        # fires on roughly half of all cycles, and reporting it as "catching
-        # up" told the radiologist the app was behind at exactly the moments
-        # it was working as intended.
+        # Three reasons to skip the preview, and only one of them is bad
+        # news. `committed_any` means a chunk just froze, so a preview now
+        # would decode audio the committed text already covers. `behind`
+        # means a decode measured slower than the lag ceiling: the machine
+        # genuinely cannot keep up, and the radiologist should be told.
+        # `pacing` is the healthy half of the design, which never starts a
+        # preview until as long has passed as the last one took, so previews
+        # can never eat more than half the wall clock. That fires on roughly
+        # half of all cycles, and reporting it as "catching up" told the
+        # radiologist the app was behind at exactly the moments it was
+        # working as intended.
         behind = should_skip_preview(self._preview_cost, self.preview_max_lag_sec)
         pacing = time.time() < self._preview_earliest
-        if behind or pacing:
+        if committed_any or behind or pacing:
             # Cosmetic only: the last stable preview stays on screen and every
             # remaining second goes to the chunks that are actually kept. The
-            # recorded cost decays while skipping so the preview comes back on
-            # its own once the machine is free again -- a cost that is only
-            # ever written when a preview runs would latch the preview off
-            # permanently after one slow decode.
-            self._preview_cost *= 0.9
+            # recorded cost decays on the load-related skips so the preview comes
+            # back on its own once the machine is free again -- a cost that is
+            # only ever written when a preview runs would latch the preview off
+            # permanently after one slow decode. A commit-cycle skip says nothing
+            # about load, so it leaves the cost alone: decaying it there would
+            # make `behind` slow to admit the machine is struggling.
+            if behind or pacing:
+                self._preview_cost *= 0.9
             state = STATE_CATCHING_UP if behind else STATE_LIVE
             preview = self._last_stable
         else:

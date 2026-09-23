@@ -54,6 +54,11 @@ projection
 anteroposterior
 posteroanterior
 craniocaudal
+erect
+semi-erect
+semierect
+supine
+portable
 radiopharmaceutical
 radiotracer
 radionuclide

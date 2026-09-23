@@ -1,0 +1,7 @@
+.env
+data/train/
+smoke/out/
+train/_pack/
+train/_kernel/
+train/_out/
+models/*/model/

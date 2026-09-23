@@ -46,6 +46,12 @@ _DEFAULTS: dict = {
     # Raise it if a mid-sentence breath is closing chunks; lower it to commit
     # sooner when someone stops to read the film.
     "chunk_trailing_silence_sec": 0.6,
+    # CTranslate2 intra-op threads for CPU decode. Measured on a 10s tiny.en
+    # decode, best of five: 8 threads = 1.007s, 14 threads (cpu_count-2 on this
+    # 16-core box) = 1.405s. Eight is faster and uses less CPU. Clamped to the
+    # host core count when the model loads, and takes effect on the next app
+    # start: the loaded model is cached and is not rebuilt on a settings write.
+    "asr_cpu_threads": 8,
     # --- Live transcription decode quality (see src/dictation/worker.py) ---
     "live_beam_size": 2,        # beam=1 caused repetition; beam=2 still real-time
     # Every decode that is not the live loop: the desktop's post-stop polish and

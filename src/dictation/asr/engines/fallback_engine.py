@@ -19,6 +19,14 @@ from src.dictation.asr.types import AsrResult, EngineCaps, ProviderUnavailable, 
 
 logger = logging.getLogger(__name__)
 
+# Providers rejected with ProviderUnavailable this process (dead API key, auth
+# failure): permanent until restart, and shared across every ChainEngine
+# instance. web_app builds one ChainEngine per model name (live + polish), so
+# without this each instance paid its own 401 round trip on every decode --
+# the per-instance drop below only ever helped the instance that had already
+# eaten the cost once. Keyed by provider name, not by instance.
+_DEAD_PROVIDERS: set = set()
+
 
 class ChainEngine:
     """Satisfies the :class:`AsrEngine` port by trying providers in order."""
@@ -45,14 +53,20 @@ class ChainEngine:
 
     def transcribe(self, audio: Any, ctx: TranscribeContext) -> AsrResult:
         last_exc: Exception = RuntimeError("ChainEngine has no providers")
-        for entry in list(self._providers):
+        entries = list(self._providers)
+        for i, entry in enumerate(entries):
             name, engine = entry
+            # Skip a provider already known dead process-wide -- unless it is
+            # the only one left, so its error still reaches the caller.
+            if name in _DEAD_PROVIDERS and i < len(entries) - 1:
+                continue
             try:
                 return engine.transcribe(audio, ctx)
             except ProviderUnavailable as exc:
                 # Permanent until restart: drop it, or every later decode waits
                 # on the same rejection first. The last provider is kept so its
                 # error still reaches the caller.
+                _DEAD_PROVIDERS.add(name)
                 if len(self._providers) > 1:
                     # A fresh list, not remove(): the live and polish threads may share this chain.
                     self._providers = [p for p in self._providers if p is not entry]

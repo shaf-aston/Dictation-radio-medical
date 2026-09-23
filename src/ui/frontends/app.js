@@ -869,13 +869,53 @@ let handedOverText = null;  // what Stop handed back, to detect edits since
 // accuracy pass behind it (allowed to take as long as it needs).
 let stopPressedAt = 0;
 
+// How long Stop waits for the worklet's last partial frame before giving up
+// on it: a fraction of a second of speech is not worth a stuck button.
+const MIC_FLUSH_TIMEOUT_MS = 50;
+
 // The worklet only forwards frames. Every decision stays on the main thread, so
-// UI work can never block the audio thread.
+// UI work can never block the audio thread. It buffers render quanta (fixed at
+// 128 samples by the Web Audio spec) into fixed-size frames before posting, so
+// the socket wakes up a few dozen times a second instead of over a hundred.
+// 20ms is the largest frame that still sits well under the 0.5s cycle the
+// server decodes on, so it adds no lag the radiologist can see, while cutting
+// posts from one per render quantum (128 samples) to 50 a second at 16 kHz.
+const FRAME_SECONDS = 0.020;
+// Derived from the rate actually in force, never written down as a sample
+// count: the same LIVE_SAMPLE_RATE is what the AudioContext is asked for
+// below, so a change to the server's setting moves both together and the
+// frame stays 20ms instead of silently becoming 6.7ms at 48 kHz.
+const FRAME_SAMPLES = Math.max(128, Math.round(LIVE_SAMPLE_RATE * FRAME_SECONDS));
 const PCM_WORKLET = [
+    `const FRAME_SAMPLES = ${FRAME_SAMPLES};`,
     'class PcmTap extends AudioWorkletProcessor {',
+    '    constructor() {',
+    '        super();',
+    '        this._buf = new Float32Array(FRAME_SAMPLES);',
+    '        this._len = 0;',
+    '        this.port.onmessage = (event) => {',
+    '            if (event.data && event.data.command === "flush") {',
+    '                this.port.postMessage({ flushed: this._buf.slice(0, this._len) });',
+    '                this._len = 0;',
+    '            }',
+    '        };',
+    '    }',
     '    process(inputs) {',
     '        const ch = inputs[0] && inputs[0][0];',
-    '        if (ch) this.port.postMessage(ch.slice(0));',
+    '        if (ch) {',
+    '            let offset = 0;',
+    '            while (offset < ch.length) {',
+    '                const space = FRAME_SAMPLES - this._len;',
+    '                const take = Math.min(space, ch.length - offset);',
+    '                this._buf.set(ch.subarray(offset, offset + take), this._len);',
+    '                this._len += take;',
+    '                offset += take;',
+    '                if (this._len === FRAME_SAMPLES) {',
+    '                    this.port.postMessage(this._buf.slice(0));',
+    '                    this._len = 0;',
+    '                }',
+    '            }',
+    '        }',
     '        return true;',
     '    }',
     '}',
@@ -898,6 +938,18 @@ function peakLevel(frame) {
         if (v > peak) peak = v;
     }
     return peak;
+}
+
+// Shared by the worklet's normal frames and its stop-time flush, so a
+// flushed tail is metered and sent exactly like any other frame.
+function handleTapFrame(frame) {
+    if (!frame || !frame.length) return;
+    setLevel(peakLevel(frame));
+    if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
+        const pcm = floatToPcm16(frame).buffer;
+        devAudioSent(pcm.byteLength);
+        liveSocket.send(pcm);
+    }
 }
 
 // -- what the radiologist sees ---------------------------------------------
@@ -1261,9 +1313,51 @@ function finishSession(okMessage) {
     if (okMessage) showStatus(okMessage, 'is-ok', 2500);
 }
 
+// A partial frame (under 320 samples) can be sitting in the worklet's
+// accumulator when recording stops; disconnecting drops it on the floor
+// before it ever reaches the socket. Ask the worklet for whatever it is
+// still holding and let it through the normal frame handler before tearing
+// the node down, so the last fraction of a second of speech is not stranded.
+// The reply carries a `flushed` field so an ordinary frame posted in the
+// meantime cannot be mistaken for it: waiting on whatever arrives first would
+// let the tail be dropped by the very disconnect this exists to delay.
+function flushMicTap(node) {
+    return new Promise((resolve) => {
+        const port = node.port;
+        // Exactly one of the two paths may ever run. Without this, a late
+        // worklet reply after the timeout still pushed a PCM frame down the
+        // socket behind the stop message, on a node already disconnected.
+        const timeout = setTimeout(() => {
+            port.onmessage = null;
+            resolve();
+        }, MIC_FLUSH_TIMEOUT_MS);
+        port.onmessage = (event) => {
+            const data = event.data;
+            if (data && data.flushed) {
+                clearTimeout(timeout);
+                port.onmessage = null;
+                handleTapFrame(data.flushed);
+                resolve();
+                return;
+            }
+            handleTapFrame(data);
+        };
+        port.postMessage({ command: 'flush' });
+    });
+}
+
 async function teardownMic() {
     isRecording = false;
-    if (micNode) { micNode.disconnect(); micNode = null; }
+    if (micNode) {
+        // Take the node out of the global BEFORE awaiting, so a Stop and a
+        // Cancel milliseconds apart cannot both reach the same node: the
+        // second call sees null and does nothing, instead of throwing part
+        // way through and leaving the report and the buttons mid-recording.
+        const node = micNode;
+        micNode = null;
+        await flushMicTap(node);
+        node.disconnect();
+    }
     if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
     if (audioContext) {
         await audioContext.close().catch(() => {});
@@ -1312,15 +1406,7 @@ async function startRecording() {
         tlStep('Connected', (performance.now() - socketAskedAt) / 1000);
 
         micNode = new AudioWorkletNode(audioContext, 'pcm-tap');
-        micNode.port.onmessage = (event) => {
-            const frame = event.data;
-            setLevel(peakLevel(frame));
-            if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
-                const pcm = floatToPcm16(frame).buffer;
-                devAudioSent(pcm.byteLength);
-                liveSocket.send(pcm);
-            }
-        };
+        micNode.port.onmessage = (event) => handleTapFrame(event.data);
         audioContext.createMediaStreamSource(micStream).connect(micNode);
     } catch (err) {
         console.error('Could not start live dictation:', err);

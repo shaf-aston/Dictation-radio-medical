@@ -46,7 +46,8 @@ except ImportError:
 # way to tell a real word from a non-word we keep the old conservative ratio so
 # the stage never demotes ordinary English.
 _LEGACY_CUTOFF = 0.94
-_MIN_LEN = 5                            # ignore words shorter than this
+_MIN_LEN = 5                            # ignore words shorter than this...
+_MIN_LEN_LEXICON_ONLY = 4               # ...except this one length: see _four_letter_decision
 _WORD_RE = re.compile(r"\b[A-Za-z][A-Za-z'\-]{2,}\b")
 
 
@@ -277,6 +278,43 @@ _DECISION_MEMO_SIG: Optional[tuple] = None
 _MISS = object()
 
 
+def _edit_distance_le1(a: str, b: str) -> bool:
+    """True when *a* and *b* differ by exactly one edit (sub/insert/delete).
+
+    Hand-rolled instead of a SymSpell lookup: this only ever runs for the rare
+    4-letter, non-English, non-membership word, and it needs every matching
+    lexicon term (to detect a tie), not just SymSpell's single closest one.
+    """
+    la, lb = len(a), len(b)
+    if a == b or abs(la - lb) > 1:
+        return False
+    if la == lb:
+        return sum(1 for x, y in zip(a, b) if x != y) == 1
+    shorter, longer = (a, b) if la < lb else (b, a)
+    i = j = skipped = 0
+    while i < len(shorter) and j < len(longer):
+        if shorter[i] == longer[j]:
+            i += 1
+            j += 1
+        else:
+            skipped += 1
+            if skipped > 1:
+                return False
+            j += 1
+    return True
+
+
+def _four_letter_decision(wl: str) -> Optional[str]:
+    """A 4-letter word is corrected only when exactly one curated-lexicon term
+    sits one edit away. Below the normal 5-char floor a single edit too easily
+    lands on an unrelated real word (see ``_max_edits``), so this only fires
+    when the lexicon itself points to one unambiguous answer -- a second
+    equidistant candidate means "leave it alone", not "guess".
+    """
+    candidates = [t for t in medical_dict.get_correction_targets() if _edit_distance_le1(wl, t)]
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _compute_decision(wl: str, terms: Set[str], sym: Optional[object]) -> Optional[str]:
     """Correction for already-lowercased non-word *wl*, or None to leave it alone.
 
@@ -306,6 +344,11 @@ def _compute_decision(wl: str, terms: Set[str], sym: Optional[object]) -> Option
         # A valid English word is never a typo to fix: leave it untouched,
         # no matter how close a junk wordlist fragment sits.
         return None
+    if len(wl) == _MIN_LEN_LEXICON_ONLY:
+        # Below _MIN_LEN: only the unambiguous lexicon-distance-1 gate above,
+        # and only once the guard has confirmed it isn't English (eng is None
+        # means no guard installed -- stay conservative, leave it alone).
+        return _four_letter_decision(wl) if eng is False else None
     if eng is None or not _SYMSPELL_AVAILABLE:
         # No English guard (or no SymSpell index) available: fall back to the
         # conservative ratio-only path so we never demote a real word.
@@ -346,7 +389,10 @@ def apply_medical_dictionary_suggestions(text: str) -> str:
         if w.upper() in _ACRONYMS:
             return w
         wl = w.lower()
-        if len(wl) < _MIN_LEN:
+        if len(wl) < _MIN_LEN_LEXICON_ONLY:
+            # A general fuzzy edit is too easily wrong below _MIN_LEN.
+            # Exactly _MIN_LEN_LEXICON_ONLY letters gets one narrow exception,
+            # in _compute_decision -> _four_letter_decision; shorter never does.
             return w
         sug = _DECISION_MEMO.get(wl, _MISS)
         if sug is _MISS:
