@@ -3,7 +3,9 @@
 ``replay.py`` is the real instrument: real audio, real engine. It needs model
 weights or an API key. This one needs neither, so it can judge the part of the
 lag that belongs to the LOOP (chunk policy, preview pacing, lanes, streaming)
-on any machine, including one that cannot download Whisper:
+on any machine, including one that cannot download Whisper (it is how the
+"two lanes" preview thread was measured and refuted: see
+docs/dictation-speed-review.md, 2026-09-27):
 
 * the audio is synthetic: bursts of "speech" separated by pauses, each word a
   run of samples carrying its own index, so a decode can say exactly which
@@ -47,8 +49,9 @@ from src.dictation.stream.vad import SpeechMark
 
 SR = 16000
 WORD_SEC = 0.35
-BLOCK_SEC = 0.1
+BLOCK_SEC = 0.05
 CYCLE_SEC = 0.5
+SEED = 7
 _AMP_BASE = 0.05
 _AMP_STEP = 0.0005
 
@@ -69,7 +72,7 @@ class SpokenWord:
     end_sec: float
 
 
-def build_dictation(seconds: float, seed: int = 7) -> Tuple[np.ndarray, List[SpokenWord]]:
+def build_dictation(seconds: float, seed: int = SEED) -> Tuple[np.ndarray, List[SpokenWord]]:
     """Bursts of 2-10 words, ordinary pauses of 0.35-1.2s, and a longer
     'reading the film' pause of 2.5-3.5s after about one burst in five."""
     rng = random.Random(seed)
@@ -128,10 +131,24 @@ def energy_vad(audio: np.ndarray, min_silence_ms: int = 300, speech_pad_ms: int 
 
 # -- the engine -------------------------------------------------------------
 
+#: Two decodes overlapping on one Whisper model with num_workers=2: measured
+#: 1.775s for two 10s decodes that take 2.132s back to back, i.e. each call
+#: runs ~1.67x slower while the other is running (lag-map-2026-09-02.md, #7).
+OVERLAP_SLOWDOWN = 1.775 / (2.132 / 2)
+
+
 class SimEngine:
-    def __init__(self, cost: CostModel, serial: bool) -> None:
+    """*serial*: calls queue (ctranslate2 num_workers=1). *workers* > 1: up to
+    that many run at once, each slowed by OVERLAP_SLOWDOWN while overlapped.
+    A cloud engine is neither: calls are independent network requests."""
+
+    def __init__(self, cost: CostModel, serial: bool, workers: int = 1) -> None:
         self.cost = cost
-        self._lock = threading.Lock() if serial else None
+        self.workers = workers
+        slots = 1 if serial and workers <= 1 else workers if serial else 0
+        self._lock = threading.BoundedSemaphore(slots) if slots else None
+        self._busy = 0
+        self._busy_lock = threading.Lock()
         self.calls = 0
 
     def capabilities(self) -> EngineCaps:
@@ -148,8 +165,16 @@ class SimEngine:
         return self._decode(clip)
 
     def _decode(self, clip: np.ndarray) -> AsrResult:
-        self.calls += 1
-        time.sleep(self.cost.estimate(len(clip) / SR))
+        with self._busy_lock:
+            self.calls += 1
+            self._busy += 1
+            overlapped = self._busy > 1 and self._lock is not None
+        try:
+            cost = self.cost.estimate(len(clip) / SR)
+            time.sleep(cost * (OVERLAP_SLOWDOWN if overlapped else 1.0))
+        finally:
+            with self._busy_lock:
+                self._busy -= 1
         ids = word_indices(clip)
         words = tuple(
             Word(f"w{i}", 0.0, 0.0, 0.95) for i in ids
@@ -169,9 +194,13 @@ def _seen(text: str) -> List[int]:
     return out
 
 
-def run(engine_name: str, policy: Optional[ChunkPolicy], seconds: float) -> Dict[str, object]:
-    audio, words = build_dictation(seconds)
-    engine = SimEngine(ENGINES[engine_name], serial=(engine_name == "local"))
+def run(
+    engine_name: str, policy: Optional[ChunkPolicy], seconds: float,
+    workers: int = 1, cycle_sec: float = CYCLE_SEC,
+    seed: int = SEED,
+) -> Dict[str, object]:
+    audio, words = build_dictation(seconds, seed)
+    engine = SimEngine(ENGINES[engine_name], serial=(engine_name == "local"), workers=workers)
     plan = plan_for(engine.capabilities())
     session = LiveSession(
         engine, engine,
@@ -206,7 +235,7 @@ def run(engine_name: str, policy: Optional[ChunkPolicy], seconds: float) -> Dict
         if (delay := target - time.time()) > 0:
             time.sleep(delay)
         session.feed(audio[offset : offset + block])
-        if time.time() - last_cycle >= CYCLE_SEC and not busy.is_set():
+        if time.time() - last_cycle >= cycle_sec and not busy.is_set():
             last_cycle = time.time()
             busy.set()
             threading.Thread(target=cycle, daemon=True).start()
@@ -224,6 +253,8 @@ def run(engine_name: str, policy: Optional[ChunkPolicy], seconds: float) -> Dict
     used = policy or plan.policy
     return {
         "engine": engine_name,
+        "workers": workers,
+        "cycle_sec": cycle_sec,
         "policy": f"{used.min_sec:g}/{used.soft_max_sec:g}/{used.force_cut_sec:g}",
         "words": len(words),
         "kept_before_stop": len(kept_lag),
@@ -247,13 +278,16 @@ def main() -> None:
     ap.add_argument("--engine", choices=sorted(ENGINES), default="cloud")
     ap.add_argument("--policy", default="auto", help='"auto" or min,soft,force seconds')
     ap.add_argument("--seconds", type=float, default=45.0)
+    ap.add_argument("--workers", type=int, default=1, help="concurrent decodes the local engine allows")
+    ap.add_argument("--seed", type=int, default=SEED, help="which synthetic dictation")
+    ap.add_argument("--cycle", type=float, default=CYCLE_SEC, help="seconds between cycles (live_cycle_sec)")
     args = ap.parse_args()
     install_fake_vad()
     policy = None
     if args.policy != "auto":
         lo, soft, force = (float(x) for x in args.policy.split(","))
         policy = ChunkPolicy(min_sec=lo, soft_max_sec=soft, force_cut_sec=force)
-    print(json.dumps(run(args.engine, policy, args.seconds)))
+    print(json.dumps(run(args.engine, policy, args.seconds, args.workers, args.cycle, args.seed)))
 
 
 if __name__ == "__main__":
