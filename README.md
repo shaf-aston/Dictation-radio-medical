@@ -1,77 +1,80 @@
 # Radio Dictate
 
-Offline medical dictation workstation for radiologists. ASR (automatic speech recognition) via local Whisper (`faster-whisper`): no audio or text leaves the machine.
+Offline speech-to-text workstation for radiologists. Dictate a report, get clean, correctly spelled medical text.
 
-Two interfaces:
-- **Desktop**: PySide6 GUI with templates, macros, and live transcription
-- **Web**: FastAPI single-page app at `http://127.0.0.1:8005`
+Transcription runs locally with Whisper (`faster-whisper`), so audio and text stay on the machine by default.
 
-## Quick start
+## Highlights
+
+- **Live transcription**: text streams in while you speak
+- **Radiology-tuned**: about 200 domain terms prime the recogniser
+- **Correction pipeline**: removes hallucinations, applies voice commands, punctuation, measurements, terminology, accent fixes, fuzzy matching and learned corrections
+- **Medical dictionary**: fuzzy matching that protects real terms from over-correction
+- **Learns from you**: picks up your edits and applies them next time
+- **Critical findings**: negation-aware detection flags urgent results
+- **Templates and macros**: chest, neuro, abdominal, MSK, ultrasound; quick phrases by region
+- **Word export**: formatted `.docx` with a patient details table
+- **Safe by design**: auto-save backups and an append-only audit log
+
+## Two interfaces
+
+| Interface | Command |
+|---|---|
+| Desktop (PySide6) | `python -m src.ui` |
+| Web (FastAPI) | `python -m src.ui.web_app`, then open http://127.0.0.1:8005 |
+
+Run both from the project root.
+
+## Setup
 
 ```bash
-python -m src.ui                   # desktop GUI
-python -m src.ui.web_app           # web app
-ruff check src tests               # lint
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
 ```
 
-> Always run from the **project root**. `src.*` imports break if you `cd` into `src/`.
+Requires Python 3.12+. Whisper models download to `~/.cache/huggingface/` on first use.
 
-## Features
+## Stack
 
-- **Live transcription**: text streams while you dictate
-- **Radiology-tuned Whisper prompt**: ~200 domain terms prime accuracy
-- **10-stage post-processing**: hallucination removal → voice commands → punctuation → measurements → terminology → accent-specific → fuzzy match → learned corrections → capitalization
-- **Medical dictionary**: rapidfuzz fuzzy matching (~92% threshold)
-- **Templates**: chest, neuro, abdominal, MSK, ultrasound
-- **Macros**: quick phrases by region, hot-reloaded from `data/macros.json`
-- **Word export**: formatted `.docx` with patient info table
-- **Auto-save**: backups to `data/autosave/` (30-day retention)
-- **Adaptive learning**: passively learns from your edits
-- **Critical findings detection**: NegEx negation parser flags urgent results
-- **Audit log**: append-only trail (`data/audit.log`, 8-year retention)
-- **Dark / light themes**: Catppuccin Mocha and iOS-inspired
+Python, faster-whisper, PySide6, FastAPI with WebSockets, rapidfuzz, SymSpell, python-docx.
 
 ## Keyboard shortcuts
 
-| Shortcut         | Action                         |
-|------------------|--------------------------------|
-| F5               | Start recording                |
-| F6               | Stop recording                 |
-| Ctrl+S           | Save report as text            |
-| Ctrl+Shift+W     | Export to Word (.docx)         |
-| Ctrl+T           | Load template                  |
-| Ctrl+R           | Reload macros                  |
-| Ctrl+D           | Toggle dark / light theme      |
-| Ctrl+P           | Toggle patient panel           |
-| Ctrl+M           | Toggle macros panel            |
-| Ctrl+] / Ctrl+[  | Increase / decrease font size  |
+| Shortcut | Action |
+|---|---|
+| F5 / F6 | Start / stop recording |
+| Ctrl+S | Save as text |
+| Ctrl+Shift+W | Export to Word |
+| Ctrl+T | Load template |
+| Ctrl+R | Reload macros |
+| Ctrl+D | Dark / light theme |
+| Ctrl+P / Ctrl+M | Patient / macros panel |
+| Ctrl+] / Ctrl+[ | Font size up / down |
 
 ## Voice commands
 
-- Punctuation: `"full stop"`, `"comma"`, `"new line"`, `"new paragraph"`, `"colon"`, `"hyphen"`
-- Inline correction: `"correct word X"` replaces the previous word with X
+- Punctuation: "full stop", "comma", "colon", "hyphen", "new line", "new paragraph"
+- Fix a word: "correct word X" replaces the previous word with X
 
-## Project layout
+## Customise
 
-The per-module map lives in [CLAUDE.md](CLAUDE.md), style rules in [CODING_STANDARDS.md](CODING_STANDARDS.md).
-
-## Customisation
-
-- **Templates**: drop a `.txt` file in `src/templates/`
-- **Macros**: edit `data/macros.json`
-- **Terminology / hallucinations / measurements / accent corrections**: edit the corresponding file in `src/dictation/postprocess/` or `src/features/accent_corrections.py`
-- **Fuzzy matching cutoff**: tune `cutoff=0.92` in `src/dictation/postprocess/medical_dict_match.py`; add protected terms to `_PROTECTED_TERMS`
-- **Medical dictionary**: add terms to `src/resources/medical_terms.txt`
+| What | Where |
+|---|---|
+| Templates | add a `.txt` to `src/templates/` |
+| Macros | `data/macros.json` (hot-reloaded) |
+| Medical terms | `src/resources/medical_terms.txt` |
+| Correction rules | `src/dictation/postprocess/` |
+| Fuzzy cutoff | `cutoff` in `src/dictation/postprocess/medical_dict_match.py` |
 
 ## Troubleshooting
 
-- **Microphone errors**: check input device in OS Sound Settings; close other apps using the mic
-- **Import errors**: activate the venv and run `pip install -e .`
-- **Slow transcription**: switch to a smaller Whisper model (`tiny` / `base`)
-- **Over-correction**: raise the fuzzy cutoff or add the term to `_PROTECTED_TERMS` (see Customisation)
-- **Missing Word export**: `pip install python-docx`
+| Problem | Fix |
+|---|---|
+| Microphone errors | check the input device; close other apps using the mic |
+| Import errors | activate the venv, run `pip install -e .` |
+| Slow transcription | use a smaller Whisper model (`tiny` or `base`) |
+| Over-correction | raise the fuzzy cutoff or protect the term |
 
-## Notes
+## Docs
 
-- The audit log is append-only; retain for 8 years per clinical record requirements.
-- Whisper models cache in `~/.cache/huggingface/` on first use.
+Module map in [CLAUDE.md](CLAUDE.md), style rules in [CODING_STANDARDS.md](CODING_STANDARDS.md), design notes in [docs/](docs/).
