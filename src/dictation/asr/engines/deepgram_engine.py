@@ -31,6 +31,7 @@ from src.core.keychain import clear_secret, get_secret, store_secret
 from src.dictation.asr.types import (
     AsrResult,
     AsrSegment,
+    CostModel,
     EngineCaps,
     ProviderUnavailable,
     TranscribeContext,
@@ -110,7 +111,17 @@ class DeepgramEngine:
     def capabilities(self) -> EngineCaps:
         # Deepgram reports real per-word confidence; this REST endpoint has
         # no decoder-level vocabulary biasing (Whisper's hotwords).
-        return EngineCaps(word_confidence=True, hotwords=False)
+        # Cost measured against the live API over a kept-alive connection:
+        # 0.18s for a 2s clip, 0.16s for a 6s one (see _http_client).
+        return EngineCaps(
+            word_confidence=True, hotwords=False,
+            cost=CostModel(fixed_sec=0.2, per_audio_sec=0.01),
+            network=True,
+        )
+
+    def usable(self) -> bool:
+        """Cheap check, no network: is there a key to call with at all?"""
+        return bool(get_api_key())
 
     def transcribe(self, audio: Any, ctx: TranscribeContext) -> AsrResult:
         pcm = _to_linear16(audio)

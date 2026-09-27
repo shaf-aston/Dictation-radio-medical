@@ -104,10 +104,20 @@ class ChainEngine:
         return self.active()[1].capabilities()
 
     def active(self) -> Tuple[str, Any]:
-        """``(name, engine)`` of the provider the next call will try first."""
-        for entry in self._providers:
-            if provider_usable(entry[0]):
-                return entry
+        """``(name, engine)`` of the provider the next call will try first.
+
+        A provider may offer ``usable()``, a cheap local check (Deepgram: is a
+        key stored at all?). A no there is as final as a 401, so it is
+        remembered the same way.
+        """
+        for name, engine in self._providers:
+            if not provider_usable(name):
+                continue
+            usable = getattr(engine, "usable", None)
+            if usable is not None and not usable():
+                _DEAD_PROVIDERS.add(name)
+                continue
+            return name, engine
         return self._providers[-1]
 
     def transcribe(self, audio: Any, ctx: TranscribeContext) -> AsrResult:

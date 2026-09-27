@@ -62,6 +62,7 @@ from src.dictation.asr import (
 )
 from src.dictation.stream.ledger import ChunkLedger
 from src.dictation.stream.polish import polish
+from src.dictation.stream.policy import plan_for
 from src.dictation.stream.rules import (
     build_context_prompt,
     mean_confidence,
@@ -121,6 +122,7 @@ class LiveTranscribeWorker(QObject):
         final_beam_size: int = 5,
         polish_confidence_ceiling: float = 0.75,
         preview_max_lag_sec: float = 3.0,
+        trailing_silence_sec: float = 0.6,
     ) -> None:
         super().__init__()
         self.audio_path = audio_path
@@ -141,6 +143,10 @@ class LiveTranscribeWorker(QObject):
         self.polish_confidence_ceiling = float(polish_confidence_ceiling)
         self.preview_max_lag_sec = float(preview_max_lag_sec)
         self.model_path = model_path
+        # None means "size chunks from the live engine's cost", which is only
+        # known once run() has built the engine; see _plan_chunks().
+        self._auto_policy = chunk_policy is None
+        self._trailing_silence_sec = float(trailing_silence_sec)
         self._ledger = ChunkLedger(
             chunk_policy or ChunkPolicy(), pause_threshold=pause_threshold
         )
@@ -228,6 +234,10 @@ class LiveTranscribeWorker(QObject):
                 engine = create_engine(
                     model_size=self.model_size, device="auto", model_path=self.model_path
                 )
+            if self._auto_policy:
+                plan = plan_for(live_engine.capabilities(), self._trailing_silence_sec)
+                self._ledger = ChunkLedger(plan.policy, pause_threshold=self.pause_threshold)
+                logger.info("Chunk plan %s: %s", plan.row, plan.policy)
             logger.info("Engines ready in %.2fs", time.time() - wall_start)
             self._emit_state(STATE_LIVE)
 

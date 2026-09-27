@@ -36,8 +36,20 @@ _DEFAULTS: dict = {
     # chunk_soft_max_sec if one exists, otherwise force-cut at
     # chunk_force_cut_sec regardless of whether a pause was found (the only
     # case that can land mid-word: see ChunkPolicy's docstring).
-    "chunk_min_sec": 6.0,
-    "chunk_soft_max_sec": 15.0,
+    #
+    # "auto" (the default) ignores the three numbers below and sizes chunks
+    # from what the ASR engine says a call costs (src/dictation/stream/
+    # policy.py): long chunks for local Whisper, which pays ~1-4s per call,
+    # short ones for a ~0.2s cloud engine, where long chunks only make the kept
+    # text trail the microphone. "manual" uses the numbers verbatim. Auto is
+    # also what moves an existing install off the old 6 / 15 / 20: this file
+    # persists every default it was written with, so those numbers are
+    # literally in it.
+    "chunk_policy": "auto",
+    # 2 / 5 measured best on the replay harness (docs/dictation-accuracy.md,
+    # 2026-09-06): commit lag p50 4.78s -> 2.93s and lower term error than 6 / 15.
+    "chunk_min_sec": 2.0,
+    "chunk_soft_max_sec": 5.0,
     "chunk_force_cut_sec": 20.0,
     # The last thing said before a pause used to wait for the speaker to start
     # talking again, because a cut point had to be a pause with more speech

@@ -19,7 +19,14 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.core.settings import Settings, get_default
 from src.dictation.asr.prompt import RADIOLOGY_PROMPT
-from src.dictation.asr.types import AsrResult, AsrSegment, EngineCaps, TranscribeContext, Word
+from src.dictation.asr.types import (
+    AsrResult,
+    AsrSegment,
+    CostModel,
+    EngineCaps,
+    TranscribeContext,
+    Word,
+)
 from src.features.file_manager import whisper_cache_dir
 
 logger = logging.getLogger(__name__)
@@ -366,6 +373,22 @@ def _is_hallucination(text: str, seg: Any) -> bool:
     return False
 
 
+# Per-call cost on CPU by model family, measured on the development machine at
+# 8 threads (docs/dictation-speed-review.md, "What one decode call costs
+# here"): tiny.en ~0.7-2.3s, small.en ~3.8-8s across 3-25s clips. base and the
+# larger sizes are interpolated/extrapolated, not measured. A fine-tuned
+# directory is costed as small (the only size fine-tuned so far).
+_WHISPER_FIXED_SEC = {"tiny": 0.8, "base": 1.3, "small": 3.8, "medium": 8.0, "large": 15.0}
+
+
+def _decode_cost(model_ref: str) -> CostModel:
+    name = Path(str(model_ref)).name.lower()
+    for family, fixed in _WHISPER_FIXED_SEC.items():
+        if family in name:
+            return CostModel(fixed_sec=fixed, per_audio_sec=0.04)
+    return CostModel(fixed_sec=_WHISPER_FIXED_SEC["small"], per_audio_sec=0.04)
+
+
 class FasterWhisperEngine:
     """Wraps :class:`Transcriber` to satisfy the :class:`AsrEngine` port."""
 
@@ -394,7 +417,10 @@ class FasterWhisperEngine:
         return self._transcriber.compute_type
 
     def capabilities(self) -> EngineCaps:
-        return EngineCaps(word_confidence=True, hotwords=True)
+        return EngineCaps(
+            word_confidence=True, hotwords=True,
+            cost=_decode_cost(self._transcriber.model_path or self._transcriber.model_size),
+        )
 
     def transcribe(self, audio: Any, ctx: TranscribeContext) -> AsrResult:
         text, seg_list = self._transcriber.transcribe(
