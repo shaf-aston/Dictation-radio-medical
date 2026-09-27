@@ -103,6 +103,14 @@ class ChainEngine:
         # price, not for a cloud engine that will never be called.
         return self.active()[1].capabilities()
 
+    def identity(self) -> Any:
+        # Who answers is whoever is tried first: two chains led by the same
+        # live Deepgram model are the same engine, however their local
+        # fallback tiers differ.
+        from src.dictation.asr.port import engine_identity
+
+        return engine_identity(self.active()[1])
+
     def active(self) -> Tuple[str, Any]:
         """``(name, engine)`` of the provider the next call will try first.
 

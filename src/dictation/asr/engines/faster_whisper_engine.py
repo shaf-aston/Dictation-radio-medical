@@ -416,6 +416,10 @@ class FasterWhisperEngine:
         """The ctranslate2 quantisation actually selected (None until loaded)."""
         return self._transcriber.compute_type
 
+    def identity(self) -> tuple:
+        t = self._transcriber
+        return ("faster-whisper", t.model_path or t.model_size)
+
     def capabilities(self) -> EngineCaps:
         return EngineCaps(
             word_confidence=True, hotwords=True,

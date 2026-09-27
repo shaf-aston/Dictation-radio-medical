@@ -88,6 +88,9 @@ class ParakeetEngine:
         if self._model is None:
             self._model = self._load()
 
+    def identity(self) -> tuple:
+        return ("parakeet", self.model_name, self.quantization)
+
     def capabilities(self) -> EngineCaps:
         # No 30s pad (a CTC/TDT model prices by audio length), but its cost on
         # this project's hardware has never been measured, so it declares the

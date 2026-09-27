@@ -24,6 +24,7 @@ import numpy as np
 
 from src.core import event_log
 from src.dictation.asr import AsrEngine, TranscribeContext
+from src.dictation.asr.port import engine_identity
 from src.dictation.asr.types import AsrResult
 from src.dictation.postprocess.incremental import IncrementalPostprocessor
 from src.dictation.stream.ledger import ChunkLedger, close_sentence
@@ -402,16 +403,30 @@ class LiveSession:
             if index is None:
                 self._chunks_decoded += 1
 
+        # The polish exists to hand weak chunks to a BETTER decode. When the
+        # accurate engine is the same cloud model as the live one (Deepgram
+        # answering both, the default), it would send the same audio to the
+        # same model and get the same words back, for a billed call and a
+        # slower "final". Then only audio never decoded at all is worth a call.
+        # A local model is still re-run at the wider final beam, which is a
+        # better decode even on the same weights, so it is not skipped.
+        same_model = (
+            engine_identity(self.final_engine) == engine_identity(self.live_engine)
+            and _ignores_beam(self.final_engine)
+        )
+        if same_model:
+            event_log.emit("live", "polish skipped, final engine is the live engine")
         # The tail closed at Stop was decoded fast on purpose; a confident fast
         # decode is still a fast decode, so it is re-done here either way.
+        forced = () if self._forced_polish_index is None else (self._forced_polish_index,)
         polished = polish(
             self._ledger, self._audio(),
             lambda clip, stage: self._decode(
                 self.final_engine, clip, self.final_beam_size,
                 want_confidence=True, stage=stage, condition=True,
             ),
-            ceiling=self.polish_confidence_ceiling,
-            force=() if self._forced_polish_index is None else (self._forced_polish_index,),
+            ceiling=float("-inf") if same_model else self.polish_confidence_ceiling,
+            force=() if same_model else forced,
             on_progress=on_progress or (lambda _msg: None),
             on_decoded=decoded,
             cancelled=cancelled,
@@ -472,3 +487,11 @@ class LiveSession:
             logger.warning("Decode failed (%s): %s", stage, exc)
             return None
         return result
+
+
+def _ignores_beam(engine: AsrEngine) -> bool:
+    """A cloud engine decodes the same way whatever beam it is asked for."""
+    try:
+        return bool(engine.capabilities().network)
+    except Exception:
+        return False

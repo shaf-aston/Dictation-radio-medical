@@ -119,6 +119,9 @@ class DeepgramEngine:
             network=True,
         )
 
+    def identity(self) -> tuple:
+        return ("deepgram", self.model_name, self.language)
+
     def usable(self) -> bool:
         """Cheap check, no network: is there a key to call with at all?"""
         return bool(get_api_key())

@@ -10,7 +10,7 @@ structurally, with no inheritance and no import of this module required.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Hashable, Protocol, runtime_checkable
 
 from src.dictation.asr.types import AsrResult, EngineCaps, TranscribeContext
 
@@ -30,3 +30,16 @@ class AsrEngine(Protocol):
     def preload(self) -> None:
         """Load the model now instead of on the first ``transcribe()`` call."""
         ...
+
+
+def engine_identity(engine: Any) -> Hashable:
+    """Which model would answer a call to *engine* right now.
+
+    Two engines with the same identity return the same words for the same
+    audio, so re-decoding one's output with the other buys nothing and costs a
+    call (for Deepgram, a billed one). An engine says who it is through
+    ``identity()``; a provider chain answers with whichever provider it would
+    try first. An engine that does not say is only ever equal to itself.
+    """
+    identify = getattr(engine, "identity", None)
+    return identify() if callable(identify) else ("object", id(engine))
