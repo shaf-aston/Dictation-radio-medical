@@ -90,6 +90,9 @@ class LiveSession:
         uncertain_word_confidence: float = 0.6,
         initial_prompt: str = "",
         sr: int = SAMPLE_RATE,
+        postprocess: bool = True,
+        polish_vad_filter: bool = False,
+        on_decoded: Optional[Callable[[AsrResult, int], None]] = None,
     ) -> None:
         self.live_engine = live_engine
         self.final_engine = final_engine
@@ -103,6 +106,19 @@ class LiveSession:
         self.uncertain_word_confidence = uncertain_word_confidence
         self.initial_prompt = initial_prompt
         self.sr = sr
+        # False: every text this session hands out is the ledger's raw text.
+        # The desktop runs the correction pipeline on its own worker thread
+        # (ui/postprocess_worker.py) and must not get it twice.
+        self.postprocess = postprocess
+        # The polish's own VAD trims the pause each chunk begins with, which is
+        # real work there (dictation-speed-review.md); the desktop keeps it on.
+        self.polish_vad_filter = polish_vad_filter
+        # Called with every decode that becomes committed text, and the absolute
+        # sample it starts at: the training collector's segment timings.
+        self._on_decoded = on_decoded
+        # Seconds of audio handed to an engine, all stages: over the recording's
+        # length this is stream.decode_ratio.
+        self.decode_audio_sec = 0.0
 
         self._ledger = ChunkLedger(policy, pause_threshold=pause_threshold, sr=sr)
         self._agreement = LocalAgreement2()
@@ -247,11 +263,10 @@ class LiveSession:
             preview = self._decode_open_tail(chunks, marks, tail_audio, tail_start)
             self._last_stable = preview
 
-        committed_raw = self._ledger.committed_text
         # Only the frozen half is post-processed. The preview is a guess about
         # words still being spoken; running the correction pipeline over it
         # would make finished words visibly change their minds.
-        committed = self._post.process(committed_raw, len(committed_raw))[0] if committed_raw else ""
+        committed = self.committed_text()
 
         update = LiveUpdate(committed, preview, state, self.audio_sec, self.uncertain_words)
         if self._last_update is not None and (
@@ -301,6 +316,7 @@ class LiveSession:
                 break  # retry this (and any later) chunk next cycle
             self._ledger.commit(chunk, result.text, mean_confidence(result))
             self._note_uncertain(result)
+            self._decoded(result, chunk.start_sample)
             self._chunks_decoded += 1
             committed_any = True
         return committed_any
@@ -347,9 +363,24 @@ class LiveSession:
 
     def committed_text(self) -> str:
         """The post-processed text decoded so far: usable the moment Stop is
-        pressed, before :meth:`finalize` improves it."""
+        pressed, before :meth:`finalize` improves it. Raw when this session
+        was built with ``postprocess=False``."""
         raw = self._ledger.committed_text
+        if not self.postprocess:
+            return raw
         return self._post.process(raw, len(raw))[0] if raw else ""
+
+    @property
+    def committed_raw(self) -> str:
+        """The ledger's text exactly as decoded, before any correction."""
+        return self._ledger.committed_text
+
+    def _decoded(self, result: AsrResult, start_sample: int) -> None:
+        if self._on_decoded is not None:
+            try:
+                self._on_decoded(result, start_sample)
+            except Exception as exc:  # a listener must never end the dictation
+                logger.debug("on_decoded listener failed: %s", exc)
 
 
     def close_open_tail_fast(self) -> None:
@@ -381,6 +412,7 @@ class LiveSession:
         closing = Chunk(self._ledger.open_start_sample, end, closed=True)
         self._ledger.commit(closing, text, mean_confidence(result))
         self._note_uncertain(result)
+        self._decoded(result, closing.start_sample)
         self._chunks_decoded += 1
         self._forced_polish_index = len(self._ledger.committed) - 1
 
@@ -398,10 +430,11 @@ class LiveSession:
         """
         t0 = time.time()
 
-        def decoded(result: AsrResult, index: Optional[int], _start: int, _end: int) -> None:
+        def decoded(result: AsrResult, index: Optional[int], start: int, _end: int) -> None:
             self._note_uncertain(result, index)
             if index is None:
                 self._chunks_decoded += 1
+                self._decoded(result, start)
 
         # The polish exists to hand weak chunks to a BETTER decode. When the
         # accurate engine is the same cloud model as the live one (Deepgram
@@ -424,6 +457,7 @@ class LiveSession:
             lambda clip, stage: self._decode(
                 self.final_engine, clip, self.final_beam_size,
                 want_confidence=True, stage=stage, condition=True,
+                vad_filter=self.polish_vad_filter,
             ),
             ceiling=float("-inf") if same_model else self.polish_confidence_ceiling,
             force=() if same_model else forced,
@@ -436,7 +470,10 @@ class LiveSession:
         # committed_len=0: everything here just got an authoritative decode, so
         # no cached prefix from the live pass may survive into the final report.
         self._post.reset()
-        final = close_sentence(self._post.process(raw, 0)[0]) if raw else ""
+        if not self.postprocess:
+            final = raw
+        else:
+            final = close_sentence(self._post.process(raw, 0)[0]) if raw else ""
         logger.info(
             "final polish  audio=%.1fs  elapsed=%.2fs  polished=%d  chars=%d",
             self.audio_sec, time.time() - t0, polished, len(final),
@@ -454,6 +491,7 @@ class LiveSession:
         want_confidence: bool,
         stage: str,
         condition: bool = False,
+        vad_filter: bool = False,
     ) -> Optional[AsrResult]:
         """One transcribe call. ``None`` on failure: never raises at the caller.
 
@@ -473,7 +511,8 @@ class LiveSession:
                     clip,
                     TranscribeContext(
                         language=self.language,
-                        vad_filter=False,  # already cut at a VAD boundary
+                        # Live chunks are already cut at a VAD boundary.
+                        vad_filter=vad_filter,
                         beam_size=beam_size,
                         pause_threshold=self.pause_threshold,
                         condition_on_previous_text=condition,
@@ -483,6 +522,7 @@ class LiveSession:
                     ),
                 )
                 note["words"] = len(result.text.split())
+            self.decode_audio_sec += len(clip) / self.sr
         except Exception as exc:
             logger.warning("Decode failed (%s): %s", stage, exc)
             return None

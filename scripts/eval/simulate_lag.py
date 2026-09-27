@@ -49,6 +49,8 @@ SR = 16000
 WORD_SEC = 0.35
 BLOCK_SEC = 0.1
 CYCLE_SEC = 0.5
+_AMP_BASE = 0.05
+_AMP_STEP = 0.0005
 
 ENGINES = {
     # Deepgram over a warm connection (deepgram_engine._http_client numbers).
@@ -77,9 +79,10 @@ def build_dictation(seconds: float, seed: int = 7) -> Tuple[np.ndarray, List[Spo
     while t < seconds:
         for _ in range(rng.randint(2, 10)):
             n = int(WORD_SEC * SR)
-            # Each word's samples carry its index; the sign alternates so the
-            # "loudness" is constant and any clip boundary is unambiguous.
-            value = (len(words) + 1) / 100000.0 + 0.05
+            # Each word's samples carry its index, coarsely enough (16 LSB of
+            # 16-bit PCM per step) to survive being written to a WAV; the sign
+            # alternates so the "loudness" is constant.
+            value = _AMP_BASE + len(words) * _AMP_STEP
             samples = np.full(n, value, dtype=np.float32)
             samples[1::2] *= -1
             audio.append(samples)
@@ -96,7 +99,7 @@ def word_indices(clip: np.ndarray) -> List[int]:
     loud = np.abs(clip) > 0.01
     if not loud.any():
         return []
-    ids = np.rint((np.abs(clip[loud]) - 0.05) * 100000.0).astype(int) - 1
+    ids = np.rint((np.abs(clip[loud]) - _AMP_BASE) / _AMP_STEP).astype(int)
     counts = np.bincount(ids)
     need = int(WORD_SEC * SR * 0.5)
     return [i for i, c in enumerate(counts) if c >= need]
