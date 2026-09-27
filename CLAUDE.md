@@ -24,31 +24,46 @@ src/
 │                    warning and the timing that explains it sit together)
 ├── dictation/   the offline pipeline, has NO cloud dependency
 │   ├── audio.py          microphone capture
-│   ├── worker.py         live transcription QThread (chunk-once; reads only
-│   │                       the still-open tail off the growing WAV, never the
-│   │                       whole file, see Live-speed design)
+│   ├── worker.py         the desktop's live QThread: a thin adapter that
+│   │                       feeds live_session.LiveSession the new samples of
+│   │                       the growing WAV (seeks, never re-reads) and
+│   │                       re-emits its updates as Qt signals. One loop, two
+│   │                       skins: it used to be a second copy and drifted
 │   ├── asr/               the AsrEngine swap-seam: port.py
-│   │                       (Protocol) · types.py (Word/AsrSegment/AsrResult/
-│   │                       TranscribeContext, confidence is part of the
-│   │                       contract) · factory.py (create_engine, the only
+│   │                       (Protocol, plus StreamingAsrEngine/AsrStream and
+│   │                       engine_identity) · types.py (Word/AsrSegment/
+│   │                       AsrResult/TranscribeContext, confidence is part of
+│   │                       the contract; EngineCaps says what a call COSTS,
+│   │                       whether it streams, whether audio leaves the
+│   │                       device) · factory.py (create_engine, the only
 │   │                       name→engine mapping; default is a 3-tier chain:
 │   │                       deepgram → parakeet (if installed) → faster-whisper)
 │   │                       · engines/deepgram_engine.py (cloud, nova-2-medical,
 │   │                       key in OS keychain, the only network-dependent
 │   │                       engine here — see the invariants note below) ·
+│   │                       engines/deepgram_stream.py (its live WebSocket:
+│   │                       interim + settled text as audio arrives) ·
 │   │                       engines/fallback_engine.py (ChainEngine: tries each
-│   │                       provider in order, degrades past any that raises) ·
+│   │                       provider in order, degrades past any that raises;
+│   │                       a dead key is skipped until restart, a flaky one
+│   │                       by a 30s circuit breaker) ·
 │   │                       engines/faster_whisper_engine.py (the CTranslate2
 │   │                       wrapper and its port adapter, one file) · prompt.py
 │   │                       (the radiology priming vocabulary, same for every
 │   │                       engine) · models.py (known model names + fallback)
 │   ├── stream/             chunk-once streaming, vad.py (Silero VAD, bundled
 │   │                       with faster-whisper, no new dep) · segmenter.py
-│   │                       (pure VAD-marks→chunk-cuts policy) · live_session.py
+│   │                       (pure VAD-marks→chunk-cuts policy) · policy.py
+│   │                       (chunk lengths + preview pacing from the engine's
+│   │                        declared cost: short for a cloud call, 2/5 for
+│   │                        Whisper) · live_session.py
 │   │                       (the Qt-free live loop: a push-fed audio buffer
 │   │                        instead of the desktop's growing WAV, so the web
 │   │                        app streams over a WebSocket using these same
-│   │                        chunk rules. Owns the shared build_context_prompt /
+│   │                        chunk rules, and, when the engine streams, the
+│   │                        socket mode that commits each settled result
+│   │                        straight into the ledger; plus the background
+│   │                        polish) · rules.py (build_context_prompt /
 │   │                        mean_confidence / should_skip_preview) · ledger.py
 │   │                       (freezes each closed chunk's decode permanently,
 │   │                       the "decode once" guarantee) · tail.py
@@ -146,10 +161,11 @@ Other optional, off-by-default add-ons:
 ## Dictation data-flow (always local)
 
 ```
-desktop:  microphone → audio.py → worker.py (QThread, chunk-once, growing WAV)
+desktop:  microphone → audio.py → growing WAV → worker.py (QThread adapter)
 web:      microphone → AudioWorklet → /ws/dictate (16-bit PCM @16k)
-                     → stream/live_session.py (chunk-once, in-memory buffer)
-both:     → asr/ (AsrEngine port → Deepgram, Parakeet or Whisper) → postprocess/ (10 stages)
+both:     → stream/live_session.py (one loop: Deepgram's live socket when it
+            streams, else chunk-once over an in-memory buffer)
+          → asr/ (AsrEngine port → Deepgram, Parakeet or Whisper) → postprocess/ (10 stages)
           → UI (views.py / web_app.py) → report_manager.py (.docx / .txt export)
 ```
 
@@ -243,7 +259,37 @@ dictation used to get slower the longer it ran:
    next preview back for as long as the last one took, that handshake alone
    stretched live updates to about five seconds apart and tripped
    `preview_max_lag_sec`, so the report arrived in one lump at Stop. Never call
-   `httpx.post` directly from an engine.
+   `httpx.post` directly from an engine. Every call also carries its own
+   deadline (`deepgram_engine.call_timeout`, ~2-10s): one flat 30s timeout
+   froze the dictation for half a minute per decode whenever the network hung.
+6. **The engine declares its price, the loop takes its shape from it.**
+   `EngineCaps.cost` is what one call costs; `stream/policy.py` turns it into
+   chunk lengths and preview pacing. Every rule above was sized for Whisper's
+   ~1-4s per call, and the default engine became Deepgram at ~0.2s: the long
+   chunks then only made kept text trail the microphone by the chunk length.
+   Setting `chunk_policy` is "auto" by default because the settings file holds
+   every default it was ever written with, so old installs carry 6/15/20 as
+   literal numbers.
+7. **A streaming engine does the live work itself.** With a Deepgram key the
+   loop sends audio up the live socket as it arrives, shows interim results
+   (through the same never-take-a-word-back rule) and commits each settled
+   result straight into the ledger: no VAD, no cuts, no re-decoded preview.
+   Any failure drops back to chunks from the ledger's frontier, losing nothing.
+   Measured through the real web app against a local stand-in server: kept
+   text p50 4.07s (old 6/15/20) → 1.71s, first word 0.25s. `asr_streaming`.
+8. **The polish starts before Stop.** When the accurate model differs from the
+   live one, weak chunks are re-decoded on a background thread a chunk or more
+   behind the frontier; the live loop applies the results, so the ledger keeps
+   one writer. Simulated: the final text settles 4-5s after Stop instead of
+   29-40s on a 90s dictation. When both are the same cloud model the polish
+   does not run at all: same audio, same model, same words. `background_polish`.
+
+Two things measured and refuted on this design are recorded in
+[docs/dictation-speed-review.md](docs/dictation-speed-review.md) (2026-09-27):
+a separate preview thread, and a faster cycle cadence. The latency of the loop
+itself is measured without a model or key by `scripts/eval/simulate_lag.py`
+and, through the real web app, `scripts/eval/web_lag_check.py`; neither says
+anything about accuracy.
 
 `core/perf.py` and the in-app developer console are the evidence for all of
 the above. Both are in-process only, read on loopback, and persist nothing, so

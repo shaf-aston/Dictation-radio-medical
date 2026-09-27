@@ -1,6 +1,8 @@
 # PRD: live dictation that keeps up with the radiologist
 
-Status: **proposed, 2026-09-27.** Nothing here has shipped. It builds on
+Status: **P0 to P5 built 2026-09-27; P4 refuted and reverted.** See
+[Delivered](#delivered-2026-09-27) at the end for what each phase measured and
+what could not be verified here. It builds on
 [dictation-speed-review.md](dictation-speed-review.md) (what was measured and
 refuted, 2026-07/09) and [lag-map-2026-09-02.md](lag-map-2026-09-02.md) (where
 the committed text's lag comes from). Read both first; this file does not
@@ -366,3 +368,44 @@ Added by this review: **VAD per cycle is 3 to 32 ms** and post-processing is
 be a local `small.en` pass at all? It only earns its place if the eval shows it
 beats `nova-2-medical` on medical-term error. If it does not, the cloud path's
 "final settled" target becomes "at Stop".
+
+---
+
+## Delivered (2026-09-27)
+
+Everything below was measured on a cloud container with **no Whisper weights
+(the download is blocked) and no Deepgram key**, so every number is latency
+from the real loop driven by stand-ins, never accuracy:
+
+* `scripts/eval/simulate_lag.py`: the real `LiveSession`, segmenter, ledger
+  and polish at speaking pace; the engine sleeps for its `CostModel` and
+  "recognises" synthetic audio whose samples carry word indices.
+* `scripts/eval/web_lag_check.py`: the real FastAPI app and `/ws/dictate`, a
+  WebSocket client streaming at speaking pace, and
+  `scripts/eval/fake_deepgram.py` in place of Deepgram's live socket.
+
+| Phase | What shipped | Measured |
+|---|---|---|
+| P0.1 | Per-call Deepgram deadlines; circuit breaker for transient failures | Hung socket: 30s per decode → 3.0s, 2.9s, then 0s |
+| P0.2 | No polish when the accurate engine is the same cloud model | Removes a billed re-send per weak chunk |
+| P0.3 / P1 | `EngineCaps.cost/streaming/network`, `stream/policy.py`, `chunk_policy: auto`, 2/5 shipped | Kept p50/p95, simulated: cloud 4.99/11.23 → 1.84/4.08s, local 5.64/11.81 → 3.34/5.98s |
+| P2 | Deepgram live socket as a streaming mode inside `LiveSession` | Real web app: kept p50/p95 4.07/8.46s (old) → 1.71/3.40s; first word 0.25s; socket drop and rejected key lose no words |
+| P3 | Desktop worker = `LiveSession` fed from the WAV | Same words as the web loop on the same audio (test) |
+| P4 | Separate preview thread | **Refuted**: kept lag unchanged, preview +0.25-0.35s later. Reverted |
+| P5 | Background polish while dictating | Final text settled after Stop, 90s local dictation: 29-40s → 4-5s; kept p50 +0.2s |
+
+Against the goals in section 2: cloud first word (≤ 0.8s) is met in
+simulation; cloud kept-text p50 is 1.7s against a 1.5s goal, because a word
+still waits for the end of its utterance (Deepgram settles at endpoints) and
+the check's stand-in adds 0.15s per reply; local kept p50 (≤ 5s) is met at
+~3.4s.
+
+**Not verified, and needed before trusting this in clinic:**
+
+1. The live socket against the real Deepgram service (message shapes follow
+   Deepgram's documentation and are parsed in a test, but no real session ran).
+2. Accuracy of the short cloud chunks (1/3/8) and of streaming finals, with
+   `replay.py` and the `own` gold set: the medical-term veto has not been
+   applied to either.
+3. Real CPU contention of the background polish on the target laptop (the
+   simulator uses the lag map's measured 1.67x overlap slowdown).
