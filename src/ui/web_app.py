@@ -950,6 +950,7 @@ def _live_session(settings, prefs: dict) -> LiveSession:
         policy=plan.policy,
         preview_min_tail_sec=plan.preview_min_tail_sec,
         streaming=bool(settings.get("asr_streaming", get_default("asr_streaming"))),
+        background_polish=bool(settings.get("background_polish", get_default("background_polish"))),
         pause_threshold=float(settings.get("pause_threshold", 2.5)),
         live_beam_size=int(settings.get("live_beam_size")),
         final_beam_size=int(settings.get("final_beam_size")),

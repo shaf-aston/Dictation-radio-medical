@@ -89,6 +89,13 @@ _DEFAULTS: dict = {
     "preview_min_tail_sec": 1.0,
     # committed chunks below this mean word confidence get one re-decode after stop
     "polish_confidence_ceiling": 0.75,
+    # ...and, with this on, most of them get it WHILE you are still dictating:
+    # the accurate model re-decodes weak chunks a chunk or more behind the
+    # live text, so Stop has little left to improve. Simulated on a 90s local
+    # dictation (scripts/eval/simulate_lag.py): the final text settled 4-5s
+    # after Stop instead of 29-40s, for ~0.2s more live lag from sharing the
+    # CPU. Never runs when the accurate model is the live one (Deepgram).
+    "background_polish": True,
     # A single word below this confidence gets a faint underline in the report.
     # Lower than polish_confidence_ceiling on purpose: that one decides whether
     # a whole chunk is worth re-decoding, this one decides whether one word is

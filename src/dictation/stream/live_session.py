@@ -25,11 +25,11 @@ import numpy as np
 
 from src.core import event_log
 from src.dictation.asr import AsrEngine, TranscribeContext
-from src.dictation.asr.port import engine_identity
+from src.dictation.asr.port import AsrStream, StreamingAsrEngine, engine_identity
 from src.dictation.asr.types import AsrResult, StreamError, StreamFinal, StreamInterim
 from src.dictation.postprocess.incremental import IncrementalPostprocessor
 from src.dictation.stream.ledger import ChunkLedger, close_sentence
-from src.dictation.stream.polish import polish
+from src.dictation.stream.polish import decode_run, polish, weak_runs
 from src.dictation.stream.rules import (
     low_confidence_words,
     mean_confidence,
@@ -95,6 +95,7 @@ class LiveSession:
         polish_vad_filter: bool = False,
         on_decoded: Optional[Callable[[AsrResult, int], None]] = None,
         streaming: bool = True,
+        background_polish: bool = True,
     ) -> None:
         self.live_engine = live_engine
         self.final_engine = final_engine
@@ -131,12 +132,25 @@ class LiveSession:
         # which the web app calls on its event loop); "off" for good once it
         # fails, and the chunked loop carries on from the ledger's frontier.
         self._stream_state = "untried" if streaming else "off"
-        self._stream = None
+        self._stream: Optional[AsrStream] = None
         self._stream_origin = 0   # absolute sample of the stream's time zero
         self._stream_sent = 0     # absolute samples pushed to the stream so far
         # feed() runs on the caller's thread (the web app's event loop) and the
         # stream opens on the cycle thread: both append-and-push under this.
         self._push_lock = threading.Lock()
+
+        # The background polish: the accurate engine re-decodes weak chunks
+        # WHILE the radiologist is still dictating, a chunk or more behind the
+        # frontier, so Stop has little or nothing left to improve. It runs on
+        # its own thread and only decodes; cycle() applies what it returns, so
+        # the ledger keeps one writer. One run at a time, and never the newest
+        # committed chunk (its neighbour may still join its run).
+        self.background_polish = background_polish
+        self._bg_lock = threading.Lock()
+        self._bg_thread: Optional[threading.Thread] = None
+        self._bg_results: List[Tuple[int, AsrResult]] = []
+        self._bg_claimed: set = set()   # handed to the thread (maybe not back yet)
+        self._bg_applied: set = set()   # re-decoded by the accurate engine, frozen
 
         self._ledger = ChunkLedger(policy, pause_threshold=pause_threshold, sr=sr)
         self._agreement = LocalAgreement2()
@@ -190,10 +204,11 @@ class LiveSession:
 
     def _push_unsent(self) -> None:
         """Send the stream every sample it has not had yet. Hold _push_lock."""
+        stream = self._stream
         pcm = self._buf[self._stream_sent : self._len]
-        if len(pcm):
+        if stream is not None and len(pcm):
             self._stream_sent = self._len
-            self._stream.push((np.clip(pcm, -1.0, 1.0) * 32767.0).astype("<i2").tobytes())
+            stream.push((np.clip(pcm, -1.0, 1.0) * 32767.0).astype("<i2").tobytes())
 
     @property
     def streaming(self) -> bool:
@@ -269,6 +284,8 @@ class LiveSession:
         if committed_any:
             self._agreement.reset()
             self._last_stable = ""
+        self._apply_background()
+        self._start_background()
 
         # Three reasons to skip the preview, and only one of them is bad
         # news. `committed_any` means a chunk just froze, so a preview now
@@ -327,10 +344,11 @@ class LiveSession:
         """Try the live engine's socket once; on any failure, chunks it is."""
         self._stream_state = "off"
         try:
-            if not self.live_engine.capabilities().streaming:
+            engine = self.live_engine
+            if not engine.capabilities().streaming or not isinstance(engine, StreamingAsrEngine):
                 return
             with event_log.timed("asr", "live stream open", stage="stream.open"):
-                stream = self.live_engine.open_stream(self._context(
+                stream = engine.open_stream(self._context(
                     self.live_beam_size, want_confidence=True, condition=False,
                 ))
         except Exception as exc:
@@ -345,6 +363,7 @@ class LiveSession:
         event_log.emit("live", "streaming from the engine's live socket")
 
     def _cycle_streaming(self) -> Optional[LiveUpdate]:
+        assert self._stream is not None
         preview = self._last_stable
         for event in self._stream.poll():
             if isinstance(event, StreamFinal):
@@ -393,6 +412,73 @@ class LiveSession:
                 stream.close()
             except Exception as exc:
                 logger.debug("Closing the live stream failed: %s", exc)
+
+    # -- background polish --------------------------------------------------
+
+    def _polish_worthwhile(self) -> bool:
+        """False when the accurate engine would only repeat the live one."""
+        same = engine_identity(self.final_engine) == engine_identity(self.live_engine)
+        return not (same and _ignores_beam(self.final_engine))
+
+    def _start_background(self) -> None:
+        if not self.background_polish or self._stream is not None:
+            return
+        if self._bg_thread is not None and self._bg_thread.is_alive():
+            return
+        newest = len(self._ledger.committed) - 1
+        runs = [
+            run for run in weak_runs(self._ledger, self.polish_confidence_ceiling, self._bg_claimed)
+            if run[-1] < newest
+        ]
+        if not runs or not self._polish_worthwhile():
+            return
+        run = runs[0]
+        # Claimed now, so the next cycle cannot start the same run again.
+        self._bg_claimed.update(run)
+        # A view, not a copy, and safe to read from another thread: feed() only
+        # ever writes past the current length, or into a new, larger array
+        # (this view keeps the old one alive), never over committed samples.
+        audio = self._buf[: self._ledger.committed[run[-1]].end_sample]
+        ledger = self._ledger
+
+        def work() -> None:
+            results = decode_run(
+                ledger, audio,
+                lambda clip, stage: self._decode(
+                    self.final_engine, clip, self.final_beam_size,
+                    want_confidence=True, stage=stage, condition=True,
+                    vad_filter=self.polish_vad_filter,
+                ),
+                run,
+            )
+            with self._bg_lock:
+                self._bg_results.extend(results)
+
+        self._bg_thread = threading.Thread(target=work, name="background-polish", daemon=True)
+        self._bg_thread.start()
+
+    def _apply_background(self) -> int:
+        """Freeze whatever the background polish has finished. Cycle thread only."""
+        with self._bg_lock:
+            results, self._bg_results = self._bg_results, []
+        for index, result in results:
+            self._ledger.replace(index, result.text, mean_confidence(result))
+            self._note_uncertain(result, index)
+            self._bg_applied.add(index)
+        if results:
+            event_log.emit("live", "background polish applied", chunks=len(results))
+        return len(results)
+
+    def _finish_background(self, cancelled: Callable[[], bool]) -> None:
+        """At Stop: let a run already being decoded land, rather than redo it.
+
+        Afterwards only chunks actually APPLIED count as done: a run whose
+        decode failed is still covered by the polish after Stop.
+        """
+        thread = self._bg_thread
+        while thread is not None and thread.is_alive() and not cancelled():
+            thread.join(timeout=0.1)
+        self._apply_background()
 
     def _commit_closed(
         self, chunks: List[Chunk], marks: List[SpeechMark],
@@ -556,6 +642,7 @@ class LiveSession:
         kept as-is, which is why this is seconds and not a full re-transcribe.
         """
         t0 = time.time()
+        self._finish_background(cancelled)
 
         def decoded(result: AsrResult, index: Optional[int], start: int, _end: int) -> None:
             self._note_uncertain(result, index)
@@ -588,6 +675,7 @@ class LiveSession:
             ),
             ceiling=float("-inf") if same_model else self.polish_confidence_ceiling,
             force=() if same_model else forced,
+            skip=self._bg_applied,
             on_progress=on_progress or (lambda _msg: None),
             on_decoded=decoded,
             cancelled=cancelled,

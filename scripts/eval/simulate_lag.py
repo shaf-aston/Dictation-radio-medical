@@ -108,6 +108,19 @@ def word_indices(clip: np.ndarray) -> List[int]:
     return [i for i, c in enumerate(counts) if c >= need]
 
 
+def word_spans(clip: np.ndarray) -> Dict[int, Tuple[float, float]]:
+    """Where each word sits in the clip, in seconds: real word timings."""
+    loud = np.flatnonzero(np.abs(clip) > 0.01)
+    if not len(loud):
+        return {}
+    ids = np.rint((np.abs(clip[loud]) - _AMP_BASE) / _AMP_STEP).astype(int)
+    spans: Dict[int, Tuple[float, float]] = {}
+    for i in np.unique(ids):
+        where = loud[ids == i]
+        spans[int(i)] = (where[0] / SR, (where[-1] + 1) / SR)
+    return spans
+
+
 def energy_vad(audio: np.ndarray, min_silence_ms: int = 300, speech_pad_ms: int = 200) -> List[SpeechMark]:
     """Exact VAD for the synthetic signal, padded and merged like Silero."""
     frame = int(0.03 * SR)
@@ -142,8 +155,20 @@ class SimEngine:
     that many run at once, each slowed by OVERLAP_SLOWDOWN while overlapped.
     A cloud engine is neither: calls are independent network requests."""
 
-    def __init__(self, cost: CostModel, serial: bool, workers: int = 1) -> None:
+    #: Local engines running right now, across every instance: two local models
+    #: (tiny.en live, small.en polishing in the background) share the CPU.
+    _cpu_busy = 0
+    _cpu_lock = threading.Lock()
+
+    def __init__(
+        self, cost: CostModel, serial: bool, workers: int = 1,
+        name: str = "sim", weak_every: int = 0,
+    ) -> None:
         self.cost = cost
+        self.name = name
+        # Every third group of *weak_every* words is heard badly (0.55), so a
+        # share of chunks falls under the polish ceiling as real audio does.
+        self.weak_every = weak_every
         self.workers = workers
         slots = 1 if serial and workers <= 1 else workers if serial else 0
         self._lock = threading.BoundedSemaphore(slots) if slots else None
@@ -153,6 +178,9 @@ class SimEngine:
 
     def capabilities(self) -> EngineCaps:
         return EngineCaps(word_confidence=True, hotwords=False, cost=self.cost)
+
+    def identity(self) -> str:
+        return self.name
 
     def preload(self) -> None:
         pass
@@ -165,25 +193,39 @@ class SimEngine:
         return self._decode(clip)
 
     def _decode(self, clip: np.ndarray) -> AsrResult:
+        local = self._lock is not None
         with self._busy_lock:
             self.calls += 1
             self._busy += 1
-            overlapped = self._busy > 1 and self._lock is not None
+        with SimEngine._cpu_lock:
+            if local:
+                SimEngine._cpu_busy += 1
+            overlapped = local and SimEngine._cpu_busy > 1
         try:
             cost = self.cost.estimate(len(clip) / SR)
             time.sleep(cost * (OVERLAP_SLOWDOWN if overlapped else 1.0))
         finally:
             with self._busy_lock:
                 self._busy -= 1
+            with SimEngine._cpu_lock:
+                if local:
+                    SimEngine._cpu_busy -= 1
         ids = word_indices(clip)
+        spans = word_spans(clip)
         words = tuple(
-            Word(f"w{i}", 0.0, 0.0, 0.95) for i in ids
+            Word(f"w{i}", spans[i][0], spans[i][1], self._confidence(i)) for i in ids
         )
         text = " ".join(w.text for w in words)
         return AsrResult(text=text, segments=(AsrSegment(text, 0.0, len(clip) / SR, words),) if words else ())
 
 
 # -- the run ----------------------------------------------------------------
+
+    def _confidence(self, index: int) -> float:
+        if self.weak_every and (index // self.weak_every) % 3 == 0:
+            return 0.55
+        return 0.95
+
 
 def _seen(text: str) -> List[int]:
     out = []
@@ -197,16 +239,25 @@ def _seen(text: str) -> List[int]:
 def run(
     engine_name: str, policy: Optional[ChunkPolicy], seconds: float,
     workers: int = 1, cycle_sec: float = CYCLE_SEC,
-    seed: int = SEED,
+    seed: int = SEED, final: str = "same", background: bool = True,
 ) -> Dict[str, object]:
     audio, words = build_dictation(seconds, seed)
-    engine = SimEngine(ENGINES[engine_name], serial=(engine_name == "local"), workers=workers)
+    local = engine_name == "local"
+    engine = SimEngine(ENGINES[engine_name], serial=local, workers=workers, name="live", weak_every=4)
+    # "small": a distinct accurate model (small.en's measured ~3.8s per call)
+    # re-decodes weak chunks; "same": the live engine answers both, as with a
+    # Deepgram key, and the polish is skipped.
+    final_engine = (
+        SimEngine(CostModel(fixed_sec=3.8, per_audio_sec=0.04), serial=True, name="small")
+        if final == "small" else engine
+    )
     plan = plan_for(engine.capabilities())
     session = LiveSession(
-        engine, engine,
+        engine, final_engine,
         policy=policy or plan.policy,
         preview_min_tail_sec=plan.preview_min_tail_sec,
         cleanup_level="none",
+        background_polish=background,
     )
     shown: Dict[int, float] = {}
     kept: Dict[int, float] = {}
@@ -241,6 +292,12 @@ def run(
             threading.Thread(target=cycle, daemon=True).start()
     while busy.is_set():
         time.sleep(0.01)
+    audio_end = time.time() - started
+    stop = time.time()
+    session.close_open_tail_fast()
+    handback_sec = time.time() - stop
+    final_text = session.finalize()
+    settled_sec = time.time() - stop
 
     spoken = {w.index: w.end_sec for w in words}
     kept_lag = [kept[i] - spoken[i] for i in spoken if i in kept]
@@ -252,6 +309,12 @@ def run(
 
     used = policy or plan.policy
     return {
+        "final": final,
+        "background": background,
+        "handback_sec": round(handback_sec, 2),
+        "settled_after_stop_sec": round(settled_sec, 2),
+        "final_complete": _seen(final_text) == [w.index for w in words],
+        "audio_sec": round(audio_end, 1),
         "engine": engine_name,
         "workers": workers,
         "cycle_sec": cycle_sec,
@@ -280,6 +343,9 @@ def main() -> None:
     ap.add_argument("--seconds", type=float, default=45.0)
     ap.add_argument("--workers", type=int, default=1, help="concurrent decodes the local engine allows")
     ap.add_argument("--seed", type=int, default=SEED, help="which synthetic dictation")
+    ap.add_argument("--final", choices=("same", "small"), default="same",
+                    help="accurate engine: the live one, or a distinct small.en-priced one")
+    ap.add_argument("--no-background", action="store_true", help="polish only after Stop")
     ap.add_argument("--cycle", type=float, default=CYCLE_SEC, help="seconds between cycles (live_cycle_sec)")
     args = ap.parse_args()
     install_fake_vad()
@@ -287,7 +353,8 @@ def main() -> None:
     if args.policy != "auto":
         lo, soft, force = (float(x) for x in args.policy.split(","))
         policy = ChunkPolicy(min_sec=lo, soft_max_sec=soft, force_cut_sec=force)
-    print(json.dumps(run(args.engine, policy, args.seconds, args.workers, args.cycle, args.seed)))
+    print(json.dumps(run(args.engine, policy, args.seconds, args.workers, args.cycle, args.seed,
+                         args.final, not args.no_background)))
 
 
 if __name__ == "__main__":

@@ -99,6 +99,7 @@ class LiveTranscribeWorker(QObject):
         preview_max_lag_sec: float = 3.0,
         trailing_silence_sec: float = 0.6,
         streaming: bool = True,
+        background_polish: bool = True,
     ) -> None:
         super().__init__()
         self.audio_path = audio_path
@@ -121,6 +122,7 @@ class LiveTranscribeWorker(QObject):
         self._chunk_policy = chunk_policy
         self._trailing_silence_sec = float(trailing_silence_sec)
         self._streaming = bool(streaming)
+        self._background_polish = bool(background_polish)
         self._session: Optional[LiveSession] = None
         self._keep_running = True
         self._final_requested = False
@@ -258,6 +260,7 @@ class LiveTranscribeWorker(QObject):
             polish_vad_filter=self.vad_enabled,
             on_decoded=self._emit_absolute_segments,
             streaming=self._streaming,
+            background_polish=self._background_polish,
         )
 
     def _run_final_polish(self) -> None:
