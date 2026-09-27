@@ -10,9 +10,9 @@ structurally, with no inheritance and no import of this module required.
 
 from __future__ import annotations
 
-from typing import Any, Hashable, Protocol, runtime_checkable
+from typing import Any, Hashable, List, Protocol, runtime_checkable
 
-from src.dictation.asr.types import AsrResult, EngineCaps, TranscribeContext
+from src.dictation.asr.types import AsrResult, EngineCaps, StreamEvent, TranscribeContext
 
 
 @runtime_checkable
@@ -29,6 +29,37 @@ class AsrEngine(Protocol):
 
     def preload(self) -> None:
         """Load the model now instead of on the first ``transcribe()`` call."""
+        ...
+
+
+class AsrStream(Protocol):
+    """One open streaming session. Thread-safe: audio is pushed from one
+    thread while events are polled from another."""
+
+    def push(self, pcm16: bytes) -> None:
+        """Send 16-bit little-endian mono PCM at 16 kHz. Never blocks on the network."""
+        ...
+
+    def poll(self) -> List[StreamEvent]:
+        """Every event received since the last call, oldest first. Never blocks."""
+        ...
+
+    def finalize(self, timeout: float) -> bool:
+        """Ask for everything pushed so far to be settled, and wait up to
+        *timeout* seconds for it. ``True`` when it all arrived."""
+        ...
+
+    def close(self) -> None:
+        ...
+
+
+@runtime_checkable
+class StreamingAsrEngine(Protocol):
+    """An engine that can also transcribe audio as it arrives
+    (``EngineCaps.streaming``). Opening may raise; the caller falls back to
+    decoding chunks with :meth:`AsrEngine.transcribe`."""
+
+    def open_stream(self, ctx: TranscribeContext) -> AsrStream:
         ...
 
 

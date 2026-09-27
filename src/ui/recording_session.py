@@ -269,6 +269,7 @@ def on_start_recording(window: MainWindow) -> None:
             if window.settings.get("chunk_policy") == MANUAL else None
         ),
         trailing_silence_sec=float(window.settings.get("chunk_trailing_silence_sec")),
+        streaming=bool(window.settings.get("asr_streaming")),
         live_beam_size=int(window.settings.get("live_beam_size")),
         final_beam_size=int(window.settings.get("final_beam_size")),
         polish_confidence_ceiling=float(window.settings.get("polish_confidence_ceiling")),

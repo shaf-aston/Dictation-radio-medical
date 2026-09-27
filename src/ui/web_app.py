@@ -949,6 +949,7 @@ def _live_session(settings, prefs: dict) -> LiveSession:
         cleanup_level=prefs["cleanup_level"],
         policy=plan.policy,
         preview_min_tail_sec=plan.preview_min_tail_sec,
+        streaming=bool(settings.get("asr_streaming", get_default("asr_streaming"))),
         pause_threshold=float(settings.get("pause_threshold", 2.5)),
         live_beam_size=int(settings.get("live_beam_size")),
         final_beam_size=int(settings.get("final_beam_size")),
@@ -1135,6 +1136,10 @@ async def dictate_socket(ws: WebSocket) -> None:
     finally:
         if cycle_task is not None and not cycle_task.done():
             cycle_task.cancel()
+        # The engine's live socket, if one is open: closing joins its threads,
+        # so it is done off the event loop.
+        with contextlib.suppress(Exception):
+            await anyio.to_thread.run_sync(session.close)
         with contextlib.suppress(Exception):
             await ws.close()
 

@@ -86,9 +86,17 @@ def clear_api_key() -> None:
 class DeepgramEngine:
     """Cloud ASR via Deepgram's Listen API, tuned for medical dictation."""
 
-    def __init__(self, model_name: str = DEFAULT_MODEL, language: str = "en-US") -> None:
+    def __init__(
+        self,
+        model_name: str = DEFAULT_MODEL,
+        language: str = "en-US",
+        live_url: Optional[str] = None,
+    ) -> None:
         self.model_name = model_name
         self.language = language
+        # The live socket's address; None is Deepgram's own. Tests point it
+        # at a local stand-in server.
+        self.live_url = live_url
 
     # -- port -----------------------------------------------------------
 
@@ -117,6 +125,19 @@ class DeepgramEngine:
             word_confidence=True, hotwords=False,
             cost=CostModel(fixed_sec=0.2, per_audio_sec=0.01),
             network=True,
+            streaming=True,
+        )
+
+    def open_stream(self, ctx: TranscribeContext) -> Any:
+        """A live socket (see deepgram_stream.py). Raises when it cannot open."""
+        from src.dictation.asr.engines import deepgram_stream
+
+        api_key = get_api_key()
+        if not api_key:
+            raise DeepgramMissingKeyError("No Deepgram API key in the OS keychain")
+        return deepgram_stream.open_stream(
+            api_key, self.model_name, self.language, _boosted_keywords(),
+            url=self.live_url,
         )
 
     def identity(self) -> tuple:

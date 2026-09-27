@@ -46,6 +46,11 @@ _DEFAULTS: dict = {
     # persists every default it was written with, so those numbers are
     # literally in it.
     "chunk_policy": "auto",
+    # When the live engine can stream (Deepgram's live socket), let it: audio
+    # goes up as it is spoken, and settled text comes back at each pause
+    # instead of waiting for a chunk to close. Any failure falls back to
+    # decoding chunks for the rest of the dictation. False: always chunks.
+    "asr_streaming": True,
     # 2 / 5 measured best on the replay harness (docs/dictation-accuracy.md,
     # 2026-09-06): commit lag p50 4.78s -> 2.93s and lower term error than 6 / 15.
     "chunk_min_sec": 2.0,

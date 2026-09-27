@@ -111,6 +111,25 @@ class ChainEngine:
 
         return engine_identity(self.active()[1])
 
+    def open_stream(self, ctx: TranscribeContext) -> Any:
+        """A live stream from the provider that would answer next.
+
+        Raises when that provider cannot stream or the socket will not open;
+        the caller then decodes chunks through :meth:`transcribe`, which keeps
+        its own failover. A rejected key is remembered like a 401 on a decode.
+        """
+        name, engine = self.active()
+        if not engine.capabilities().streaming:
+            raise RuntimeError(f"ASR provider {name!r} cannot stream")
+        try:
+            return engine.open_stream(ctx)
+        except ProviderUnavailable:
+            _DEAD_PROVIDERS.add(name)
+            raise
+        except Exception:
+            _note_failure(name)
+            raise
+
     def active(self) -> Tuple[str, Any]:
         """``(name, engine)`` of the provider the next call will try first.
 

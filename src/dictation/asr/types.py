@@ -124,6 +124,51 @@ class TranscribeContext:
     hotwords: Optional[Sequence[str]] = None
 
 
+# -- streaming ---------------------------------------------------------------
+#
+# A streaming engine is handed audio as it arrives and answers as it hears it,
+# instead of being handed a finished clip. Three things come back, and the
+# stream layer (stream/live_session.py) maps each one onto what it already has:
+
+@dataclass(frozen=True)
+class StreamInterim:
+    """A guess at the words since the last final: the live preview."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class StreamFinal:
+    """Settled text for ``[start, end)`` seconds of the stream: one ledger chunk.
+
+    Times are in seconds of audio from the first sample pushed to the stream.
+    Consecutive finals tile the stream: each starts where the last ended, so
+    they commit in order exactly the way closed chunks do.
+    """
+
+    text: str
+    start: float
+    end: float
+    words: Tuple[Word, ...] = ()
+
+    def as_result(self) -> AsrResult:
+        return AsrResult(
+            text=self.text,
+            segments=(AsrSegment(self.text, 0.0, self.end - self.start, self.words),)
+            if self.text else (),
+        )
+
+
+@dataclass(frozen=True)
+class StreamError:
+    """The stream is gone (dropped socket, rejected key). Nothing more will come."""
+
+    message: str
+
+
+StreamEvent = Union[StreamInterim, StreamFinal, StreamError]
+
+
 class ProviderUnavailable(RuntimeError):
     """This engine cannot work until something outside the app changes.
 

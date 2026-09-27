@@ -98,6 +98,7 @@ class LiveTranscribeWorker(QObject):
         polish_confidence_ceiling: float = 0.75,
         preview_max_lag_sec: float = 3.0,
         trailing_silence_sec: float = 0.6,
+        streaming: bool = True,
     ) -> None:
         super().__init__()
         self.audio_path = audio_path
@@ -119,6 +120,7 @@ class LiveTranscribeWorker(QObject):
         # known once run() has built the engine.
         self._chunk_policy = chunk_policy
         self._trailing_silence_sec = float(trailing_silence_sec)
+        self._streaming = bool(streaming)
         self._session: Optional[LiveSession] = None
         self._keep_running = True
         self._final_requested = False
@@ -212,6 +214,8 @@ class LiveTranscribeWorker(QObject):
         except Exception as exc:
             logger.error("Worker error: %s", exc, exc_info=True)
         finally:
+            if self._session is not None:
+                self._session.close()
             if self._session is not None and self._session.audio_sec > 0:
                 perf.set_gauge(
                     "stream.decode_ratio",
@@ -253,6 +257,7 @@ class LiveTranscribeWorker(QObject):
             postprocess=False,
             polish_vad_filter=self.vad_enabled,
             on_decoded=self._emit_absolute_segments,
+            streaming=self._streaming,
         )
 
     def _run_final_polish(self) -> None:
@@ -265,6 +270,10 @@ class LiveTranscribeWorker(QObject):
         assert self._session is not None
         self._feed_new_audio()
         t0 = time.time()
+        # Settle the still-open tail first (a streaming engine flushes its
+        # socket; otherwise the fast model decodes it), as the web does, so the
+        # polish below only upgrades text that is already complete.
+        self._session.close_open_tail_fast()
         # This pass can take seconds, after the radiologist has pressed Stop:
         # say what it is doing rather than leaving the window looking hung.
         final = self._session.finalize(

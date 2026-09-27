@@ -16,6 +16,7 @@ accurate one that re-decodes after Stop.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
@@ -25,7 +26,7 @@ import numpy as np
 from src.core import event_log
 from src.dictation.asr import AsrEngine, TranscribeContext
 from src.dictation.asr.port import engine_identity
-from src.dictation.asr.types import AsrResult
+from src.dictation.asr.types import AsrResult, StreamError, StreamFinal, StreamInterim
 from src.dictation.postprocess.incremental import IncrementalPostprocessor
 from src.dictation.stream.ledger import ChunkLedger, close_sentence
 from src.dictation.stream.polish import polish
@@ -93,6 +94,7 @@ class LiveSession:
         postprocess: bool = True,
         polish_vad_filter: bool = False,
         on_decoded: Optional[Callable[[AsrResult, int], None]] = None,
+        streaming: bool = True,
     ) -> None:
         self.live_engine = live_engine
         self.final_engine = final_engine
@@ -119,6 +121,22 @@ class LiveSession:
         # Seconds of audio handed to an engine, all stages: over the recording's
         # length this is stream.decode_ratio.
         self.decode_audio_sec = 0.0
+
+        # Streaming mode: when the live engine can take audio as it arrives
+        # (EngineCaps.streaming, Deepgram's live socket), the engine itself
+        # settles text at each endpoint and sends interim guesses, so there is
+        # no VAD, no chunk cutting and no re-decoded preview on this side:
+        # each settled result is committed straight into the same ledger.
+        # "untried" until the first cycle opens it (never in the constructor,
+        # which the web app calls on its event loop); "off" for good once it
+        # fails, and the chunked loop carries on from the ledger's frontier.
+        self._stream_state = "untried" if streaming else "off"
+        self._stream = None
+        self._stream_origin = 0   # absolute sample of the stream's time zero
+        self._stream_sent = 0     # absolute samples pushed to the stream so far
+        # feed() runs on the caller's thread (the web app's event loop) and the
+        # stream opens on the cycle thread: both append-and-push under this.
+        self._push_lock = threading.Lock()
 
         self._ledger = ChunkLedger(policy, pause_threshold=pause_threshold, sr=sr)
         self._agreement = LocalAgreement2()
@@ -159,13 +177,28 @@ class LiveSession:
         """Append one block of mono float32 audio at :attr:`sr`."""
         if block.dtype != np.float32:
             block = block.astype(np.float32)
-        needed = self._len + len(block)
-        if needed > len(self._buf):
-            grown = np.zeros(max(needed, len(self._buf) * 2), dtype=np.float32)
-            grown[: self._len] = self._buf[: self._len]
-            self._buf = grown
-        self._buf[self._len : needed] = block
-        self._len = needed
+        with self._push_lock:
+            needed = self._len + len(block)
+            if needed > len(self._buf):
+                grown = np.zeros(max(needed, len(self._buf) * 2), dtype=np.float32)
+                grown[: self._len] = self._buf[: self._len]
+                self._buf = grown
+            self._buf[self._len : needed] = block
+            self._len = needed
+            if self._stream is not None:
+                self._push_unsent()
+
+    def _push_unsent(self) -> None:
+        """Send the stream every sample it has not had yet. Hold _push_lock."""
+        pcm = self._buf[self._stream_sent : self._len]
+        if len(pcm):
+            self._stream_sent = self._len
+            self._stream.push((np.clip(pcm, -1.0, 1.0) * 32767.0).astype("<i2").tobytes())
+
+    @property
+    def streaming(self) -> bool:
+        """True while the live engine's own socket is doing the live work."""
+        return self._stream is not None
 
     @property
     def total_samples(self) -> int:
@@ -218,6 +251,11 @@ class LiveSession:
         repeat itself. :meth:`feed` only ever appends beyond the snapshot, so a
         snapshot stays valid for the whole cycle even if the buffer is replaced.
         """
+        if self._stream_state == "untried":
+            self._open_stream()
+        if self._stream is not None:
+            return self._cycle_streaming()
+
         buf, total = self._buf, self._len
         tail_start = self._ledger.open_start_sample
         tail_audio = buf[tail_start:total]
@@ -263,6 +301,10 @@ class LiveSession:
             preview = self._decode_open_tail(chunks, marks, tail_audio, tail_start)
             self._last_stable = preview
 
+        return self._update(preview, state)
+
+    def _update(self, preview: str, state: str) -> Optional[LiveUpdate]:
+        """The update to show, or ``None`` when it is what was shown last."""
         # Only the frozen half is post-processed. The preview is a guess about
         # words still being spoken; running the correction pipeline over it
         # would make finished words visibly change their minds.
@@ -278,6 +320,79 @@ class LiveSession:
             return None
         self._last_update = update
         return update
+
+    # -- streaming mode -------------------------------------------------
+
+    def _open_stream(self) -> None:
+        """Try the live engine's socket once; on any failure, chunks it is."""
+        self._stream_state = "off"
+        try:
+            if not self.live_engine.capabilities().streaming:
+                return
+            with event_log.timed("asr", "live stream open", stage="stream.open"):
+                stream = self.live_engine.open_stream(self._context(
+                    self.live_beam_size, want_confidence=True, condition=False,
+                ))
+        except Exception as exc:
+            logger.warning("Live stream unavailable (%s); decoding chunks instead", exc)
+            event_log.emit("live", "stream unavailable, decoding chunks", error=str(exc))
+            return
+        with self._push_lock:
+            self._stream = stream
+            self._stream_origin = self._stream_sent = self._ledger.open_start_sample
+            self._push_unsent()
+        self._stream_state = "open"
+        event_log.emit("live", "streaming from the engine's live socket")
+
+    def _cycle_streaming(self) -> Optional[LiveUpdate]:
+        preview = self._last_stable
+        for event in self._stream.poll():
+            if isinstance(event, StreamFinal):
+                self._commit_final(event)
+                preview = self._last_stable = ""
+            elif isinstance(event, StreamInterim):
+                # Interims are revised as more audio arrives; the same
+                # never-take-a-word-back rule as the chunked preview applies.
+                preview = self._last_stable = self._agreement.update(event.text)
+            elif isinstance(event, StreamError):
+                self._drop_stream(event.message)
+                break
+        return self._update(preview, STATE_LIVE)
+
+    def _commit_final(self, final: StreamFinal) -> None:
+        start = self._ledger.open_start_sample
+        end = self._stream_origin + int(round(final.end * self.sr))
+        # Finals tile the stream, so `end` only ever moves forward; clamped so
+        # a server's rounding can never commit audio this session never had.
+        end = min(max(end, start), self._len)
+        result = final.as_result()
+        self._ledger.commit(Chunk(start, end, closed=True), final.text, mean_confidence(result))
+        self._note_uncertain(result)
+        self.decode_audio_sec += (end - start) / self.sr
+        self._agreement.reset()
+        if final.text:
+            self._chunks_decoded += 1
+            self._decoded(result, start)
+
+    def _drop_stream(self, why: str) -> None:
+        """The socket is gone: carry on decoding chunks from the frontier."""
+        logger.warning("Live stream dropped (%s); decoding chunks from %.1fs",
+                       why, self.committed_sec)
+        event_log.emit("live", "stream dropped, decoding chunks", error=why)
+        self.close()
+        self._agreement.reset()
+        self._last_stable = ""
+
+    def close(self) -> None:
+        """Close the live socket, if one is open. Safe to call more than once."""
+        with self._push_lock:
+            stream, self._stream = self._stream, None
+            self._stream_state = "off"
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception as exc:
+                logger.debug("Closing the live stream failed: %s", exc)
 
     def _commit_closed(
         self, chunks: List[Chunk], marks: List[SpeechMark],
@@ -399,6 +514,18 @@ class LiveSession:
         regardless of confidence -- speed was the reason it was decoded by the
         fast model, so it has not earned the benefit of the doubt.
         """
+        if self._stream is not None:
+            # Ask the socket to settle everything it has been sent. Measured in
+            # a few hundred milliseconds when it is healthy; if it is not, the
+            # audio is still here and the chunk decode below covers it.
+            stream = self._stream
+            with event_log.timed("asr", "live stream flush", stage="stream.flush"):
+                stream.finalize(timeout=2.0)
+            for event in stream.poll():
+                if isinstance(event, StreamFinal):
+                    self._commit_final(event)
+            self.close()
+            self._last_stable = ""
         end = self._len
         tail = self._buf[self._ledger.open_start_sample:end]
         if not len(tail) or not detect_speech(tail):
@@ -482,6 +609,22 @@ class LiveSession:
 
     # -- internals ------------------------------------------------------
 
+    def _context(
+        self, beam_size: int, *, want_confidence: bool, condition: bool,
+        vad_filter: bool = False,
+    ) -> TranscribeContext:
+        return TranscribeContext(
+            language=self.language,
+            # Live chunks are already cut at a VAD boundary.
+            vad_filter=vad_filter,
+            beam_size=beam_size,
+            pause_threshold=self.pause_threshold,
+            condition_on_previous_text=condition,
+            initial_prompt=self.initial_prompt,
+            want_word_confidence=want_confidence,
+            temperature=0.0,
+        )
+
     def _decode(
         self,
         engine: AsrEngine,
@@ -509,16 +652,9 @@ class LiveSession:
             ) as note:
                 result = engine.transcribe(
                     clip,
-                    TranscribeContext(
-                        language=self.language,
-                        # Live chunks are already cut at a VAD boundary.
-                        vad_filter=vad_filter,
-                        beam_size=beam_size,
-                        pause_threshold=self.pause_threshold,
-                        condition_on_previous_text=condition,
-                        initial_prompt=self.initial_prompt,
-                        want_word_confidence=want_confidence,
-                        temperature=0.0,
+                    self._context(
+                        beam_size, want_confidence=want_confidence,
+                        condition=condition, vad_filter=vad_filter,
                     ),
                 )
                 note["words"] = len(result.text.split())
