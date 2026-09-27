@@ -36,8 +36,25 @@ _DEFAULTS: dict = {
     # chunk_soft_max_sec if one exists, otherwise force-cut at
     # chunk_force_cut_sec regardless of whether a pause was found (the only
     # case that can land mid-word: see ChunkPolicy's docstring).
-    "chunk_min_sec": 6.0,
-    "chunk_soft_max_sec": 15.0,
+    #
+    # "auto" (the default) ignores the three numbers below and sizes chunks
+    # from what the ASR engine says a call costs (src/dictation/stream/
+    # policy.py): long chunks for local Whisper, which pays ~1-4s per call,
+    # short ones for a ~0.2s cloud engine, where long chunks only make the kept
+    # text trail the microphone. "manual" uses the numbers verbatim. Auto is
+    # also what moves an existing install off the old 6 / 15 / 20: this file
+    # persists every default it was written with, so those numbers are
+    # literally in it.
+    "chunk_policy": "auto",
+    # When the live engine can stream (Deepgram's live socket), let it: audio
+    # goes up as it is spoken, and settled text comes back at each pause
+    # instead of waiting for a chunk to close. Any failure falls back to
+    # decoding chunks for the rest of the dictation. False: always chunks.
+    "asr_streaming": True,
+    # 2 / 5 measured best on the replay harness (docs/dictation-accuracy.md,
+    # 2026-09-06): commit lag p50 4.78s -> 2.93s and lower term error than 6 / 15.
+    "chunk_min_sec": 2.0,
+    "chunk_soft_max_sec": 5.0,
     "chunk_force_cut_sec": 20.0,
     # The last thing said before a pause used to wait for the speaker to start
     # talking again, because a cut point had to be a pause with more speech
@@ -72,6 +89,13 @@ _DEFAULTS: dict = {
     "preview_min_tail_sec": 1.0,
     # committed chunks below this mean word confidence get one re-decode after stop
     "polish_confidence_ceiling": 0.75,
+    # ...and, with this on, most of them get it WHILE you are still dictating:
+    # the accurate model re-decodes weak chunks a chunk or more behind the
+    # live text, so Stop has little left to improve. Simulated on a 90s local
+    # dictation (scripts/eval/simulate_lag.py): the final text settled 4-5s
+    # after Stop instead of 29-40s, for ~0.2s more live lag from sharing the
+    # CPU. Never runs when the accurate model is the live one (Deepgram).
+    "background_polish": True,
     # A single word below this confidence gets a faint underline in the report.
     # Lower than polish_confidence_ceiling on purpose: that one decides whether
     # a whole chunk is worth re-decoding, this one decides whether one word is

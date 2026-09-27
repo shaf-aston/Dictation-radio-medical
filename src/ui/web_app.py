@@ -29,7 +29,7 @@ from src.dictation.postprocess.pipeline import (
 from src.dictation.asr import AsrEngine, TranscribeContext, create_engine
 from src.dictation.stream.live_session import LiveSession
 from src.dictation.stream.rules import build_context_prompt
-from src.dictation.stream.segmenter import ChunkPolicy
+from src.dictation.stream.policy import plan_from_settings
 from src.dictation.asr.models import SUPPORTED_MODELS, resolve_model
 from src.features.accent_corrections import ACCENT_LABELS
 from src.features.clinical_disclaimer import (
@@ -921,34 +921,36 @@ def _live_session(settings, prefs: dict) -> LiveSession:
     """Build a session from saved settings: the only place the knobs are read."""
     live_model = resolve_model(settings.get("live_model_size", get_default("live_model_size")))
     final_model = resolve_model(prefs.get("model_size") or settings.get("model_size"))
+    live_engine = _get_engine(live_model)
+    # Chunk lengths and preview pacing come from what the engine that will
+    # actually answer says a call costs (stream/policy.py), unless the
+    # settings file asks for its own numbers.
+    plan = plan_from_settings(settings.get, live_engine.capabilities())
     # The knobs are read here and nowhere else, so this is the one honest place
     # to say which of them a recording actually ran with.
     event_log.emit(
         "live", "dictation session configured",
         live_model=live_model, final_model=final_model,
         language=prefs["language"], accent=prefs["accent"], cleanup=prefs["cleanup_level"],
-        chunk_min_sec=float(settings.get("chunk_min_sec")),
-        chunk_soft_max_sec=float(settings.get("chunk_soft_max_sec")),
-        chunk_force_cut_sec=float(settings.get("chunk_force_cut_sec")),
+        chunk_plan=plan.row,
+        chunk_min_sec=plan.policy.min_sec,
+        chunk_soft_max_sec=plan.policy.soft_max_sec,
+        chunk_force_cut_sec=plan.policy.force_cut_sec,
         live_beam_size=int(settings.get("live_beam_size")),
         final_beam_size=int(settings.get("final_beam_size")),
         preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
-        preview_min_tail_sec=float(
-            settings.get("preview_min_tail_sec", get_default("preview_min_tail_sec"))
-        ),
+        preview_min_tail_sec=plan.preview_min_tail_sec,
     )
     return LiveSession(
-        _get_engine(live_model),
+        live_engine,
         _get_engine(final_model),
         language=prefs["language"],
         accent=prefs["accent"],
         cleanup_level=prefs["cleanup_level"],
-        policy=ChunkPolicy(
-            min_sec=float(settings.get("chunk_min_sec")),
-            soft_max_sec=float(settings.get("chunk_soft_max_sec")),
-            force_cut_sec=float(settings.get("chunk_force_cut_sec")),
-            trailing_silence_sec=float(settings.get("chunk_trailing_silence_sec")),
-        ),
+        policy=plan.policy,
+        preview_min_tail_sec=plan.preview_min_tail_sec,
+        streaming=bool(settings.get("asr_streaming", get_default("asr_streaming"))),
+        background_polish=bool(settings.get("background_polish", get_default("background_polish"))),
         pause_threshold=float(settings.get("pause_threshold", 2.5)),
         live_beam_size=int(settings.get("live_beam_size")),
         final_beam_size=int(settings.get("final_beam_size")),
@@ -1135,6 +1137,10 @@ async def dictate_socket(ws: WebSocket) -> None:
     finally:
         if cycle_task is not None and not cycle_task.done():
             cycle_task.cancel()
+        # The engine's live socket, if one is open: closing joins its threads,
+        # so it is done off the event loop.
+        with contextlib.suppress(Exception):
+            await anyio.to_thread.run_sync(session.close)
         with contextlib.suppress(Exception):
             await ws.close()
 

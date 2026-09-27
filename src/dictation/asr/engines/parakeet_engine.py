@@ -33,7 +33,14 @@ import logging
 from pathlib import Path
 from typing import Any, List, Optional, Sequence, Tuple
 
-from src.dictation.asr.types import AsrResult, AsrSegment, EngineCaps, TranscribeContext, Word
+from src.dictation.asr.types import (
+    LOCAL_DECODE_COST,
+    AsrResult,
+    AsrSegment,
+    EngineCaps,
+    TranscribeContext,
+    Word,
+)
 from src.features.file_manager import onnx_asr_cache_dir
 
 logger = logging.getLogger(__name__)
@@ -81,8 +88,14 @@ class ParakeetEngine:
         if self._model is None:
             self._model = self._load()
 
+    def identity(self) -> tuple:
+        return ("parakeet", self.model_name, self.quantization)
+
     def capabilities(self) -> EngineCaps:
-        return EngineCaps(word_confidence=True, hotwords=False)
+        # No 30s pad (a CTC/TDT model prices by audio length), but its cost on
+        # this project's hardware has never been measured, so it declares the
+        # conservative local price rather than guessing a cheaper one.
+        return EngineCaps(word_confidence=True, hotwords=False, cost=LOCAL_DECODE_COST)
 
     def transcribe(self, audio: Any, ctx: TranscribeContext) -> AsrResult:
         source = _as_input(audio)
