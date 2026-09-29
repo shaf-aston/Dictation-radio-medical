@@ -36,6 +36,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QTextEdit
 
+from src.features.adaptive_learning import get_adaptive_learning
 from src.medical.term_lookup import Span, suspect_terms
 from src.ui.theme import tokens
 
@@ -98,7 +99,10 @@ class TermMarks(QObject):
             # mark a sentence that no longer exists a second later.
             self.clear()
             return
-        self._spans = suspect_terms(self._editor.toPlainText())
+        self._spans = suspect_terms(
+            self._editor.toPlainText(),
+            frozenset(get_adaptive_learning().custom_terms()),
+        )
         self._paint()
 
     def count(self) -> int:

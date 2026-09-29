@@ -112,6 +112,8 @@
                 <div id="tpSpelling" class="tp-tier"></div>
                 <div id="tpRelated" class="tp-tier tp-quiet"></div>
                 <p class="tp-foot">Click one to replace the highlighted text.</p>
+                <button id="tpKeep" class="btn btn-quiet tp-keep" type="button"
+                        title="It is right as spoken: stop marking this word">Keep as is</button>
             </div>
 
             <div class="stage-foot">
@@ -278,6 +280,21 @@
 <!-- First-launch clinical disclaimer. The wording is not here: it comes from
      src/features/clinical_disclaimer.py through the bootstrap payload, so the
      desktop dialog and this modal cannot say different things. -->
+<div id="learningModal" class="scrim" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="learningTitle"
+         aria-describedby="learningText">
+        <h2 id="learningTitle" class="modal-title">Learn from your corrections?</h2>
+        <p id="learningText" class="modal-text">When you fix a word, or tell a marked
+            word to stay as it is, Radio Dictate can remember it on this computer and
+            get it right next time. Nothing leaves this computer. You can say no;
+            dictation works the same either way.</p>
+        <div class="modal-foot">
+            <button id="learningNoBtn" class="btn btn-quiet" type="button">No, do not learn</button>
+            <button id="learningYesBtn" class="btn btn-primary" type="button">Yes, learn</button>
+        </div>
+    </div>
+</div>
+
 <div id="disclaimerModal" class="scrim" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="disclaimerTitle"
          aria-describedby="disclaimerText">

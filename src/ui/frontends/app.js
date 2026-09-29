@@ -724,6 +724,7 @@ newReportBtn.addEventListener('click', () => {
     if (hasContent && !confirm('Clear the current report and patient information?')) {
         return;
     }
+    flushLearning();
     editor.value = '';
     undoStack = [''];
     undoIndex = 0;
@@ -738,14 +739,16 @@ newReportBtn.addEventListener('click', () => {
 clearBtn.addEventListener('click', () => {
     if (editor.value.trim() === '') return;
     if (confirm('Are you sure you want to clear all text? This cannot be undone.')) {
+        flushLearning();
         setEditorValue('');
         hideStatus();
         resetFindings();
     }
 });
 
-saveTxtBtn.addEventListener('click', () => downloadReport('txt'));
-exportWordBtn.addEventListener('click', () => downloadReport('word'));
+saveTxtBtn.addEventListener('click', () => { flushLearning(); downloadReport('txt'); });
+exportWordBtn.addEventListener('click', () => { flushLearning(); downloadReport('word'); });
+copyBtn.addEventListener('click', () => flushLearning());
 
 // Copy with visual feedback. The clipboard is an exit from the app, so it clears the
 // same release gate the downloads do before the text goes anywhere.
@@ -1228,6 +1231,7 @@ function openSocket() {
             uncertainWords = new Set(msg.uncertain || []);
             renderLiveText();
             handedOverText = editor.value;
+            learnSnapshot = editor.value;
             finishSession(null);
             // The hand-back is the last word count the trail will quote, so it
             // has to be this text's, not the last partial's.
@@ -1253,6 +1257,7 @@ function openSocket() {
                 committedText = improved;
                 uncertainWords = new Set(msg.uncertain || []);
                 renderLiveText();
+                learnSnapshot = editor.value;
                 pushUndoState();
                 announceReportChanged();
                 tl.words = devWordsIn(improved);
@@ -1415,6 +1420,7 @@ async function startRecording() {
         return;
     }
 
+    flushLearning();
     baseText = editor.value.trim();
     committedText = '';
     previewText = '';
@@ -1605,6 +1611,68 @@ function initDisclaimer() {
 }
 
 // ---------------------------------------------------------------------------
+// Learning from the radiologist. Two signals, both gated on the same consent
+// the desktop asks for: an explicit answer to a marked word (take a fix, or
+// keep it as spoken), and the one-word fixes made to a finished dictation,
+// sent when the report is committed. The rules for what counts live in
+// src/features/adaptive_learning.py; the browser only reports what happened.
+// ---------------------------------------------------------------------------
+
+let learningEnabled = !!(BOOTSTRAP.learning && BOOTSTRAP.learning.enabled);
+// What the last dictation handed over; null once its edits have been sent.
+let learnSnapshot = null;
+
+async function learnChoice(word, replacement) {
+    if (!learningEnabled || !word.trim()) return;
+    try {
+        await fetch('/api/learn/choice', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ word: word.trim(), replacement }),
+        });
+    } catch (err) {
+        console.warn('Could not record the choice:', err);
+    }
+}
+
+function flushLearning() {
+    const dictated = learnSnapshot;
+    learnSnapshot = null;
+    if (!learningEnabled || !dictated || dictated === editor.value) return;
+    const body = JSON.stringify({ dictated, final: editor.value });
+    // sendBeacon survives the page closing, which is one of the commit points.
+    if (!navigator.sendBeacon('/api/learn/session', new Blob([body], { type: 'application/json' }))) {
+        console.warn('Could not send dictation edits for learning');
+    }
+}
+
+function initLearningConsent() {
+    window.addEventListener('pagehide', flushLearning);
+    const info = BOOTSTRAP.learning;
+    // Never stacked on the disclaimer: that one comes first, this one next load.
+    if (!info || !info.consent_needed || (BOOTSTRAP.disclaimer && BOOTSTRAP.disclaimer.needed)) return;
+    const scrim = document.getElementById('learningModal');
+    const answer = async (enabled) => {
+        scrim.hidden = true;
+        learningEnabled = enabled;
+        try {
+            await fetch('/api/learn/consent', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled }),
+            });
+        } catch (err) {
+            showError('Your answer was not saved and will be asked again: ' + err.message);
+        }
+        editor.focus();
+    };
+    document.getElementById('learningYesBtn').addEventListener('click', () => answer(true));
+    document.getElementById('learningNoBtn').addEventListener('click', () => answer(false));
+    scrim.hidden = false;
+    document.getElementById('learningYesBtn').focus();
+}
+
+// ---------------------------------------------------------------------------
 // The neighbourhood of a highlighted word. Highlight a term and a small panel
 // offers what it might have been (spelling) and what goes with it (related).
 // Both lists, and their order, come from src/medical/term_lookup.py, the
@@ -1655,6 +1723,7 @@ function applyTermSuggestion(term) {
     const range = termPopSelection;
     hideTermPop();
     if (!range) return;
+    learnChoice(editor.value.slice(range.start, range.end), term);
     editor.value = editor.value.slice(0, range.start) + term + editor.value.slice(range.end);
     const caret = range.start + term.length;
     editor.setSelectionRange(caret, caret);
@@ -1686,6 +1755,8 @@ let marksRequest = 0;
 // machine guessed at this", the other says "this word has alternatives worth
 // seeing", and collapsing them into one mark would lose that difference.
 let uncertainWords = new Set();
+// The spans painted last, so a click on an underlined word can open its fixes.
+let markedSpans = [];
 let lookupUses = BOOTSTRAP.term_lookup_uses || 0;
 const lookupHintUses = BOOTSTRAP.term_lookup_hint_uses || 3;
 
@@ -1697,6 +1768,7 @@ function clearMarks() {
     marksRequest += 1;
     editorMarks.innerHTML = '';
     marksHint.hidden = true;
+    markedSpans = [];
 }
 
 // Every word the decoder was unsure of, wherever it appears in the report.
@@ -1723,6 +1795,7 @@ function paintMarks(spans) {
     const text = editor.value;
     const all = spans.concat(uncertainSpans(text, spans))
         .sort((a, b) => a.start - b.start);
+    markedSpans = all;
     const out = document.createDocumentFragment();
     let at = 0;
     all.forEach((span) => {
@@ -1953,7 +2026,9 @@ function renderTermTier(host, items) {
 function showTermPop(result, range) {
     const spelling = result.similar_spelling || [];
     const related = result.related || [];
-    if (!spelling.length && !related.length) {
+    // A marked word always opens, even with nothing to offer: "Keep as is"
+    // is still an answer. A plain highlight with nothing to show stays shut.
+    if (!spelling.length && !related.length && !range.marked) {
         hideTermPop();
         return;
     }
@@ -1981,7 +2056,7 @@ async function lookupSelectedTerm() {
     let end = editor.selectionEnd;
     while (start < end && /\s/.test(raw[start])) start += 1;
     while (end > start && /\s/.test(raw[end - 1])) end -= 1;
-    const range = { start, end };
+    const range = { start, end, marked: markedSpans.some((m) => m.start === start && m.end === end) };
     const selected = raw.slice(start, end);
     if (!selected) {
         hideTermPop();
@@ -2011,6 +2086,24 @@ function scheduleTermLookup() {
 }
 
 function initTermPop() {
+    // One click on an underlined word selects it, which opens its fixes. The
+    // marks sit behind the textarea, so the click is matched by caret offset.
+    editor.addEventListener('click', () => {
+        if (isRecording || editor.selectionStart !== editor.selectionEnd) return;
+        const at = editor.selectionStart;
+        const hit = markedSpans.find((m) => at >= m.start && at <= m.end);
+        if (hit) editor.setSelectionRange(hit.start, hit.end);
+    });
+    document.getElementById('tpKeep').addEventListener('click', () => {
+        const range = termPopSelection;
+        hideTermPop();
+        if (!range) return;
+        const word = editor.value.slice(range.start, range.end);
+        uncertainWords.delete(word.toLowerCase());
+        learnChoice(word, null).then(scheduleMarks);
+        editor.setSelectionRange(range.end, range.end);
+        editor.focus();
+    });
     editor.addEventListener('mousemove', (event) => {
         lastPointer = { x: event.clientX, y: event.clientY };
     });
@@ -2057,6 +2150,7 @@ function initTermPop() {
 initPanels();
 initOverflowMenu();
 initDisclaimer();
+initLearningConsent();
 initTermPop();
 initTermMarks();
 initFindingMarks();

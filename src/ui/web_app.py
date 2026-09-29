@@ -50,7 +50,9 @@ from src.features.report_release import (
     record_release,
     unfilled_fields,
 )
-from src.features import run_log
+from src.features import audit_log, run_log
+from src.features.adaptive_learning import get_adaptive_learning, learn_from_session
+from src.features.edit_tracking import record_session_edits
 from src.medical import macros, term_lookup
 from src.medical.macros import reload_macros
 from src.ui.theme import css_variables
@@ -112,6 +114,24 @@ class TextRequest(BaseModel):
     """Just the report text, for the endpoints that only read it."""
 
     text: str = ""
+
+
+class SessionEditsRequest(BaseModel):
+    """What a dictation handed over, and what the report said when committed."""
+
+    dictated: str = Field(default="", max_length=200_000)
+    final: str = Field(default="", max_length=200_000)
+
+
+class TermChoiceRequest(BaseModel):
+    """One answer to a marked word: take *replacement*, or keep *word* as is."""
+
+    word: str = Field(min_length=1, max_length=64)
+    replacement: Optional[str] = Field(default=None, min_length=1, max_length=64)
+
+
+class ConsentRequest(BaseModel):
+    enabled: bool
 
 
 class ReportRequest(BaseModel):
@@ -295,15 +315,17 @@ def _bootstrap_payload() -> dict:
         # first-load state rather than fetched separately: the page must be
         # able to show it before the radiologist can type anything.
         #
-        # There is deliberately no learning-consent equivalent here: adaptive
-        # learning is captured only by the desktop window (main_window.py
-        # `flush_dictation_edits` / `track_edit`), so the web app collects
-        # nothing to consent to. Wiring capture into this front-end means
-        # adding the consent gate with it.
         "disclaimer": {
             "title": DISCLAIMER_TITLE,
             "text": DISCLAIMER_TEXT,
             "needed": needs_showing(_settings()),
+        },
+        # Learning from the radiologist's fixes: the same two settings the
+        # desktop's consent dialog writes, so answering in one front-end
+        # answers for both.
+        "learning": {
+            "enabled": bool(_settings().get("learning_enabled", True)),
+            "consent_needed": not _settings().get("learning_consent_shown", False),
         },
     }
 
@@ -768,8 +790,60 @@ async def term_suspect_endpoint(payload: TextRequest):
     counts as suspect lives in ``src.medical.term_lookup``, so the marks a
     radiologist sees in the browser are the marks they see on the desktop.
     """
-    spans = await anyio.to_thread.run_sync(term_lookup.suspect_terms, payload.text)
+    keep = frozenset(get_adaptive_learning().custom_terms())
+    spans = await anyio.to_thread.run_sync(term_lookup.suspect_terms, payload.text, keep)
     return {"spans": [asdict(span) for span in spans]}
+
+
+@app.post("/api/learn/consent")
+async def learn_consent_endpoint(payload: ConsentRequest):
+    """Record the answer to "learn from my corrections?", once per install."""
+    settings = _settings()
+    settings.set("learning_enabled", payload.enabled)
+    settings.set("learning_consent_shown", True)
+    audit_log.log_learning_consent(payload.enabled)
+    return {"enabled": payload.enabled}
+
+
+@app.post("/api/learn/session")
+async def learn_session_endpoint(payload: SessionEditsRequest):
+    """Learn from how the radiologist corrected a finished dictation.
+
+    Called when a report is committed (export, copy, new report, next
+    recording). The diff and the learning rules live in features/; this only
+    checks consent.
+    """
+    if not _settings().get("learning_enabled", True):
+        return {"learned": 0}
+
+    def work() -> int:
+        record_session_edits(payload.dictated, payload.final)
+        return learn_from_session(payload.dictated, payload.final)
+
+    learned = await anyio.to_thread.run_sync(work)
+    if learned:
+        event_log.emit("learn", "learned from your edits", corrections=learned)
+    return {"learned": learned}
+
+
+@app.post("/api/learn/choice")
+async def learn_choice_endpoint(payload: TermChoiceRequest):
+    """Accept a suggestion for a marked word, or keep the word as spoken.
+
+    Accept teaches the correction, so the next dictation fixes it unasked.
+    Keep adds the word to the radiologist's own vocabulary, so it is never
+    marked again.
+    """
+    if not _settings().get("learning_enabled", True):
+        return {"learned": False}
+    learning = get_adaptive_learning()
+    if payload.replacement:
+        learning.learn_correction(payload.word, payload.replacement)
+    else:
+        learning.learn_term(payload.word)
+    event_log.emit("learn", "accepted a fix" if payload.replacement else "kept a word",
+                   word=payload.word, replacement=payload.replacement)
+    return {"learned": True}
 
 
 @app.post("/api/terms/used")

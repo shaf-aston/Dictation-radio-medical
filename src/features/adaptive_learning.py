@@ -47,6 +47,7 @@ _MAX_CUSTOM_TERMS = 2000       # Limit custom terms
 _MAX_FREQUENCY_TERMS = 10000   # Limit frequency tracking
 _MIN_WORD_LENGTH = 3           # Don't learn very short words
 _SAVE_DEBOUNCE_SEC = 30        # Batch saves to reduce I/O
+_PUNCTUATION = ".,;:!?()\"'"   # stripped before comparing two words
 
 
 class AdaptiveLearning:
@@ -195,6 +196,11 @@ class AdaptiveLearning:
         """Check if term is in custom vocabulary."""
         with self._data_lock:
             return term.lower() in self._custom_terms
+
+    def custom_terms(self) -> Set[str]:
+        """A copy of the words the radiologist has said to keep as spoken."""
+        with self._data_lock:
+            return set(self._custom_terms)
 
     def get_term_frequency(self, term: str) -> int:
         """Get usage frequency of a term."""
@@ -455,6 +461,29 @@ def learn_from_edit(old_text: str, new_text: str) -> None:
         append_learned_text(new_text)
     except Exception as exc:  # learning is an enhancement, never load-bearing
         logger.debug("Context-corpus learning skipped: %s", exc)
+
+
+def learn_from_session(dictated: str, final: str) -> int:
+    """Learn the one-word fixes the radiologist made to a finished dictation.
+
+    *dictated* is what the app handed over; *final* is the text when the report
+    was committed. Every one-word-for-one-word change that passes the same
+    "looks like a real correction" test the live tracker uses is learned, so
+    the next dictation corrects it on its own. Returns how many were learned.
+    """
+    from src.features.edit_tracking import diff_edits
+    learning = get_adaptive_learning()
+    learned = 0
+    for edit in diff_edits(dictated, final):
+        before, after = edit["before"], edit["after"]
+        if edit["op"] != "replace" or " " in before or " " in after:
+            continue
+        wrong = before.strip(_PUNCTUATION).lower()
+        right = after.strip(_PUNCTUATION).lower()
+        if wrong != right and learning._is_valid_correction(wrong, right):
+            learning.learn_correction(wrong, right)
+            learned += 1
+    return learned
 
 
 def get_custom_prompt_suffix() -> str:

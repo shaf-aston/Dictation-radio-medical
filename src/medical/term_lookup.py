@@ -396,7 +396,7 @@ def _lookup(text: str) -> TermLookup:
 # Marking: which words are worth highlighting in the first place
 # ---------------------------------------------------------------------------
 
-def suspect_terms(text: str) -> List[Span]:
+def suspect_terms(text: str, keep: frozenset = frozenset()) -> List[Span]:
     """The words in *text* a reader should look at, with their offsets.
 
     Highlighting a word already answers it (:func:`lookup`); this answers the
@@ -418,17 +418,20 @@ def suspect_terms(text: str) -> List[Span]:
     and a reader who hits two of those stops trusting the marks: so an
     unusual-looking word with nothing to offer is left unmarked.
 
+    *keep* holds lowercase words the radiologist has said are right as
+    spoken; they are never marked again.
+
     Never raises: any failure comes back as no marks, because the report must
     render whether or not this can answer.
     """
     try:
-        return _suspect_terms(text)
+        return _suspect_terms(text, keep)
     except Exception as exc:
         logger.warning("Suspect-term scan failed: %s", exc, exc_info=True)
         return []
 
 
-def _suspect_terms(text: str) -> List[Span]:
+def _suspect_terms(text: str, keep: frozenset) -> List[Span]:
     if not text:
         return []
     # Without the English guard every ordinary word ("there", "again") whose
@@ -452,7 +455,7 @@ def _suspect_terms(text: str) -> List[Span]:
             break
         word = match.group()
         lowered = word.lower()
-        if len(lowered) < floor or lowered in known:
+        if len(lowered) < floor or lowered in known or lowered in keep:
             continue
         verdict = verdicts.get(lowered)
         if verdict is None:
