@@ -844,6 +844,9 @@ select:disabled, input:disabled { opacity: .5; }
     color: var(--text);
 }
 
+.dev-speech { display: flex; gap: .5rem; padding: .4rem .75rem; }
+.dev-speech input { flex: 1; min-width: 0; }
+
 .modal-foot { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1.1rem; }
 
 /* --------------------------------------------------------------------------

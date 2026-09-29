@@ -129,6 +129,10 @@ src/
 │   │   └── whisper_voice.py · text_corrector.py · scan_finetune.py
 │   └── exceptions.py     CloudError hierarchy (+ ImagingError, GroqError);
 │                          re-exports PrivacyError from medical/deid.py
+├── devtools/    speech_test.py: the "Test voice" in the developer console.
+│                  Types a report, Windows speaks it into dictation in place of
+│                  the mic. Removable: this folder, /api/dev/speak, and the
+│                  speechTest block in app.js + form in app.html
 ├── training/    collector.py · schemas.py · staging_db.py (SQLite)
 ├── templates/   plain-text report templates (RSNA / MSK / generic)
 └── resources/   medical_terms.txt (broad generic wordlist, membership net) ·

@@ -357,6 +357,15 @@
         </div>
     </header>
 
+    <!-- Test voice (src/devtools): type a report, the computer speaks it into
+         dictation in place of the microphone. Remove this row to remove it. -->
+    <form id="speechTestForm" class="dev-speech">
+        <label class="sr-only" for="speechTestText">Text for the test voice to dictate</label>
+        <input id="speechTestText" type="text" maxlength="2000" autocomplete="off"
+               placeholder="Test voice: type a report and it is spoken into dictation">
+        <button id="speechTestBtn" class="btn btn-quiet" type="submit">Dictate this</button>
+    </form>
+
     <div class="dev-drawer-body">
         <!-- The stream, newest at the bottom, exactly like a terminal. -->
         <div id="devConsole" class="dev-console" role="log" aria-live="off" tabindex="0"></div>

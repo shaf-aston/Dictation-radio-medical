@@ -1381,9 +1381,10 @@ async function startRecording() {
     showStatus('Opening the microphone', 'is-busy');
     const micAskedAt = performance.now();
     try {
-        micStream = await navigator.mediaDevices.getUserMedia({
+        micStream = speechTestStream || await navigator.mediaDevices.getUserMedia({
             audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
         });
+        speechTestStream = null;
     } catch (err) {
         devMark('browser', 'microphone refused', {}, { level: 'error' });
         console.error('Microphone access denied:', err);
@@ -1435,6 +1436,50 @@ async function startRecording() {
     tlPhase('listening');
     showStatus('Listening', 'is-rec');
 }
+
+// ---------------------------------------------------------------------------
+// Test voice (developer tool, src/devtools/speech_test.py). The server speaks
+// the typed text; the WAV is played into the ordinary recording path as if it
+// were the microphone, and Stop is pressed when it ends. Delete this block,
+// the speechTestStream use in startRecording and the form in app.html to
+// remove the feature.
+// ---------------------------------------------------------------------------
+
+let speechTestStream = null;
+
+document.getElementById('speechTestForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const text = document.getElementById('speechTestText').value.trim();
+    const btn = document.getElementById('speechTestBtn');
+    if (!text || isRecording) return;
+    btn.disabled = true;
+    try {
+        const response = await fetch('/api/dev/speak', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+        });
+        if (!response.ok) throw new Error((await response.json()).detail || response.statusText);
+        const audio = new Audio(URL.createObjectURL(await response.blob()));
+        // Play for an instant so the stream has a track, then rewind and wait
+        // until recording is live: otherwise the opening words are lost.
+        await audio.play();
+        audio.pause();
+        audio.currentTime = 0;
+        speechTestStream = audio.captureStream();
+        audio.addEventListener('ended', () => {
+            // A second of silence first, so the last words are not cut off.
+            setTimeout(() => { if (isRecording) stopRecording(); }, 1000);
+        }, { once: true });
+        devMark('browser', 'test voice playing', { sec: Math.round(audio.duration) });
+        await startRecording();
+        if (isRecording) await audio.play();
+    } catch (err) {
+        showError('Test voice failed: ' + err.message);
+    } finally {
+        btn.disabled = false;
+    }
+});
 
 async function stopRecording() {
     if (!isRecording) return;
