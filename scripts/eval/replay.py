@@ -31,8 +31,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
-import re
 import statistics
 import time
 from dataclasses import dataclass, field
@@ -210,21 +208,10 @@ def replay(
                 )
 
     session.close_open_tail_fast()
-    # The chunk count the polish redid is only reported through the session's
-    # log line, so read it from there rather than change the app for the harness.
-    seen: List[int] = []
-    tap = logging.Handler()
-    tap.emit = lambda rec: seen.extend(int(n) for n in re.findall(r"polished=(\d+)", rec.getMessage()))
-    live_log = logging.getLogger("src.dictation.stream.live_session")
-    live_log.addHandler(tap)
-    was_level = live_log.level
-    live_log.setLevel(logging.INFO)
     polish_start = time.perf_counter()
     result.final_text = session.finalize()
     result.polish_sec = time.perf_counter() - polish_start
-    live_log.removeHandler(tap)
-    live_log.setLevel(was_level)
-    result.polished = sum(seen)
+    result.polished = session.chunks_polished
     result.chunks = session.chunks_decoded
     result.wall_sec = time.perf_counter() - wall_start
     return result
