@@ -12,6 +12,7 @@ more than two tiers, so adding provider #4 later is one line in
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from typing import Any, List, Sequence, Tuple
 
@@ -37,9 +38,12 @@ class ChainEngine:
         self._providers: List[Tuple[str, Any]] = list(providers)
 
     def preload(self) -> None:
-        # Every tier is warmed, not just the primary: a failover mid-dictation
-        # must not pay a cold-load cost the radiologist feels as a stall.
-        for name, engine in self._providers:
+        # Every tier but the last is warmed. The last is the safety net that
+        # only runs when all the others raised: warming it loaded two Whisper
+        # models at startup that Parakeet never hands work to, and they fought
+        # the real warm-up for the CPU. A cloud tier's preload succeeds even
+        # with a rejected key, so the local tier behind it must be warm too.
+        for name, engine in self._providers[:max(1, len(self._providers) - 1)]:
             try:
                 engine.preload()
             except Exception as exc:
@@ -61,7 +65,7 @@ class ChainEngine:
             if name in _DEAD_PROVIDERS and i < len(entries) - 1:
                 continue
             try:
-                return engine.transcribe(audio, ctx)
+                return dataclasses.replace(engine.transcribe(audio, ctx), engine=name)
             except ProviderUnavailable as exc:
                 # Permanent until restart: drop it, or every later decode waits
                 # on the same rejection first. The last provider is kept so its

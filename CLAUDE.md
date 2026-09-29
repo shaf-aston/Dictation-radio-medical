@@ -1,8 +1,8 @@
 # CLAUDE.md: Architecture & Module Map
 
 Radio Dictate is an **offline medical dictation workstation** for radiologists.
-ASR (automatic speech recognition) runs locally via Whisper (`faster-whisper` / CTranslate2); by
-default **no audio or text leaves the device**. Two front-ends share one
+ASR (automatic speech recognition) runs locally via Parakeet (`onnx-asr`), with
+Whisper (`faster-whisper`) behind it; by default **no audio or text leaves the device**. Two front-ends share one
 dictation core: a PySide6 desktop GUI and a FastAPI web app.
 
 Read this first. For conventions, see [CODING_STANDARDS.md](CODING_STANDARDS.md).
@@ -31,15 +31,19 @@ src/
 │   │                       (Protocol) · types.py (Word/AsrSegment/AsrResult/
 │   │                       TranscribeContext, confidence is part of the
 │   │                       contract) · factory.py (create_engine, the only
-│   │                       name→engine mapping; default is a 3-tier chain:
-│   │                       deepgram → parakeet (if installed) → faster-whisper)
+│   │                       name→engine mapping; the asr_engine setting picks
+│   │                       one, default "local": parakeet (if installed) →
+│   │                       faster-whisper; "deepgram" puts the cloud first.
+│   │                       Each result names the provider that made it)
 │   │                       · engines/deepgram_engine.py (cloud, nova-2-medical,
 │   │                       key in OS keychain, the only network-dependent
 │   │                       engine here — see the invariants note below) ·
 │   │                       engines/fallback_engine.py (ChainEngine: tries each
 │   │                       provider in order, degrades past any that raises) ·
 │   │                       engines/faster_whisper_engine.py (the CTranslate2
-│   │                       wrapper and its port adapter, one file) · prompt.py
+│   │                       wrapper and its port adapter, one file) ·
+│   │                       engines/parakeet_engine.py (onnx-asr; no prompt,
+│   │                       one model shared process-wide) · prompt.py
 │   │                       (the radiology priming vocabulary, same for every
 │   │                       engine) · models.py (known model names + fallback)
 │   ├── stream/             chunk-once streaming, vad.py (Silero VAD, bundled
@@ -153,13 +157,14 @@ Other optional, off-by-default add-ons:
 desktop:  microphone → audio.py → worker.py (QThread, chunk-once, growing WAV)
 web:      microphone → AudioWorklet → /ws/dictate (16-bit PCM @16k)
                      → stream/live_session.py (chunk-once, in-memory buffer)
-both:     → asr/ (AsrEngine port → Deepgram, Parakeet or Whisper) → postprocess/ (10 stages)
+both:     → asr/ (AsrEngine port → Parakeet, Whisper behind it) → postprocess/ (10 stages)
           → UI (views.py / web_app.py) → report_manager.py (.docx / .txt export)
 ```
 
 Both front-ends use two models: `live_model_size` (fast) decodes what appears
 while you speak, and `model_size` re-decodes the low-confidence chunks after
-Stop. **Stop never waits on that second pass in either front-end**: the live
+Stop. Both sizes are Whisper's: on the default `local` engine Parakeet answers
+in both slots, so the polish re-decodes with the same model. **Stop never waits on that second pass in either front-end**: the live
 text is handed back at once and the polish upgrades it in the background.
 Which makes one rule load-bearing, and it is written in both places: if the
 report has been edited since it was handed over, the polished version is
@@ -296,18 +301,17 @@ there.
 
 ## Invariants (do not break)
 
-- **Offline by default, one named exception.** No network call unless cloud
-  training is explicitly enabled *and* consented, or dictation itself is using
-  the `deepgram` ASR engine (the current `DEFAULT_ENGINE` in
-  `dictation/asr/factory.py`): that engine sends raw audio to Deepgram's cloud
-  API for transcription, a deliberate, explicit product decision (2026-09-05),
-  not a leak. It has no PHI-scrubbing step of its own — audio can't be
-  de-identified before it's transcribed — so treat this the same as any other
-  BAA/compliance question before using it on real patient dictation. Falls
-  back to the local Parakeet/Whisper chain on any network or auth failure
-  (`engines/fallback_engine.py`), so a Deepgram outage degrades quality, not
-  uptime. Every other engine and everything else in `dictation/` stays
-  offline; cloud training itself never imports cloud.
+- **Offline by default, one named opt-in.** No network call unless cloud
+  training is explicitly enabled *and* consented, or the `asr_engine` setting
+  is `deepgram`: that engine sends raw audio to Deepgram's cloud API. The
+  default is `local` (2026-09-29): Deepgram's key had been rejected for weeks,
+  so every decode was already running on Parakeet, which then measured more
+  accurate than the Whisper setup on the live path (4.6 % vs 12.5 % medical-
+  term error). Deepgram has no PHI-scrubbing step of its own (audio can't be
+  de-identified before it's transcribed), so treat switching it on as a
+  BAA/compliance question. It falls back to the local chain on any network or
+  auth failure (`engines/fallback_engine.py`). Everything else in
+  `dictation/` stays offline; cloud training itself never imports cloud.
 - **PHI is scrubbed before anything leaves the device** via `DeIdentifier` +
   `validate_clean()` (raises `PrivacyError`); a record that still contains a
   known identifier is dropped, not uploaded.

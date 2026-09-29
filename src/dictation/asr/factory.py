@@ -17,38 +17,50 @@ from src.dictation.asr.engines.fallback_engine import ChainEngine
 from src.dictation.asr.engines.faster_whisper_engine import FasterWhisperEngine
 from src.dictation.asr.engines.parakeet_engine import ParakeetEngine
 from src.dictation.asr.port import AsrEngine
+from src.core.settings import Settings, get_default
 
 logger = logging.getLogger(__name__)
 
 
-def _make_deepgram_chain(**kwargs: Any) -> AsrEngine:
-    """The default provider chain: Deepgram (cloud, medical model) first,
-    Parakeet (local, if the optional ``onnx-asr`` package is installed) next,
-    faster-whisper (local, always available) last.
+def _local_tiers(**kwargs: Any) -> List[Tuple[str, Any]]:
+    """Parakeet (if the optional ``onnx-asr`` package is installed), then
+    faster-whisper, which is always available.
 
     Each tier only runs when the one before it raised, never on a middling
     result, ``ChainEngine`` has no ground truth to grade a decode against.
-    Adding a fourth provider later is one more entry in this list, nothing
-    downstream (worker.py, web_app.py, the eval harness) changes.
 
     *kwargs* are whatever the caller already passes for the Whisper tier
-    (``model_size``, ``device``, ``model_path``, ...): every existing call
-    site built these before Deepgram existed, so they stay Whisper-shaped
-    and only need forwarding, not translating.
+    (``model_size``, ``device``, ``model_path``, ...): every call site is
+    Whisper-shaped, so they are forwarded, not translated. A ``model_path`` is
+    a fine-tuned Whisper voice the radiologist switched on, so it skips
+    Parakeet: ahead of it, the fine-tune would never be used.
     """
-    providers: List[Tuple[str, Any]] = [("deepgram", DeepgramEngine())]
-    if importlib.util.find_spec("onnx_asr") is not None:
-        providers.append(("parakeet", ParakeetEngine()))
+    tiers: List[Tuple[str, Any]] = []
+    if kwargs.get("model_path"):
+        logger.info("Fine-tuned voice model active; ASR chain skips the Parakeet tier")
+    elif importlib.util.find_spec("onnx_asr") is not None:
+        tiers.append(("parakeet", ParakeetEngine()))
     else:
         logger.info("onnx-asr not installed; ASR chain skips the Parakeet tier")
-    providers.append(("faster-whisper", FasterWhisperEngine(**kwargs)))
-    return ChainEngine(providers)
+    tiers.append(("faster-whisper", FasterWhisperEngine(**kwargs)))
+    return tiers
+
+
+def _make_local_chain(**kwargs: Any) -> AsrEngine:
+    """Everything on this machine: nothing leaves the device."""
+    return ChainEngine(_local_tiers(**kwargs))
+
+
+def _make_deepgram_chain(**kwargs: Any) -> AsrEngine:
+    """Deepgram (cloud, medical model) first, the local chain behind it."""
+    return ChainEngine([("deepgram", DeepgramEngine()), *_local_tiers(**kwargs)])
 
 
 _ENGINES = {
     "faster-whisper": FasterWhisperEngine,
     "parakeet": ParakeetEngine,
     "deepgram": _make_deepgram_chain,
+    "local": _make_local_chain,
 }
 
 #: The constructor keyword each engine uses for "which model". Callers that
@@ -61,21 +73,22 @@ _MODEL_KWARG = {
     # Deepgram's own model is fixed to the medical tier (see deepgram_engine.py);
     # "model" here still picks the size of its Whisper fallback.
     "deepgram": "model_size",
+    "local": "model_size",
 }
 
-#: Deepgram is the default: cloud, medical-vocabulary-tuned, with a local
-#: Parakeet/Whisper chain behind it (see ``_make_deepgram_chain``). Every call
-#: site that does not pass name= (worker.py, web_app.py, warmup.py) picks
-#: this up automatically.
-DEFAULT_ENGINE = "deepgram"
+#: The shipped choice; the ``asr_engine`` setting is what a caller that does
+#: not pass name= (worker.py, web_app.py, warmup.py) actually gets.
+DEFAULT_ENGINE = get_default("asr_engine")
 
 #: Every engine name a caller may ask for: the eval harness builds its
 #: ``--engine`` choices from this so a new engine needs no CLI edit.
 ENGINE_NAMES = tuple(sorted(_ENGINES))
 
 
-def create_engine(name: str = DEFAULT_ENGINE, **kwargs: Any) -> AsrEngine:
-    """Build the named engine. Raises ``ValueError`` on an unknown name."""
+def create_engine(name: str = "", **kwargs: Any) -> AsrEngine:
+    """Build the named engine, or the ``asr_engine`` setting's when unnamed.
+    Raises ``ValueError`` on an unknown name."""
+    name = name or Settings().get("asr_engine")
     cls = _ENGINES.get(name)
     if cls is None:
         raise ValueError(f"Unknown ASR engine {name!r}. Available: {sorted(_ENGINES)}")
