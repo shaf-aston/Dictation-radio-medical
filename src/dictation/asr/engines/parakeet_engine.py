@@ -30,6 +30,7 @@ than an ImportError at startup.
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Any, List, Optional, Sequence, Tuple
 
@@ -62,6 +63,14 @@ _MISSING_HINT = (
 )
 
 
+# Process-wide model cache, as faster_whisper_engine keeps one: the web app
+# builds an engine per slot and warm-up builds its own, so a model held per
+# instance was loaded at startup into an engine nobody decoded with, then
+# loaded again, cold, inside the first dictation's first decode.
+_MODELS: dict = {}
+_MODELS_LOCK = threading.Lock()
+
+
 class ParakeetEngine:
     """Runs Parakeet TDT through onnx-asr to satisfy the :class:`AsrEngine` port."""
 
@@ -79,7 +88,11 @@ class ParakeetEngine:
     def preload(self) -> None:
         """Download (once) and load the model, so no transcribe() pays for it."""
         if self._model is None:
-            self._model = self._load()
+            key = (self.model_name, self.quantization)
+            with _MODELS_LOCK:
+                if key not in _MODELS:
+                    _MODELS[key] = self._load()
+                self._model = _MODELS[key]
 
     def capabilities(self) -> EngineCaps:
         return EngineCaps(word_confidence=True, hotwords=False)

@@ -474,6 +474,8 @@ class LiveSession:
                     ),
                 )
                 note["words"] = len(result.text.split())
+                if result.engine:
+                    note["engine"] = result.engine
         except Exception as exc:
             logger.warning("Decode failed (%s): %s", stage, exc)
             return None

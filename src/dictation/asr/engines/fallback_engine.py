@@ -12,6 +12,7 @@ more than two tiers, so adding provider #4 later is one line in
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from typing import Any, List, Sequence, Tuple
 
@@ -37,13 +38,16 @@ class ChainEngine:
         self._providers: List[Tuple[str, Any]] = list(providers)
 
     def preload(self) -> None:
-        # Every tier is warmed, not just the primary: a failover mid-dictation
-        # must not pay a cold-load cost the radiologist feels as a stall.
-        for name, engine in self._providers:
-            try:
-                engine.preload()
-            except Exception as exc:
-                logger.warning("ASR provider %r failed to preload: %s", name, exc)
+        # Only the primary is warmed. Warming every tier loaded two Whisper
+        # models at startup that the Parakeet primary never hands work to, and
+        # they fought the real warm-up for the CPU. A failover is rare, and the
+        # tier it lands on loads itself on its first decode: one slow decode,
+        # said in the log, instead of a slower start every time.
+        name, engine = self._providers[0]
+        try:
+            engine.preload()
+        except Exception as exc:
+            logger.warning("ASR provider %r failed to preload: %s", name, exc)
 
     def capabilities(self) -> EngineCaps:
         # What the *primary* provider can offer: a downstream failover to a
@@ -61,7 +65,7 @@ class ChainEngine:
             if name in _DEAD_PROVIDERS and i < len(entries) - 1:
                 continue
             try:
-                return engine.transcribe(audio, ctx)
+                return dataclasses.replace(engine.transcribe(audio, ctx), engine=name)
             except ProviderUnavailable as exc:
                 # Permanent until restart: drop it, or every later decode waits
                 # on the same rejection first. The last provider is kept so its
