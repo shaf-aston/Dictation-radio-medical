@@ -876,6 +876,16 @@ let stopPressedAt = 0;
 // on it: a fraction of a second of speech is not worth a stuck button.
 const MIC_FLUSH_TIMEOUT_MS = 50;
 
+// The microphone is listened to from the moment the audio graph exists, but the
+// socket takes a moment longer to open. Sound spoken in that gap is held here
+// (null whenever no connect is under way), in order, and sent when it opens.
+// Capped so a socket that never opens cannot grow memory without limit: past
+// the cap the OLDEST sound is dropped, so what is sent stays one unbroken run
+// ending at the present instead of a gap in the middle.
+const PRE_SOCKET_MAX_SEC = 10;
+let pendingPcm = null;
+let pendingSamples = 0;
+
 // The worklet only forwards frames. Every decision stays on the main thread, so
 // UI work can never block the audio thread. It buffers render quanta (fixed at
 // 128 samples by the Web Audio spec) into fixed-size frames before posting, so
@@ -948,11 +958,21 @@ function peakLevel(frame) {
 function handleTapFrame(frame) {
     if (!frame || !frame.length) return;
     setLevel(peakLevel(frame));
-    if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
-        const pcm = floatToPcm16(frame).buffer;
-        devAudioSent(pcm.byteLength);
-        liveSocket.send(pcm);
+    const pcm = floatToPcm16(frame).buffer;
+    if (pendingPcm) {
+        pendingPcm.push(pcm);
+        pendingSamples += pcm.byteLength / 2;
+        while (pendingSamples > PRE_SOCKET_MAX_SEC * LIVE_SAMPLE_RATE) {
+            pendingSamples -= pendingPcm.shift().byteLength / 2;
+        }
+    } else if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
+        sendPcm(pcm);
     }
+}
+
+function sendPcm(pcm) {
+    devAudioSent(pcm.byteLength);
+    liveSocket.send(pcm);
 }
 
 // -- what the radiologist sees ---------------------------------------------
@@ -1353,6 +1373,7 @@ function flushMicTap(node) {
 
 async function teardownMic() {
     isRecording = false;
+    pendingPcm = null;  // a failed start must not leak its held sound into the next recording
     if (micNode) {
         // Take the node out of the global BEFORE awaiting, so a Stop and a
         // Cancel milliseconds apart cannot both reach the same node: the
@@ -1379,6 +1400,21 @@ async function startRecording() {
     // press record, and for a second or more nothing on screen moved at all.
     tlBegin();
     showStatus('Opening the microphone', 'is-busy');
+    // The audio graph comes first: an open microphone delivers sound at once,
+    // and anything it delivers before the graph exists has nowhere to go.
+    try {
+        // Asking the context for 16 kHz makes the browser resample for us, so
+        // there is no hand-written downsampler to get wrong.
+        audioContext = new AudioContext({ sampleRate: LIVE_SAMPLE_RATE });
+        const workletUrl = URL.createObjectURL(new Blob([PCM_WORKLET], { type: 'application/javascript' }));
+        await audioContext.audioWorklet.addModule(workletUrl);
+        URL.revokeObjectURL(workletUrl);
+    } catch (err) {
+        console.error('Could not start live dictation:', err);
+        await teardownMic();
+        showError('Could not start dictation: ' + (err.message || 'unknown error'));
+        return;
+    }
     const micAskedAt = performance.now();
     try {
         micStream = speechTestStream || await navigator.mediaDevices.getUserMedia({
@@ -1389,6 +1425,7 @@ async function startRecording() {
         devMark('browser', 'microphone refused', {}, { level: 'error' });
         console.error('Microphone access denied:', err);
         showError('Microphone access denied. Allow microphone permissions in your browser settings, then try again.');
+        await teardownMic();  // closes the audio graph built above
         tlStep('Microphone refused');
         sessionTimeline.hidden = true;
         return;
@@ -1398,12 +1435,13 @@ async function startRecording() {
     tlStep('Microphone ready', (performance.now() - micAskedAt) / 1000);
 
     try {
-        // Asking the context for 16 kHz makes the browser resample for us, so
-        // there is no hand-written downsampler to get wrong.
-        audioContext = new AudioContext({ sampleRate: LIVE_SAMPLE_RATE });
-        const workletUrl = URL.createObjectURL(new Blob([PCM_WORKLET], { type: 'application/javascript' }));
-        await audioContext.audioWorklet.addModule(workletUrl);
-        URL.revokeObjectURL(workletUrl);
+        // Listen before connecting: the first words are often spoken while the
+        // socket is still opening, and they are held, not thrown away.
+        pendingPcm = [];
+        pendingSamples = 0;
+        micNode = new AudioWorkletNode(audioContext, 'pcm-tap');
+        micNode.port.onmessage = (event) => handleTapFrame(event.data);
+        audioContext.createMediaStreamSource(micStream).connect(micNode);
 
         const socketAskedAt = performance.now();
         liveSocket = null;  // the previous recording's socket stops being heard from here
@@ -1411,9 +1449,9 @@ async function startRecording() {
         devMark('browser', 'dictation socket open', {}, { ms: performance.now() - socketAskedAt });
         tlStep('Connected', (performance.now() - socketAskedAt) / 1000);
 
-        micNode = new AudioWorkletNode(audioContext, 'pcm-tap');
-        micNode.port.onmessage = (event) => handleTapFrame(event.data);
-        audioContext.createMediaStreamSource(micStream).connect(micNode);
+        const held = pendingPcm;
+        pendingPcm = null;
+        held.forEach(sendPcm);
     } catch (err) {
         console.error('Could not start live dictation:', err);
         await teardownMic();
