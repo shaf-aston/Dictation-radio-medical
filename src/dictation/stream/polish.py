@@ -214,6 +214,45 @@ def _decode_one(
         on_decoded(result, i, c.start_sample, c.end_sample)
 
 
+def decode_run(
+    ledger: ChunkLedger, audio: np.ndarray, decode: Decode, run: List[int],
+) -> List[Tuple[int, AsrResult]]:
+    """Decode one run of committed chunks, WITHOUT touching the ledger.
+
+    For the background polish during recording (``LiveSession``), which
+    decodes on its own thread while the live loop keeps committing: it hands
+    back ``(index, result)`` pairs and the live loop applies them itself, so
+    the ledger only ever has one writer. Same batching rule as :func:`polish`:
+    one call for the run when its words can be split back into chunks, one call
+    per chunk when they cannot. A chunk whose decode failed is left out.
+    """
+    first, last = ledger.committed[run[0]], ledger.committed[run[-1]]
+    if len(run) > 1:
+        clip = audio[first.start_sample:last.end_sample]
+        result = decode(clip, "final.background") if len(clip) else None
+        if result is not None:
+            parts, _why = _split(result, ledger, run, first.start_sample, ledger.sample_rate)
+            if parts is not None:
+                return list(zip(run, parts))
+    out: List[Tuple[int, AsrResult]] = []
+    for i in run:
+        c = ledger.committed[i]
+        clip = audio[c.start_sample:c.end_sample]
+        if len(clip) and (result := decode(clip, "final.background")) is not None:
+            out.append((i, result))
+    return out
+
+
+def weak_runs(
+    ledger: ChunkLedger, ceiling: float, skip: Iterable[int] = (),
+    batch_max_sec: float = BATCH_MAX_SEC,
+) -> List[List[int]]:
+    """The runs :func:`polish` would re-decode, minus the chunks in *skip*."""
+    done = set(skip)
+    targets = [i for i in ledger.low_confidence_indices(ceiling) if i not in done]
+    return _runs(targets, ledger, ledger.sample_rate, batch_max_sec)
+
+
 def polish(
     ledger: ChunkLedger,
     audio: np.ndarray,
@@ -222,6 +261,7 @@ def polish(
     ceiling: float,
     batch_max_sec: float = BATCH_MAX_SEC,
     force: Iterable[int] = (),
+    skip: Iterable[int] = (),
     on_progress: Callable[[str], None] = lambda _msg: None,
     on_decoded: OnDecoded = lambda *_args: None,
     cancelled: Callable[[], bool] = lambda: False,
@@ -231,7 +271,11 @@ def polish(
     *batch_max_sec* is the tuning knob for how much audio one decode may
     cover; callers that know better than :data:`BATCH_MAX_SEC` pass their own.
     """
-    targets = list(ledger.low_confidence_indices(ceiling))
+    # *skip*: chunks the accurate engine already re-decoded while recording
+    # (LiveSession's background polish). Their confidence is now the accurate
+    # model's own, so a low one is not a reason to ask the same model again.
+    done = set(skip)
+    targets = [i for i in ledger.low_confidence_indices(ceiling) if i not in done]
     targets += [i for i in force if i not in targets]
     targets.sort()
     # The ledger's own sample rate: a word time is in seconds, a chunk window

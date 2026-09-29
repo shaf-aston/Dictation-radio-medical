@@ -11,7 +11,7 @@ from PySide6.QtCore import QThread, QTimer
 from PySide6.QtWidgets import QMessageBox
 
 from src.core import perf
-from src.dictation.stream.segmenter import ChunkPolicy
+from src.dictation.stream.policy import MANUAL, plan_from_settings
 from src.dictation.asr.models import resolve_model
 from src.dictation.worker import LiveTranscribeWorker
 from src.features.file_manager import create_temp_wav
@@ -262,12 +262,15 @@ def on_start_recording(window: MainWindow) -> None:
         path, model_size, language, vad_enabled, pause_threshold,
         live_model_size=resolve_model(window.settings.get("live_model_size")),
         model_path=active_model_path,
-        chunk_policy=ChunkPolicy(
-            min_sec=float(window.settings.get("chunk_min_sec")),
-            soft_max_sec=float(window.settings.get("chunk_soft_max_sec")),
-            force_cut_sec=float(window.settings.get("chunk_force_cut_sec")),
-            trailing_silence_sec=float(window.settings.get("chunk_trailing_silence_sec")),
+        # None = "auto": the worker sizes chunks from its live engine's cost
+        # once the engine exists (stream/policy.py). Manual numbers verbatim.
+        chunk_policy=(
+            plan_from_settings(window.settings.get, None).policy
+            if window.settings.get("chunk_policy") == MANUAL else None
         ),
+        trailing_silence_sec=float(window.settings.get("chunk_trailing_silence_sec")),
+        streaming=bool(window.settings.get("asr_streaming")),
+        background_polish=bool(window.settings.get("background_polish")),
         live_beam_size=int(window.settings.get("live_beam_size")),
         final_beam_size=int(window.settings.get("final_beam_size")),
         polish_confidence_ceiling=float(window.settings.get("polish_confidence_ceiling")),

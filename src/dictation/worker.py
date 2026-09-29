@@ -1,41 +1,24 @@
-"""Background worker for live transcription during recording.
+"""Background worker for live transcription during recording (desktop).
 
-Runs on a QThread, polling the growing WAV file and emitting the transcribed
-text via Qt signals each cycle.
+A thin Qt adapter over :class:`~src.dictation.stream.live_session.LiveSession`,
+the same loop the web app runs. It used to be a second copy of that loop, and
+the two drifted: this one never learned the commit-cycle preview skip, the
+minimum preview tail, or the engine-priced chunk plan, so every speed fix had
+to land twice or did not land here at all. Now there is one loop, two skins:
 
-Chunk-once design
-------------------
-Superseded design: every cycle re-decoded a sliding window of the last few
-seconds, so a long dictation cost several times its own duration in Whisper
-decode time (the old ``window_state.py`` + ``text_diff.py``, both deleted:
-their whole purpose was deduplicating overlapping re-decodes, which cannot
-happen once chunks never overlap). This worker instead:
+* the web app feeds :class:`LiveSession` PCM frames off a WebSocket;
+* this worker feeds it the new samples of the growing WAV the recorder writes
+  (only what arrived since the last read: it seeks, it never re-reads the
+  file), calls :meth:`LiveSession.cycle`, and re-emits the result as Qt
+  signals.
 
-1. **VAD** (:mod:`src.dictation.stream.vad`) finds silence boundaries in the
-   still-open tail only: never the whole growing recording, which would
-   itself become O(n^2) over a long dictation.
-2. **The segmenter** (:mod:`src.dictation.stream.segmenter`) turns those
-   boundaries into chunk cuts: never shorter than the configured minimum,
-   cut at the latest usable pause, force-cut only as a last resort.
-3. **The ledger** (:mod:`src.dictation.stream.ledger`) decodes each closed
-   chunk exactly once and freezes its text permanently.
-4. Only the still-open tail, bounded by ``chunk_policy.force_cut_sec``, is
-   ever re-decoded, and only for a stable live preview via LocalAgreement-2
-   (:mod:`src.dictation.stream.tail`); that preview is never committed.
-5. **That preview is dropped when the machine cannot afford it**: see
-   :func:`should_skip_preview`. On a CPU that decodes slower than speech, the
-   preview re-decode of a 20-second open tail costs more than the closed chunks
-   waiting behind it, so words arrived in late bursts. Skipping it spends every
-   remaining second on the text that is actually kept. Because the preview is
-   never committed, this changes only what is shown *early*; the committed and
-   final text are byte-for-byte unaffected. It also lowers
-   ``stream.decode_ratio`` (the preview is the bulk of the re-decode above 1.0x).
+Everything about chunking, previews, confidence and the polish after Stop is
+documented in :mod:`src.dictation.stream.live_session` and its neighbours.
 
-After recording stops there is no full re-transcribe. A confidence-targeted
-polish (:meth:`LiveTranscribeWorker._run_confidence_targeted_polish`)
-re-decodes only the committed chunks whose mean word confidence fell below
-``polish_confidence_ceiling``, plus whatever audio was still open, at higher
-beam width.
+The session is built with ``postprocess=False``: ``partial`` carries RAW text,
+because the desktop runs the correction pipeline on its own worker thread
+(:mod:`src.ui.postprocess_worker`), with the committed length telling it which
+prefix will never change.
 
 Beam widths and the confidence ceiling arrive as constructor arguments (the
 caller reads them from settings: see :mod:`src.ui.recording_session`); this
@@ -47,30 +30,19 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import numpy as np
 import soundfile as sf
 from PySide6.QtCore import QObject, Signal
 
 from src.core import perf
-from src.dictation.asr import (
-    AsrEngine,
-    AsrResult,
-    TranscribeContext,
-    create_engine,
-)
-from src.dictation.stream.ledger import ChunkLedger
-from src.dictation.stream.polish import polish
-from src.dictation.stream.rules import (
-    build_context_prompt,
-    mean_confidence,
-    has_speech,
-    should_skip_preview,
-)
-from src.dictation.stream.segmenter import Chunk, ChunkPolicy
-from src.dictation.stream.tail import LocalAgreement2
-from src.dictation.stream.vad import SpeechMark, detect_speech
+from src.dictation.asr import AsrResult, create_engine
+from src.dictation.stream import live_session
+from src.dictation.stream.live_session import LiveSession
+from src.dictation.stream.policy import plan_for
+from src.dictation.stream.rules import build_context_prompt
+from src.dictation.stream.segmenter import ChunkPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +50,7 @@ logger = logging.getLogger(__name__)
 # Tuning constants
 # ---------------------------------------------------------------------------
 _MIN_AUDIO_SEC = 0.8     # ignore audio shorter than this
-_MIN_GROWTH_SEC = 0.5    # min new audio before re-checking for a chunk cut
+_POLL_SEC = 0.25         # how often to look for new audio when nothing changed
 
 # Progress states the UI shows while the live loop runs. Public: the desktop
 # window maps them onto the colour of its state pill (ui/main_window.py).
@@ -86,15 +58,19 @@ STATE_LOADING = "Loading model..."
 STATE_LIVE = "Live transcribing..."
 STATE_CATCHING_UP = "Catching up..."
 
+_SESSION_STATES = {
+    live_session.STATE_LIVE: STATE_LIVE,
+    live_session.STATE_CATCHING_UP: STATE_CATCHING_UP,
+}
 
 
 class LiveTranscribeWorker(QObject):
-    """Decodes each closed chunk exactly once; the open tail is a stable preview only.
+    """Feeds a :class:`LiveSession` from the recorder's growing WAV.
 
-    ``partial`` carries the full display text (frozen chunk text + the
-    stable LocalAgreement-2 prefix of the open tail) and the length of the
-    frozen prefix within it. Consumers use the prefix length to skip
-    re-processing text that this worker will never revise
+    ``partial`` carries the full display text (frozen chunk text + the stable
+    preview of the open tail) and the length of the frozen prefix within it.
+    Consumers use the prefix length to skip re-processing text that will never
+    be revised
     (:class:`~src.dictation.postprocess.incremental.IncrementalPostprocessor`).
     A value of ``0`` means "treat the whole text as revisable".
     """
@@ -102,7 +78,7 @@ class LiveTranscribeWorker(QObject):
     partial = Signal(str, int)
     finished = Signal()
     progress = Signal(str)
-    # Absolute-timed segments for the current chunk, used by the cloud
+    # Absolute-timed segments for each committed decode, used by the cloud
     # training collector to locate corrections in audio. Each item:
     # {start, end, text} with timestamps offset to the full recording.
     segments = Signal(list)
@@ -121,19 +97,19 @@ class LiveTranscribeWorker(QObject):
         final_beam_size: int = 5,
         polish_confidence_ceiling: float = 0.75,
         preview_max_lag_sec: float = 3.0,
+        trailing_silence_sec: float = 0.6,
+        streaming: bool = True,
+        background_polish: bool = True,
     ) -> None:
         super().__init__()
         self.audio_path = audio_path
         self.model_size = model_size
         # The fast model that writes what you see while speaking; the accurate
-        # model_size engine only runs the post-stop polish. Same split as the
-        # web app's LiveSession: keep the two front-ends together.
+        # model_size engine only runs the post-stop polish.
         self.live_model_size = live_model_size or model_size
         self.language = language
-        # VAD is now load-bearing for chunk cutting (not just an engine-side
-        # filter), so it stays on regardless of this flag; vad_enabled is
-        # kept only to still gate faster-whisper's own internal VAD filter
-        # inside each chunk decode.
+        # VAD is load-bearing for chunk cutting, so it is always on; this flag
+        # only gates the engine's own VAD inside the polish decodes.
         self.vad_enabled = vad_enabled
         self.pause_threshold = pause_threshold
         self.live_beam_size = max(1, int(live_beam_size))
@@ -141,44 +117,24 @@ class LiveTranscribeWorker(QObject):
         self.polish_confidence_ceiling = float(polish_confidence_ceiling)
         self.preview_max_lag_sec = float(preview_max_lag_sec)
         self.model_path = model_path
-        self._ledger = ChunkLedger(
-            chunk_policy or ChunkPolicy(), pause_threshold=pause_threshold
-        )
-        self._agreement = LocalAgreement2()
+        # None means "size chunks from the live engine's cost", which is only
+        # known once run() has built the engine.
+        self._chunk_policy = chunk_policy
+        self._trailing_silence_sec = float(trailing_silence_sec)
+        self._streaming = bool(streaming)
+        self._background_polish = bool(background_polish)
+        self._session: Optional[LiveSession] = None
         self._keep_running = True
         self._final_requested = False
         # Set when the session is abandoned (the radiologist started a new
-        # recording before the polish finished). The polish loop checks it
-        # between chunks so an abandoned pass stops at the next boundary
-        # instead of holding the model for the recording that replaced it.
+        # recording before the polish finished). The polish checks it between
+        # chunks so an abandoned pass stops at the next boundary instead of
+        # holding the model for the recording that replaced it.
         self._cancelled = False
-        self._last_emitted: str = ""
-        self._prev_total_samples: int = 0
-        # Every second of audio actually sent to engine.transcribe(), across
-        # closed-chunk decodes, open-tail preview decodes, and the polish
-        # pass. Divided by the recording's true length at the end to get
-        # stream.decode_ratio: the number M2's exit criterion is judged on
-        # (target: <= 1.4x, versus the old sliding window's ~8x).
-        self._decode_sec_total: float = 0.0
-        self._audio_sec_total: float = 0.0
-        # Wall time actually spent inside engine.transcribe(). Against
-        # _decode_sec_total this gives the measured cost of a second of audio on
-        # this machine, which is what decides whether a preview is affordable.
-        self._decode_wall_total: float = 0.0
-        # What one preview decode actually costs here, in wall seconds. It is
-        # its own measurement rather than a share of the ratio above, because
-        # a transcribe() call's price barely depends on how much audio it was
-        # given -- see rules.should_skip_preview.
-        self._preview_cost: float = 0.0
-        # Earliest wall-clock time the next preview may start: see
-        # LiveSession for why previews are capped at half the wall clock.
-        self._preview_earliest: float = 0.0
-        # The last stable preview shown. Re-shown while previews are being
-        # skipped, so the display stalls instead of losing words it already
-        # showed. Cleared whenever a chunk closes, since the committed text
-        # then covers that audio.
-        self._last_stable: str = ""
-        self._progress_state: str = ""
+        self._fed = 0              # samples of the WAV already handed over
+        self._sr = 0
+        self._last_emitted = ""
+        self._progress_state = ""
 
     @property
     def committed_chunks(self) -> int:
@@ -186,7 +142,7 @@ class LiveTranscribeWorker(QObject):
 
         Exposed for the run log, so it does not have to reach into the ledger.
         """
-        return len(self._ledger.committed)
+        return self._session.chunks_decoded if self._session is not None else 0
 
     # ------------------------------------------------------------------
     # Public control
@@ -217,24 +173,14 @@ class LiveTranscribeWorker(QObject):
         cycle_count = 0
         try:
             self.progress.emit(STATE_LOADING)
-            # Engines load their model lazily, so creating both here is free.
-            # A fine-tuned voice model (model_path) only ever replaces the
-            # accurate engine: live text comes from the stock fast model,
-            # exactly as on the web path.
-            live_engine = create_engine(model_size=self.live_model_size, device="auto")
-            if self.live_model_size == self.model_size and not self.model_path:
-                engine = live_engine
-            else:
-                engine = create_engine(
-                    model_size=self.model_size, device="auto", model_path=self.model_path
-                )
+            self._session = self._build_session()
             logger.info("Engines ready in %.2fs", time.time() - wall_start)
             self._emit_state(STATE_LIVE)
 
             final_grace = 0
             while self._keep_running or self._final_requested:
-                total_samples, sr = self._audio_length()
-                if not sr or total_samples / sr < _MIN_AUDIO_SEC:
+                grew = self._feed_new_audio()
+                if self._session.audio_sec < _MIN_AUDIO_SEC:
                     # The WAV stops growing once recording ends, so a finalize()
                     # on a too-short or unreadable file would spin this loop
                     # forever. Give the recorder a short grace to flush, then
@@ -243,42 +189,39 @@ class LiveTranscribeWorker(QObject):
                         final_grace += 1
                         if final_grace > 6:
                             logger.warning(
-                                "Recording too short or unreadable (%s frames); "
-                                "skipping final polish", total_samples,
+                                "Recording too short or unreadable (%d samples); "
+                                "skipping final polish", self._fed,
                             )
                             break
                     time.sleep(0.5)
                     continue
 
-                growth_sec = (total_samples - self._prev_total_samples) / sr
-                if growth_sec < _MIN_GROWTH_SEC and not self._final_requested:
-                    time.sleep(0.4)
-                    continue
-
                 if self._final_requested:
-                    audio, sr = self._read_audio()
-                    if audio is not None:
-                        self._audio_sec_total = len(audio) / sr
-                        self._run_confidence_targeted_polish(engine, audio, sr)
+                    self._run_final_polish()
                     self._keep_running = False
                     self._final_requested = False
                     break
 
-                self._audio_sec_total = total_samples / sr
-                emitted, decode_sec = self._run_cycle(live_engine, total_samples, sr)
-                self._prev_total_samples = total_samples
-                if emitted:
+                if not grew:
+                    time.sleep(_POLL_SEC)
+                    continue
+                update = self._session.cycle()
+                if update is None:
+                    time.sleep(_POLL_SEC)
+                    continue
+                self._emit_state(_SESSION_STATES.get(update.state, STATE_LIVE))
+                if self._emit_partial(update.committed, update.preview):
                     cycle_count += 1
-
-                sleep_time = max(0.4, min(decode_sec * 0.5, 2.0))
-                time.sleep(sleep_time)
 
         except Exception as exc:
             logger.error("Worker error: %s", exc, exc_info=True)
         finally:
-            if self._audio_sec_total > 0:
+            if self._session is not None:
+                self._session.close()
+            if self._session is not None and self._session.audio_sec > 0:
                 perf.set_gauge(
-                    "stream.decode_ratio", self._decode_sec_total / self._audio_sec_total
+                    "stream.decode_ratio",
+                    self._session.decode_audio_sec / self._session.audio_sec,
                 )
             logger.info(
                 "Worker finished in %.2fs, %d cycles emitted",
@@ -287,89 +230,77 @@ class LiveTranscribeWorker(QObject):
             perf.log_summary("dictation perf")
             self.finished.emit()
 
-    def _run_cycle(self, engine: AsrEngine, total_samples: int, sr: int) -> Tuple[bool, float]:
-        """One poll cycle: cut+commit any newly-closed chunks, refresh the
-        open-tail preview. Returns ``(emitted, decode_seconds)``."""
-        t0 = time.time()
-        tail_start = self._ledger.open_start_sample
-        tail_audio, sr = self._read_audio(tail_start)
-        if tail_audio is None or not len(tail_audio):
-            return False, 0.0
-
-        marks = detect_speech(tail_audio)
-        chunks = self._ledger.pending_cuts(total_samples, marks)
-
-        committed_any = False
-        for chunk in chunks:
-            if not chunk.closed:
-                continue
-            local = slice(chunk.start_sample - tail_start, chunk.end_sample - tail_start)
-            chunk_audio = tail_audio[local]
-            if not has_speech(marks, local.start, local.stop):
-                # The VAD heard nothing (e.g. a long unspoken pause force-cut
-                # by the segmenter): nothing to decode, nothing to hallucinate.
-                self._ledger.commit(chunk, "", None)
-                committed_any = True
-                continue
-            decode_started = time.time()
-            try:
-                with perf.stage("worker.transcribe_chunk"):
-                    result = engine.transcribe(
-                        chunk_audio,
-                        TranscribeContext(
-                            language=self.language,
-                            vad_filter=False,  # already cut at a VAD boundary
-                            beam_size=self.live_beam_size,
-                            pause_threshold=self.pause_threshold,
-                            condition_on_previous_text=False,
-                            initial_prompt=build_context_prompt(),
-                            want_word_confidence=True,
-                            temperature=0.0,
-                        ),
-                    )
-            except Exception as exc:
-                logger.warning("Chunk transcription failed: %s", exc)
-                break  # retry this (and any later) chunk next cycle
-            self._decode_wall_total += time.time() - decode_started
-            self._decode_sec_total += len(chunk_audio) / sr
-            self._emit_absolute_segments(result, chunk.start_sample, sr)
-            self._ledger.commit(chunk, result.text, mean_confidence(result))
-            committed_any = True
-
-        if committed_any:
-            self._agreement.reset()
-            self._last_stable = ""
-
-        if (
-            should_skip_preview(self._preview_cost, self.preview_max_lag_sec)
-            or time.time() < self._preview_earliest
-        ):
-            # Cosmetic only: the last stable preview stays on screen and every
-            # remaining second goes to the chunks that are actually kept. The
-            # cost decays while skipping so the preview returns on its own once
-            # the machine is free again.
-            self._preview_cost *= 0.9
-            self._emit_state(STATE_CATCHING_UP)
-            stable_tail = self._last_stable
+    def _build_session(self) -> LiveSession:
+        # Engines load their model lazily, so creating both here is free. A
+        # fine-tuned voice model (model_path) only ever replaces the accurate
+        # engine: live text comes from the stock fast model, as on the web.
+        live_engine = create_engine(model_size=self.live_model_size, device="auto")
+        if self.live_model_size == self.model_size and not self.model_path:
+            final_engine = live_engine
         else:
-            self._emit_state(STATE_LIVE)
-            stable_tail = self._decode_open_tail(
-                engine, chunks, marks, tail_audio, tail_start, sr
+            final_engine = create_engine(
+                model_size=self.model_size, device="auto", model_path=self.model_path
             )
-            self._last_stable = stable_tail
+        plan = plan_for(live_engine.capabilities(), self._trailing_silence_sec)
+        policy = self._chunk_policy or plan.policy
+        logger.info("Chunk plan %s: %s", "manual" if self._chunk_policy else plan.row, policy)
+        return LiveSession(
+            live_engine,
+            final_engine,
+            language=self.language,
+            policy=policy,
+            pause_threshold=self.pause_threshold,
+            live_beam_size=self.live_beam_size,
+            final_beam_size=self.final_beam_size,
+            preview_max_lag_sec=self.preview_max_lag_sec,
+            preview_min_tail_sec=plan.preview_min_tail_sec,
+            polish_confidence_ceiling=self.polish_confidence_ceiling,
+            initial_prompt=build_context_prompt(),
+            postprocess=False,
+            polish_vad_filter=self.vad_enabled,
+            on_decoded=self._emit_absolute_segments,
+            streaming=self._streaming,
+            background_polish=self._background_polish,
+        )
 
-        committed_text = self._ledger.committed_text
-        output = committed_text
-        if stable_tail:
-            output = f"{output} {stable_tail}" if output else stable_tail
+    def _run_final_polish(self) -> None:
+        """After Stop: re-decode only what is worth it (see stream/polish.py).
 
-        emitted = False
-        if output and output != self._last_emitted:
-            self._last_emitted = output
-            emitted = True
-            self.partial.emit(output, len(committed_text))
+        The desktop hands the live text back the moment Stop is pressed
+        (recording_session._hand_back_live_text), so this is an upgrade that
+        lands later, never a wait.
+        """
+        assert self._session is not None
+        self._feed_new_audio()
+        t0 = time.time()
+        # Settle the still-open tail first (a streaming engine flushes its
+        # socket; otherwise the fast model decodes it), as the web does, so the
+        # polish below only upgrades text that is already complete.
+        self._session.close_open_tail_fast()
+        # This pass can take seconds, after the radiologist has pressed Stop:
+        # say what it is doing rather than leaving the window looking hung.
+        final = self._session.finalize(
+            on_progress=self.progress.emit, cancelled=lambda: self._cancelled,
+        )
+        if self._cancelled:
+            return
+        logger.info(
+            "confidence-targeted polish  dur=%.1fs  elapsed=%.2fs  chars=%d",
+            self._session.audio_sec, time.time() - t0, len(final),
+        )
+        if final and final != self._last_emitted:
+            self._last_emitted = final
+            # committed_len=0: everything here just got a final, authoritative
+            # decode, so nothing is a stale carry-over of a live-pass guess.
+            self.partial.emit(final, 0)
 
-        return emitted, time.time() - t0
+    def _emit_partial(self, committed: str, preview: str) -> bool:
+        output = f"{committed} {preview}" if committed and preview else (committed or preview)
+        if not output or output == self._last_emitted:
+            return False
+        self._last_emitted = output
+        self.partial.emit(output, len(committed))
+        return True
 
     def _emit_state(self, state: str) -> None:
         """Emit a live-loop status only when it changes."""
@@ -377,132 +308,36 @@ class LiveTranscribeWorker(QObject):
             self._progress_state = state
             self.progress.emit(state)
 
-    def _decode_open_tail(
-        self, engine: AsrEngine, chunks: List[Chunk], marks: List[SpeechMark],
-        tail_audio: np.ndarray, tail_start: int, sr: int,
-    ) -> str:
-        """Re-decode the still-open portion for a stable live preview only.
-
-        Never committed to the ledger: LocalAgreement-2 (stream/tail.py)
-        only shows the word-prefix that agreed between this decode and the
-        last one of the same open region, so the preview is stable even
-        though the underlying decode is provisional.
-        """
-        open_chunk = chunks[-1] if chunks and not chunks[-1].closed else None
-        if open_chunk is None or open_chunk.length_samples <= 0:
-            return self._agreement.update("")
-
-        local = slice(open_chunk.start_sample - tail_start, open_chunk.end_sample - tail_start)
-        open_audio = tail_audio[local]
-        if not has_speech(marks, local.start, local.stop):
-            return self._agreement.update("")
-
-        decode_started = time.time()
-        try:
-            with perf.stage("worker.transcribe_live"):
-                result = engine.transcribe(
-                    open_audio,
-                    TranscribeContext(
-                        language=self.language,
-                        vad_filter=False,
-                        beam_size=self.live_beam_size,
-                        pause_threshold=self.pause_threshold,
-                        condition_on_previous_text=False,
-                        initial_prompt=build_context_prompt(),
-                        temperature=0.0,
-                    ),
-                )
-        except Exception as exc:
-            logger.warning("Live preview transcription failed: %s", exc)
-            return self._agreement.update("")
-        cost = time.time() - decode_started
-        self._decode_wall_total += cost
-        self._decode_sec_total += len(open_audio) / sr
-        # Smoothed, so one unlucky decode does not switch the preview off and
-        # one lucky one does not switch it straight back on.
-        self._preview_cost = cost if self._preview_cost <= 0 else 0.6 * self._preview_cost + 0.4 * cost
-        self._preview_earliest = time.time() + cost
-        return self._agreement.update(result.text.strip())
-
-    # ------------------------------------------------------------------
-    # Confidence-targeted polish (replaces the old full-WAV final pass)
-    # ------------------------------------------------------------------
-
-    def _run_confidence_targeted_polish(
-        self, engine: AsrEngine, audio: np.ndarray, sr: int
-    ) -> None:
-        """Re-decode only what's worth re-decoding, at higher beam width.
-
-        Bounded cost, spent only where it buys something: committed chunks
-        whose mean word confidence fell below the ceiling, plus whatever
-        audio never made it into a closed chunk before recording stopped.
-        """
-        t0 = time.time()
-        prompt = build_context_prompt()
-
-        def decode(clip: np.ndarray, stage: str) -> Optional[AsrResult]:
-            try:
-                return engine.transcribe(
-                    clip,
-                    TranscribeContext(
-                        language=self.language,
-                        vad_filter=self.vad_enabled,
-                        beam_size=self.final_beam_size,
-                        pause_threshold=self.pause_threshold,
-                        condition_on_previous_text=True,
-                        initial_prompt=prompt,
-                        want_word_confidence=True,
-                    ),
-                )
-            except Exception as exc:
-                logger.warning("Polish decode failed (%s): %s", stage, exc)
-                return None
-
-        def decoded(result: AsrResult, index: Optional[int], start: int, end: int) -> None:
-            self._decode_sec_total += (end - start) / sr
-            if index is None:
-                self._emit_absolute_segments(result, start, sr)
-
-        # This pass can take several seconds per chunk, and it runs after the
-        # radiologist has already pressed Stop: say what it is doing rather
-        # than leaving the window looking hung.
-        polish(
-            self._ledger, audio, decode,
-            ceiling=self.polish_confidence_ceiling,
-            on_progress=self.progress.emit,
-            on_decoded=decoded,
-            cancelled=lambda: self._cancelled,
-        )
-        if self._cancelled:
+    def _emit_absolute_segments(self, result: AsrResult, start_sample: int) -> None:
+        if not result.segments or not self._sr:
             return
-
-        full_text = self._ledger.committed_text
-        logger.info(
-            "confidence-targeted polish  dur=%.1fs  elapsed=%.2fs  chars=%d",
-            len(audio) / sr, time.time() - t0, len(full_text),
-        )
-        if full_text and full_text != self._last_emitted:
-            self._last_emitted = full_text
-            # committed_len=0: everything here just got a final, authoritative
-            # decode, so nothing is a stale carry-over of a live-pass guess.
-            self.partial.emit(full_text, 0)
+        offset = start_sample / self._sr
+        self.segments.emit([
+            {"start": offset + seg.start, "end": offset + seg.end, "text": seg.text}
+            for seg in result.segments
+        ])
 
     # ------------------------------------------------------------------
     # Audio I/O
     # ------------------------------------------------------------------
 
-    def _emit_absolute_segments(self, result: AsrResult, chunk_start_sample: int, sr: int) -> None:
-        if not result.segments:
-            return
-        chunk_start_sec = chunk_start_sample / sr
-        self.segments.emit([
-            {
-                "start": chunk_start_sec + seg.start,
-                "end": chunk_start_sec + seg.end,
-                "text": seg.text,
-            }
-            for seg in result.segments
-        ])
+    def _feed_new_audio(self) -> bool:
+        """Hand the session whatever the recorder wrote since the last call."""
+        assert self._session is not None
+        total, sr = self._audio_length()
+        if not sr or total <= self._fed:
+            return False
+        if sr != self._session.sr:
+            # The recorder captures at 16 kHz (audio.py), the rate the VAD is
+            # fixed to; anything else is a caller bug, not audio to guess at.
+            raise RuntimeError(f"Recording is {sr} Hz; live dictation needs {self._session.sr} Hz")
+        audio, _ = self._read_audio(self._fed)
+        if audio is None or not len(audio):
+            return False
+        self._sr = sr
+        self._session.feed(audio)
+        self._fed += len(audio)
+        return True
 
     def _audio_length(self) -> Tuple[int, int]:
         """Return ``(total_frames, samplerate)`` from the header: no decode.
@@ -522,12 +357,9 @@ class LiveTranscribeWorker(QObject):
     def _read_audio(self, from_sample: int = 0) -> Tuple[Optional[np.ndarray], int]:
         """Read the growing WAV from *from_sample* onwards as mono float32.
 
-        Reading the whole file every cycle re-decodes the entire recording
-        each time; this worker only ever needs the still-open tail, so it
-        seeks.
-
-        Falls back to a full read if the seek fails: the header of a WAV
-        still being written is not guaranteed to describe every frame on disk.
+        Seeks rather than re-reading the whole recording. Falls back to a full
+        read if the seek fails: the header of a WAV still being written is not
+        guaranteed to describe every frame on disk.
         """
         with perf.stage("worker.read_audio"):
             try:
@@ -543,9 +375,6 @@ class LiveTranscribeWorker(QObject):
 
                 audio, sr = sf.read(self.audio_path, dtype="float32")
                 mono = self._to_mono(audio)
-                # The caller labels the returned chunk as starting at
-                # *from_sample*: slice the full read so segment timestamps
-                # stay correct when the seek path failed.
                 if from_sample > 0:
                     mono = mono[from_sample:]
                 return mono, sr
@@ -560,8 +389,3 @@ class LiveTranscribeWorker(QObject):
     @staticmethod
     def _to_mono(audio: np.ndarray) -> np.ndarray:
         return audio[:, 0] if audio.ndim > 1 else audio
-
-    # ------------------------------------------------------------------
-    # Context prompt for Whisper
-    # ------------------------------------------------------------------
-

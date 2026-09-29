@@ -60,15 +60,48 @@ class AsrResult:
 
 
 @dataclass(frozen=True)
+class CostModel:
+    """What one ``transcribe()`` call costs, in wall seconds, on a warm engine.
+
+    ``fixed_sec + per_audio_sec * clip_sec``. The fixed part is what decides
+    how the live loop should be shaped: Whisper pads every call to a 30s window
+    so it pays ~1-4s however little it is handed, and the stream layer must
+    cut few, long chunks to amortise that. A cloud engine pays ~0.2s, so the
+    same long chunks only make the kept text trail the microphone for nothing.
+    Approximate by nature; measured where the engine says so.
+    """
+
+    fixed_sec: float
+    per_audio_sec: float = 0.0
+
+    def estimate(self, clip_sec: float) -> float:
+        return self.fixed_sec + self.per_audio_sec * max(0.0, clip_sec)
+
+
+#: A local Whisper-class engine: the price every constant in stream/ was
+#: originally sized for, so it is the safe default for an engine that does not
+#: say otherwise.
+LOCAL_DECODE_COST = CostModel(fixed_sec=1.0, per_audio_sec=0.02)
+
+
+@dataclass(frozen=True)
 class EngineCaps:
     """What an engine can actually provide: never assume, always check.
 
     ``word_confidence``: real per-word probabilities (not a constant stand-in).
     ``hotwords``: decoder-level vocabulary biasing (M5).
+    ``cost``: what a call costs (see :class:`CostModel`); the stream layer
+    sizes chunks and preview pacing from it (``stream/policy.py``).
+    ``streaming``: also implements ``open_stream()`` (a live socket that
+    returns interim and final words as audio arrives).
+    ``network``: audio leaves the device when this engine answers.
     """
 
     word_confidence: bool
     hotwords: bool
+    cost: CostModel = LOCAL_DECODE_COST
+    streaming: bool = False
+    network: bool = False
 
 
 @dataclass(frozen=True)
@@ -92,6 +125,51 @@ class TranscribeContext:
     want_word_confidence: bool = False
     # Reserved for M5 (lexicon-biased decoding); unused engines ignore it.
     hotwords: Optional[Sequence[str]] = None
+
+
+# -- streaming ---------------------------------------------------------------
+#
+# A streaming engine is handed audio as it arrives and answers as it hears it,
+# instead of being handed a finished clip. Three things come back, and the
+# stream layer (stream/live_session.py) maps each one onto what it already has:
+
+@dataclass(frozen=True)
+class StreamInterim:
+    """A guess at the words since the last final: the live preview."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class StreamFinal:
+    """Settled text for ``[start, end)`` seconds of the stream: one ledger chunk.
+
+    Times are in seconds of audio from the first sample pushed to the stream.
+    Consecutive finals tile the stream: each starts where the last ended, so
+    they commit in order exactly the way closed chunks do.
+    """
+
+    text: str
+    start: float
+    end: float
+    words: Tuple[Word, ...] = ()
+
+    def as_result(self) -> AsrResult:
+        return AsrResult(
+            text=self.text,
+            segments=(AsrSegment(self.text, 0.0, self.end - self.start, self.words),)
+            if self.text else (),
+        )
+
+
+@dataclass(frozen=True)
+class StreamError:
+    """The stream is gone (dropped socket, rejected key). Nothing more will come."""
+
+    message: str
+
+
+StreamEvent = Union[StreamInterim, StreamFinal, StreamError]
 
 
 class ProviderUnavailable(RuntimeError):

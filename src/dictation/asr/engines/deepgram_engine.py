@@ -31,6 +31,7 @@ from src.core.keychain import clear_secret, get_secret, store_secret
 from src.dictation.asr.types import (
     AsrResult,
     AsrSegment,
+    CostModel,
     EngineCaps,
     ProviderUnavailable,
     TranscribeContext,
@@ -43,7 +44,16 @@ _KEYRING_KEY = "deepgram_api_key"
 _LISTEN_URL = "https://api.deepgram.com/v1/listen"
 DEFAULT_MODEL = "nova-2-medical"
 SAMPLE_RATE = 16000  # matches every other engine on this port
-_TIMEOUT = 30.0
+
+# Deadlines, per call. One flat 30s timeout used to cover everything, so a
+# hung socket held the live cycle (and the cycle queued behind it) for half a
+# minute before the chain fell back to the local engine: the dictation froze.
+# A healthy call costs ~0.2s over a warm connection, so a few seconds is
+# already generous; the read budget grows with the clip because the polish
+# after Stop sends up to 25s of audio in one call.
+_CONNECT_TIMEOUT_SEC = 1.5
+_READ_BASE_SEC = 2.0
+_READ_PER_AUDIO_SEC = 0.3
 
 # Deepgram's keyword-boosting ("spotlight the decoder onto these words") is a
 # Nova-2-family feature: query param ``keywords``, repeated once per term,
@@ -76,9 +86,17 @@ def clear_api_key() -> None:
 class DeepgramEngine:
     """Cloud ASR via Deepgram's Listen API, tuned for medical dictation."""
 
-    def __init__(self, model_name: str = DEFAULT_MODEL, language: str = "en-US") -> None:
+    def __init__(
+        self,
+        model_name: str = DEFAULT_MODEL,
+        language: str = "en-US",
+        live_url: Optional[str] = None,
+    ) -> None:
         self.model_name = model_name
         self.language = language
+        # The live socket's address; None is Deepgram's own. Tests point it
+        # at a local stand-in server.
+        self.live_url = live_url
 
     # -- port -----------------------------------------------------------
 
@@ -89,13 +107,45 @@ class DeepgramEngine:
         first decode: the loop calls :meth:`transcribe` from a worker thread,
         and two threads racing to build the singleton would leave one client
         holding sockets nobody closes.
+
+        Raises :class:`DeepgramMissingKeyError` when no key is stored, so a
+        chain learns at startup that this tier will never answer, instead of
+        on the first decode of the first dictation.
         """
         _http_client()
+        if not get_api_key():
+            raise DeepgramMissingKeyError("No Deepgram API key in the OS keychain")
 
     def capabilities(self) -> EngineCaps:
         # Deepgram reports real per-word confidence; this REST endpoint has
         # no decoder-level vocabulary biasing (Whisper's hotwords).
-        return EngineCaps(word_confidence=True, hotwords=False)
+        # Cost measured against the live API over a kept-alive connection:
+        # 0.18s for a 2s clip, 0.16s for a 6s one (see _http_client).
+        return EngineCaps(
+            word_confidence=True, hotwords=False,
+            cost=CostModel(fixed_sec=0.2, per_audio_sec=0.01),
+            network=True,
+            streaming=True,
+        )
+
+    def open_stream(self, ctx: TranscribeContext) -> Any:
+        """A live socket (see deepgram_stream.py). Raises when it cannot open."""
+        from src.dictation.asr.engines import deepgram_stream
+
+        api_key = get_api_key()
+        if not api_key:
+            raise DeepgramMissingKeyError("No Deepgram API key in the OS keychain")
+        return deepgram_stream.open_stream(
+            api_key, self.model_name, self.language, _boosted_keywords(),
+            url=self.live_url,
+        )
+
+    def identity(self) -> tuple:
+        return ("deepgram", self.model_name, self.language)
+
+    def usable(self) -> bool:
+        """Cheap check, no network: is there a key to call with at all?"""
+        return bool(get_api_key())
 
     def transcribe(self, audio: Any, ctx: TranscribeContext) -> AsrResult:
         pcm = _to_linear16(audio)
@@ -133,6 +183,7 @@ class DeepgramEngine:
                 "Content-Type": "audio/l16",
             },
             content=pcm,
+            timeout=call_timeout(len(pcm) / (2 * SAMPLE_RATE)),
         )
         if response.status_code in (401, 403):
             raise ProviderUnavailable(
@@ -144,6 +195,14 @@ class DeepgramEngine:
 
 
 # -- internals ------------------------------------------------------------
+
+def call_timeout(clip_sec: float) -> Any:
+    """The deadline for one call carrying *clip_sec* seconds of audio."""
+    import httpx
+
+    read = _READ_BASE_SEC + _READ_PER_AUDIO_SEC * max(0.0, clip_sec)
+    return httpx.Timeout(read, connect=_CONNECT_TIMEOUT_SEC)
+
 
 @lru_cache(maxsize=1)
 def _http_client() -> Any:
@@ -164,7 +223,9 @@ def _http_client() -> Any:
     import httpx  # already a hard dependency (web app / Lightning REST)
 
     return httpx.Client(
-        timeout=_TIMEOUT,
+        # Every request passes its own deadline (call_timeout); this is only
+        # the ceiling for anything that forgets to.
+        timeout=httpx.Timeout(10.0, connect=_CONNECT_TIMEOUT_SEC),
         # A dictation is a burst of calls seconds apart with quiet in between;
         # the expiry has to outlast the quiet or the handshake comes straight
         # back on the first word of the next report.

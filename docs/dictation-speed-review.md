@@ -215,3 +215,36 @@ must use `faster_whisper.audio.decode_audio(path, sampling_rate=16000)`.
 `stream.decode_ratio`, the M2 exit metric, was absent from the
 end-of-recording log and visible only at `GET /api/debug/perf`. Fixed. This is
 measurement hygiene; it buys zero milliseconds.
+
+## Update 2026-09-27: a separate preview thread ("two lanes") buys nothing
+
+The lag map's lever 5 was to take the open-tail preview decode off the commit
+path: `cycle()` only commits, the preview decodes on its own thread from a copy
+of the open audio, and its text is picked up on a later cycle (dropped if a
+chunk closed meanwhile). It was built and measured, then reverted.
+
+`scripts/eval/simulate_lag.py`, the real `LiveSession` and segmenter at
+speaking pace with an engine priced by its `CostModel`; mean of three 45 s
+synthetic dictations (seeds 1-3). Seconds from a word being spoken:
+
+| engine | preview | kept p50 | kept p95 | shown p50 | first word |
+|---|---|---|---|---|---|
+| local (tiny.en price) | inline, as shipped | 3.54 | 6.66 | 2.44 | 1.01 |
+| local | own thread | 3.53 | 6.65 | 2.55 | 1.25 |
+| local, `num_workers=2` | own thread | 3.65 | 6.61 | 2.49 | 1.20 |
+| cloud (Deepgram REST price) | inline | 2.40 | 4.19 | 0.73 | 0.36 |
+| cloud | own thread | 2.39 | 4.26 | 1.07 | 0.70 |
+
+Kept text does not move, and the preview gets later by a quarter to a third
+of a second, because a finished preview now waits for the next cycle to be
+shown. With one Whisper worker a commit still queues on the model itself; with
+two, each overlapped call runs ~1.67x slower (the lag map's own measurement,
+#7), which eats the gain. The lag map's 6.82 s -> 4.05 s was measured before
+the commit-cycle preview skip and the preview pacing rule shipped; those two
+already removed most of the queueing a thread would have saved.
+
+Also measured and not worth changing: `live_cycle_sec` 0.5 -> 0.25 moved kept
+p50 by -0.14 s (cloud) and +0.01 s (local), inside run-to-run noise.
+
+Not measured by this: accuracy (the simulator has none), and CPU contention
+from anything outside the loop.

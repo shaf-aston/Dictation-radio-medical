@@ -67,6 +67,10 @@ purpose* (spoken units → `mm`, hyphen joins) but deliberately leaves spelling
 variants (`calibre`/`caliber`) visible, because silently Americanising a British
 report is a real change to the radiologist's text.
 
+**`simulate_lag.py` and `web_lag_check.py` measure loop latency only**, with
+no model or key (`fake_deepgram.py` stands in for the live socket). They never
+answer an accuracy question.
+
 ## Run
 
 ```bash
@@ -85,4 +89,8 @@ python -m scripts.eval.replay --set tts_paused --chunk-min 4.0 --label shorter-c
 
 # --realtime feeds at true speaking pace and reports wall latency instead of
 # audio-seconds; use it to see what a loaded machine does to the numbers.
+
+# Loop latency with no model or key (latency only, never accuracy):
+python -m scripts.eval.simulate_lag --engine local --final small --seconds 90
+python -m scripts.eval.web_lag_check on       # real web app, fake live socket
 ```
