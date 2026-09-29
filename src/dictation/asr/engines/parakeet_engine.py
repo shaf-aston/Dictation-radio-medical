@@ -34,7 +34,9 @@ import threading
 from pathlib import Path
 from typing import Any, List, Optional, Sequence, Tuple
 
-from src.dictation.asr.types import AsrResult, AsrSegment, EngineCaps, TranscribeContext, Word
+from src.dictation.asr.types import (
+    AsrResult, AsrSegment, EngineCaps, ProviderUnavailable, TranscribeContext, Word,
+)
 from src.features.file_manager import onnx_asr_cache_dir
 
 logger = logging.getLogger(__name__)
@@ -91,7 +93,12 @@ class ParakeetEngine:
             key = (self.model_name, self.quantization)
             with _MODELS_LOCK:
                 if key not in _MODELS:
-                    _MODELS[key] = self._load()
+                    try:
+                        _MODELS[key] = self._load()
+                    except Exception as exc:
+                        # Offline with no cached model, a retry is a download
+                        # attempt on every live cycle: give up until restart.
+                        raise ProviderUnavailable(f"Parakeet failed to load: {exc}") from exc
                 self._model = _MODELS[key]
 
     def capabilities(self) -> EngineCaps:
@@ -130,6 +137,7 @@ class ParakeetEngine:
         path = onnx_asr_cache_dir(f"{self.model_name}-{self.quantization or 'fp32'}")
         if not path.exists():
             logger.info("Downloading %s into %s (one time)", self.model_name, path)
+        logger.info("Loading %s (%s)", self.model_name, self.quantization or "fp32")
         return onnx_asr.load_model(
             self.model_name, path, quantization=self.quantization
         ).with_timestamps()

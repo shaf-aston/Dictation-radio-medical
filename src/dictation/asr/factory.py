@@ -31,10 +31,14 @@ def _local_tiers(**kwargs: Any) -> List[Tuple[str, Any]]:
 
     *kwargs* are whatever the caller already passes for the Whisper tier
     (``model_size``, ``device``, ``model_path``, ...): every call site is
-    Whisper-shaped, so they are forwarded, not translated.
+    Whisper-shaped, so they are forwarded, not translated. A ``model_path`` is
+    a fine-tuned Whisper voice the radiologist switched on, so it skips
+    Parakeet: ahead of it, the fine-tune would never be used.
     """
     tiers: List[Tuple[str, Any]] = []
-    if importlib.util.find_spec("onnx_asr") is not None:
+    if kwargs.get("model_path"):
+        logger.info("Fine-tuned voice model active; ASR chain skips the Parakeet tier")
+    elif importlib.util.find_spec("onnx_asr") is not None:
         tiers.append(("parakeet", ParakeetEngine()))
     else:
         logger.info("onnx-asr not installed; ASR chain skips the Parakeet tier")
@@ -84,7 +88,7 @@ ENGINE_NAMES = tuple(sorted(_ENGINES))
 def create_engine(name: str = "", **kwargs: Any) -> AsrEngine:
     """Build the named engine, or the ``asr_engine`` setting's when unnamed.
     Raises ``ValueError`` on an unknown name."""
-    name = name or str(Settings().get("asr_engine", DEFAULT_ENGINE))
+    name = name or Settings().get("asr_engine")
     cls = _ENGINES.get(name)
     if cls is None:
         raise ValueError(f"Unknown ASR engine {name!r}. Available: {sorted(_ENGINES)}")

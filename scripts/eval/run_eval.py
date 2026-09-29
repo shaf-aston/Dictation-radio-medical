@@ -121,6 +121,7 @@ class EngineRunner:
         self.engine_name = engine_name
         self._engine = create_engine(engine_name, **model_kwargs(engine_name, model))
         self._ctx_cls = TranscribeContext
+        self._answered_by: set = set()
 
     def describe(self) -> Dict[str, Any]:
         caps = self._engine.capabilities()
@@ -136,6 +137,9 @@ class EngineRunner:
             # "no word confidences" as "an unsure decoder" (see EngineCaps).
             "word_confidence": caps.word_confidence,
             "hotwords": caps.hotwords,
+            # Which tier of a chain actually decoded: "local" handed a Whisper
+            # model name is still Parakeet when onnx-asr is installed.
+            "answered_by": sorted(self._answered_by),
         }
 
     def warmup(self) -> None:
@@ -160,6 +164,7 @@ class EngineRunner:
             self._ctx_cls(beam_size=self.beam_size, want_word_confidence=True),
         )
         elapsed = time.perf_counter() - start
+        self._answered_by.add(result.engine or self.engine_name)
         confidences: List[Optional[float]] = [
             w.confidence for seg in result.segments for w in seg.words
         ]

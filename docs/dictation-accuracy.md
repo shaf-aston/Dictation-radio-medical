@@ -143,8 +143,10 @@ Two things keep it from being a closed case:
   14.29 %, and 34 true fixes against 2 bad ones). Its mistakes are evidently more
   correctable by the pipeline than Whisper's are.
 
-The engine stays available behind `--engine parakeet` and `create_engine`, and
-the default is unchanged.
+The engine stays available behind `--engine parakeet` and `create_engine`. On
+2026-09-29 the default became `local` (Parakeet, Whisper behind it): on the
+live path, measured by `replay.py` on `tts_paused`, Parakeet scored 4.6 %
+medical-term error against 12.5 % for Whisper tiny.en + small.en.
 
 ### A speed claim corrected
 

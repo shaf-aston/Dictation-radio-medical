@@ -6,7 +6,7 @@ starts talking:
 
 * the SymSpell medical-spelling index: ~1.3 s to build (or unpickle) on every
   launch, paid inside the fuzzy-match post-process stage;
-* the Whisper model: a few seconds on the first ``transcribe()``.
+* the speech model (Parakeet or Whisper): seconds on the first ``transcribe()``.
 
 This module moves that cost to app startup, on a background thread, so first use
 is instant. It only calls the *existing* lazy loaders: it owns no data and does

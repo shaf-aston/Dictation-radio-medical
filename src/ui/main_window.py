@@ -274,7 +274,7 @@ class MainWindow(QMainWindow):
         enabled, and report analysis is skipped if disabled in settings. Failures
         here must never block app startup.
         """
-        # Pre-build the slow spelling index and Whisper model in the background
+        # Pre-build the slow spelling index and speech model in the background
         # so the radiologist's first spoken chunk is instant, not a ~1.3 s stall.
         try:
             from src.dictation.warmup import (

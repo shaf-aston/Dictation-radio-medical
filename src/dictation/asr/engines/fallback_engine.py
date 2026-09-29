@@ -38,16 +38,16 @@ class ChainEngine:
         self._providers: List[Tuple[str, Any]] = list(providers)
 
     def preload(self) -> None:
-        # Only the primary is warmed. Warming every tier loaded two Whisper
-        # models at startup that the Parakeet primary never hands work to, and
-        # they fought the real warm-up for the CPU. A failover is rare, and the
-        # tier it lands on loads itself on its first decode: one slow decode,
-        # said in the log, instead of a slower start every time.
-        name, engine = self._providers[0]
-        try:
-            engine.preload()
-        except Exception as exc:
-            logger.warning("ASR provider %r failed to preload: %s", name, exc)
+        # Every tier but the last is warmed. The last is the safety net that
+        # only runs when all the others raised: warming it loaded two Whisper
+        # models at startup that Parakeet never hands work to, and they fought
+        # the real warm-up for the CPU. A cloud tier's preload succeeds even
+        # with a rejected key, so the local tier behind it must be warm too.
+        for name, engine in self._providers[:max(1, len(self._providers) - 1)]:
+            try:
+                engine.preload()
+            except Exception as exc:
+                logger.warning("ASR provider %r failed to preload: %s", name, exc)
 
     def capabilities(self) -> EngineCaps:
         # What the *primary* provider can offer: a downstream failover to a

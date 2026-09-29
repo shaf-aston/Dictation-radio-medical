@@ -67,11 +67,11 @@ The per-module map lives in [CLAUDE.md](CLAUDE.md), style rules in [CODING_STAND
 
 - **Microphone errors**: check input device in OS Sound Settings; close other apps using the mic
 - **Import errors**: activate the venv and run `pip install -e .`
-- **Slow transcription**: switch to a smaller Whisper model (`tiny` / `base`)
+- **Slow transcription**: the developer console shows each decode's time; Whisper model sizes only matter when Parakeet is not installed
 - **Over-correction**: raise the fuzzy cutoff or add the term to `_PROTECTED_TERMS` (see Customisation)
 - **Missing Word export**: `pip install python-docx`
 
 ## Notes
 
 - The audit log is append-only; retain for 8 years per clinical record requirements.
-- Whisper models cache in `~/.cache/huggingface/` on first use.
+- Speech models download once into `data/cache/` on first use.

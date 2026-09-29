@@ -1,8 +1,8 @@
 # CLAUDE.md: Architecture & Module Map
 
 Radio Dictate is an **offline medical dictation workstation** for radiologists.
-ASR (automatic speech recognition) runs locally via Whisper (`faster-whisper` / CTranslate2); by
-default **no audio or text leaves the device**. Two front-ends share one
+ASR (automatic speech recognition) runs locally via Parakeet (`onnx-asr`), with
+Whisper (`faster-whisper`) behind it; by default **no audio or text leaves the device**. Two front-ends share one
 dictation core: a PySide6 desktop GUI and a FastAPI web app.
 
 Read this first. For conventions, see [CODING_STANDARDS.md](CODING_STANDARDS.md).
@@ -41,7 +41,9 @@ src/
 │   │                       engines/fallback_engine.py (ChainEngine: tries each
 │   │                       provider in order, degrades past any that raises) ·
 │   │                       engines/faster_whisper_engine.py (the CTranslate2
-│   │                       wrapper and its port adapter, one file) · prompt.py
+│   │                       wrapper and its port adapter, one file) ·
+│   │                       engines/parakeet_engine.py (onnx-asr; no prompt,
+│   │                       one model shared process-wide) · prompt.py
 │   │                       (the radiology priming vocabulary, same for every
 │   │                       engine) · models.py (known model names + fallback)
 │   ├── stream/             chunk-once streaming, vad.py (Silero VAD, bundled
@@ -161,7 +163,8 @@ both:     → asr/ (AsrEngine port → Parakeet, Whisper behind it) → postproc
 
 Both front-ends use two models: `live_model_size` (fast) decodes what appears
 while you speak, and `model_size` re-decodes the low-confidence chunks after
-Stop. **Stop never waits on that second pass in either front-end**: the live
+Stop. Both sizes are Whisper's: on the default `local` engine Parakeet answers
+in both slots, so the polish re-decodes with the same model. **Stop never waits on that second pass in either front-end**: the live
 text is handed back at once and the polish upgrades it in the background.
 Which makes one rule load-bearing, and it is written in both places: if the
 report has been edited since it was handed over, the polished version is

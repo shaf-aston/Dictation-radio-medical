@@ -416,7 +416,7 @@ async def lifespan(_: FastAPI):
 
 
 def _warm_up_singletons() -> None:
-    """Pre-build the slow spelling index and Whisper model off the request path.
+    """Pre-build the slow spelling index and speech model off the request path.
 
     Left lazy, both are built on the *first* ``/transcribe`` call and stall it by
     seconds. Warming at startup on a background thread makes the first real
@@ -759,7 +759,9 @@ def _record_web_run(
     one; the live socket fills it in, because for streaming that number, how
     long after the last word the final text arrived, is the whole point.
     """
-    record = run_log.start("web", model=str(prefs.get("model_size", "")))
+    record = run_log.start(
+        "web", model=str(prefs.get("model_size", "")), engine=str(settings.get("asr_engine", "")),
+    )
     record.audio_sec = audio_sec
     record.duration_sec = round(elapsed, 3)
     record.finalise_sec = round(finalise_sec, 3)
