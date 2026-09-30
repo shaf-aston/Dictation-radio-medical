@@ -54,6 +54,9 @@ class AsrResult:
 
     text: str
     segments: Tuple[AsrSegment, ...] = ()
+    #: Which provider produced it, set by the chain that picked one. Empty
+    #: from a bare engine, which is only ever itself.
+    engine: str = ""
 
 
 @dataclass(frozen=True)

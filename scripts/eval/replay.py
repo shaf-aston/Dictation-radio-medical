@@ -44,9 +44,9 @@ from scripts.eval.metrics import term_error_rate, word_error_rate
 from src.core.settings import Settings
 from src.dictation.asr.factory import DEFAULT_ENGINE, create_engine, model_kwargs
 from src.dictation.stream.live_session import LiveSession
+from src.dictation.stream.rules import build_context_prompt
 from src.dictation.stream.segmenter import ChunkPolicy
 from src.dictation.stream.vad import SAMPLE_RATE
-from src.features.file_manager import radiology_prompt_path
 
 
 @dataclass
@@ -60,6 +60,8 @@ class ReplayResult:
     # Audio seconds between a word being spoken and it becoming permanent.
     commit_lag: List[float] = field(default_factory=list)
     wall_sec: float = 0.0
+    polish_sec: float = 0.0
+    polished: int = 0
     first_word_sec: Optional[float] = None
     wer: Optional[float] = None
     term_error: Optional[float] = None
@@ -74,6 +76,8 @@ class ReplayResult:
         return {
             "audio_sec": round(self.audio_sec, 2),
             "wall_sec": round(self.wall_sec, 2),
+            "polish_sec": round(self.polish_sec, 2),
+            "polished": self.polished,
             "chunks": self.chunks,
             "words": len(self.commit_lag),
             "first_word_sec": (
@@ -124,6 +128,8 @@ def replay(
     engine_name: str = DEFAULT_ENGINE,
     live_model: str = "",
     final_model: str = "",
+    final_engine_name: str = "",
+    polish_ceiling: Optional[float] = None,
     realtime: bool = False,
     policy: Optional[ChunkPolicy] = None,
 ) -> ReplayResult:
@@ -132,10 +138,10 @@ def replay(
     cycle_sec = float(settings.get("live_cycle_sec"))
     block = max(1, int(cycle_sec * sr))
 
-    prompt_file = radiology_prompt_path()
     session = LiveSession(
         create_engine(engine_name, **model_kwargs(engine_name, live_model)),
-        create_engine(engine_name, **model_kwargs(engine_name, final_model)),
+        create_engine(final_engine_name or engine_name,
+                      **model_kwargs(final_engine_name or engine_name, final_model)),
         language=str(settings.get("language")),
         accent=str(settings.get("accent")),
         cleanup_level=str(settings.get("cleanup_level")),
@@ -145,9 +151,12 @@ def replay(
         final_beam_size=int(settings.get("final_beam_size")),
         preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
         preview_min_tail_sec=float(settings.get("preview_min_tail_sec")),
-        polish_confidence_ceiling=float(settings.get("polish_confidence_ceiling")),
+        polish_confidence_ceiling=(
+            polish_ceiling if polish_ceiling is not None
+            else float(settings.get("polish_confidence_ceiling"))
+        ),
         uncertain_word_confidence=float(settings.get("uncertain_word_confidence")),
-        initial_prompt=prompt_file.read_text(encoding="utf-8") if prompt_file.is_file() else "",
+        initial_prompt=build_context_prompt(),
         sr=sr,
     )
 
@@ -199,7 +208,10 @@ def replay(
                 )
 
     session.close_open_tail_fast()
+    polish_start = time.perf_counter()
     result.final_text = session.finalize()
+    result.polish_sec = time.perf_counter() - polish_start
+    result.polished = session.chunks_polished
     result.chunks = session.chunks_decoded
     result.wall_sec = time.perf_counter() - wall_start
     return result
@@ -244,6 +256,9 @@ def main() -> None:
     ap.add_argument("--engine", default=DEFAULT_ENGINE)
     ap.add_argument("--live-model", default="", help="override live_model_size")
     ap.add_argument("--final-model", default="", help="override model_size")
+    ap.add_argument("--final-engine", default="", help="engine for the polish (default: --engine)")
+    ap.add_argument("--polish-ceiling", type=float, help="override polish_confidence_ceiling")
+    ap.add_argument("--out-dir", default=str(Path("data") / "eval" / "reports"))
     ap.add_argument("--label", default="", help="name this run in the JSON output")
     ap.add_argument("--chunk-min", type=float, help="override chunk_min_sec")
     ap.add_argument("--chunk-soft-max", type=float, help="override chunk_soft_max_sec")
@@ -254,8 +269,13 @@ def main() -> None:
     args = ap.parse_args()
 
     settings = Settings()
-    live_model = args.live_model or str(settings.get("live_model_size"))
-    final_model = args.final_model or str(settings.get("model_size"))
+    final_engine = args.final_engine or args.engine
+    # The model settings name Whisper sizes; Parakeet has no such model, so it
+    # keeps its own default unless one is passed on the command line.
+    live_model = args.live_model or (
+        "" if args.engine == "parakeet" else str(settings.get("live_model_size")))
+    final_model = args.final_model or (
+        "" if final_engine == "parakeet" else str(settings.get("model_size")))
     policy = _policy_from(settings, {
         "min_sec": args.chunk_min,
         "soft_max_sec": args.chunk_soft_max,
@@ -263,7 +283,10 @@ def main() -> None:
         "trailing_silence_sec": args.trailing_silence,
     })
 
-    print(f"engine={args.engine} live={live_model} final={final_model}")
+    ceiling = (args.polish_ceiling if args.polish_ceiling is not None
+               else float(settings.get("polish_confidence_ceiling")))
+    print(f"engine={args.engine} live={live_model} final_engine={final_engine} "
+          f"final={final_model} polish_ceiling={ceiling}")
     print(f"policy min={policy.min_sec} soft={policy.soft_max_sec} "
           f"force={policy.force_cut_sec} trailing={policy.trailing_silence_sec}")
     print(f"mode={'realtime' if args.realtime else 'flat out (audio-seconds lag)'}\n")
@@ -279,7 +302,8 @@ def main() -> None:
         res = replay(
             load_audio(clip), clip.stem, settings,
             engine_name=args.engine, live_model=live_model,
-            final_model=final_model, realtime=args.realtime, policy=policy,
+            final_model=final_model, final_engine_name=final_engine,
+            polish_ceiling=ceiling, realtime=args.realtime, policy=policy,
         )
         results.append(res)
         s = res.summary()
@@ -312,13 +336,15 @@ def main() -> None:
     else:
         print("accuracy    NOT SCORED: no reference for this audio")
 
-    out = Path("data") / "eval" / "reports"
+    out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     label = args.label or "replay"
     dest = out / f"{label}.replay.json"
     dest.write_text(json.dumps({
         "label": label,
         "engine": args.engine,
+        "final_engine": final_engine,
+        "polish_ceiling": ceiling,
         "live_model": live_model,
         "final_model": final_model,
         "realtime": args.realtime,

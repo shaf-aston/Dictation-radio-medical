@@ -30,6 +30,7 @@ than an ImportError at startup.
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Any, List, Optional, Sequence, Tuple
 
@@ -38,6 +39,7 @@ from src.dictation.asr.types import (
     AsrResult,
     AsrSegment,
     EngineCaps,
+    ProviderUnavailable,
     TranscribeContext,
     Word,
 )
@@ -69,6 +71,14 @@ _MISSING_HINT = (
 )
 
 
+# Process-wide model cache, as faster_whisper_engine keeps one: the web app
+# builds an engine per slot and warm-up builds its own, so a model held per
+# instance was loaded at startup into an engine nobody decoded with, then
+# loaded again, cold, inside the first dictation's first decode.
+_MODELS: dict = {}
+_MODELS_LOCK = threading.Lock()
+
+
 class ParakeetEngine:
     """Runs Parakeet TDT through onnx-asr to satisfy the :class:`AsrEngine` port."""
 
@@ -86,7 +96,16 @@ class ParakeetEngine:
     def preload(self) -> None:
         """Download (once) and load the model, so no transcribe() pays for it."""
         if self._model is None:
-            self._model = self._load()
+            key = (self.model_name, self.quantization)
+            with _MODELS_LOCK:
+                if key not in _MODELS:
+                    try:
+                        _MODELS[key] = self._load()
+                    except Exception as exc:
+                        # Offline with no cached model, a retry is a download
+                        # attempt on every live cycle: give up until restart.
+                        raise ProviderUnavailable(f"Parakeet failed to load: {exc}") from exc
+                self._model = _MODELS[key]
 
     def identity(self) -> tuple:
         return ("parakeet", self.model_name, self.quantization)
@@ -130,6 +149,7 @@ class ParakeetEngine:
         path = onnx_asr_cache_dir(f"{self.model_name}-{self.quantization or 'fp32'}")
         if not path.exists():
             logger.info("Downloading %s into %s (one time)", self.model_name, path)
+        logger.info("Loading %s (%s)", self.model_name, self.quantization or "fp32")
         return onnx_asr.load_model(
             self.model_name, path, quantization=self.quantization
         ).with_timestamps()

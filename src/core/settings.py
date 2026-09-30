@@ -11,6 +11,11 @@ from src.core.json_store import read_json, write_json
 from src.features.file_manager import settings_file
 
 _DEFAULTS: dict = {
+    # Which speech engine transcribes (names in src/dictation/asr/factory.py).
+    # "local" is Parakeet with Whisper behind it, all on this machine. Measured
+    # 2026-09-29 on the tts_paused set, live path: Parakeet 4.6 % medical-term
+    # error, Whisper tiny.en + small.en 12.5 %. "deepgram" puts the cloud first.
+    "asr_engine": "local",
     "model_size": "base.en",   # English-only: faster AND more accurate than "base"
     "language": "en",
     "vad_filter": True,

@@ -6,7 +6,7 @@ starts talking:
 
 * the SymSpell medical-spelling index: ~1.3 s to build (or unpickle) on every
   launch, paid inside the fuzzy-match post-process stage;
-* the Whisper model: a few seconds on the first ``transcribe()``.
+* the speech model (Parakeet or Whisper): seconds on the first ``transcribe()``.
 
 This module moves that cost to app startup, on a background thread, so first use
 is instant. It only calls the *existing* lazy loaders: it owns no data and does
@@ -103,7 +103,10 @@ def postprocess_warmers() -> List[Warmer]:
 
 
 def transcriber_warmer(model_size: str, model_path: Optional[str] = None) -> Warmer:
-    """A warmer that loads the Whisper model for *model_size* ahead of first use.
+    """A warmer that loads the speech engine for *model_size* ahead of first use.
+
+    Whichever engine the ``asr_engine`` setting names; *model_size* only sizes
+    its Whisper tier, so the label says ``asr_model`` rather than guess which.
 
     Front-ends resolve the active model from settings and pass it here, so this
     module never reaches up into settings itself.
@@ -114,7 +117,7 @@ def transcriber_warmer(model_size: str, model_path: Optional[str] = None) -> War
 
         create_engine(model_size=model_size, model_path=model_path).preload()
 
-    label = f"whisper_model[{model_path or model_size}]"
+    label = f"asr_model[{model_path or model_size}]"
     return (label, _warm)
 
 

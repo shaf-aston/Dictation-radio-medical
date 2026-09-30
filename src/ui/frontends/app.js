@@ -724,6 +724,7 @@ newReportBtn.addEventListener('click', () => {
     if (hasContent && !confirm('Clear the current report and patient information?')) {
         return;
     }
+    flushLearning();
     editor.value = '';
     undoStack = [''];
     undoIndex = 0;
@@ -738,14 +739,16 @@ newReportBtn.addEventListener('click', () => {
 clearBtn.addEventListener('click', () => {
     if (editor.value.trim() === '') return;
     if (confirm('Are you sure you want to clear all text? This cannot be undone.')) {
+        flushLearning();
         setEditorValue('');
         hideStatus();
         resetFindings();
     }
 });
 
-saveTxtBtn.addEventListener('click', () => downloadReport('txt'));
-exportWordBtn.addEventListener('click', () => downloadReport('word'));
+saveTxtBtn.addEventListener('click', () => { flushLearning(); downloadReport('txt'); });
+exportWordBtn.addEventListener('click', () => { flushLearning(); downloadReport('word'); });
+copyBtn.addEventListener('click', () => flushLearning());
 
 // Copy with visual feedback. The clipboard is an exit from the app, so it clears the
 // same release gate the downloads do before the text goes anywhere.
@@ -873,6 +876,16 @@ let stopPressedAt = 0;
 // on it: a fraction of a second of speech is not worth a stuck button.
 const MIC_FLUSH_TIMEOUT_MS = 50;
 
+// The microphone is listened to from the moment the audio graph exists, but the
+// socket takes a moment longer to open. Sound spoken in that gap is held here
+// (null whenever no connect is under way), in order, and sent when it opens.
+// Capped so a socket that never opens cannot grow memory without limit: past
+// the cap the OLDEST sound is dropped, so what is sent stays one unbroken run
+// ending at the present instead of a gap in the middle.
+const PRE_SOCKET_MAX_SEC = 10;
+let pendingPcm = null;
+let pendingSamples = 0;
+
 // The worklet only forwards frames. Every decision stays on the main thread, so
 // UI work can never block the audio thread. It buffers render quanta (fixed at
 // 128 samples by the Web Audio spec) into fixed-size frames before posting, so
@@ -945,11 +958,21 @@ function peakLevel(frame) {
 function handleTapFrame(frame) {
     if (!frame || !frame.length) return;
     setLevel(peakLevel(frame));
-    if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
-        const pcm = floatToPcm16(frame).buffer;
-        devAudioSent(pcm.byteLength);
-        liveSocket.send(pcm);
+    const pcm = floatToPcm16(frame).buffer;
+    if (pendingPcm) {
+        pendingPcm.push(pcm);
+        pendingSamples += pcm.byteLength / 2;
+        while (pendingSamples > PRE_SOCKET_MAX_SEC * LIVE_SAMPLE_RATE) {
+            pendingSamples -= pendingPcm.shift().byteLength / 2;
+        }
+    } else if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
+        sendPcm(pcm);
     }
+}
+
+function sendPcm(pcm) {
+    devAudioSent(pcm.byteLength);
+    liveSocket.send(pcm);
 }
 
 // -- what the radiologist sees ---------------------------------------------
@@ -1228,6 +1251,7 @@ function openSocket() {
             uncertainWords = new Set(msg.uncertain || []);
             renderLiveText();
             handedOverText = editor.value;
+            learnSnapshot = editor.value;
             finishSession(null);
             // The hand-back is the last word count the trail will quote, so it
             // has to be this text's, not the last partial's.
@@ -1253,6 +1277,7 @@ function openSocket() {
                 committedText = improved;
                 uncertainWords = new Set(msg.uncertain || []);
                 renderLiveText();
+                learnSnapshot = editor.value;
                 pushUndoState();
                 announceReportChanged();
                 tl.words = devWordsIn(improved);
@@ -1348,6 +1373,7 @@ function flushMicTap(node) {
 
 async function teardownMic() {
     isRecording = false;
+    pendingPcm = null;  // a failed start must not leak its held sound into the next recording
     if (micNode) {
         // Take the node out of the global BEFORE awaiting, so a Stop and a
         // Cancel milliseconds apart cannot both reach the same node: the
@@ -1374,15 +1400,32 @@ async function startRecording() {
     // press record, and for a second or more nothing on screen moved at all.
     tlBegin();
     showStatus('Opening the microphone', 'is-busy');
+    // The audio graph comes first: an open microphone delivers sound at once,
+    // and anything it delivers before the graph exists has nowhere to go.
+    try {
+        // Asking the context for 16 kHz makes the browser resample for us, so
+        // there is no hand-written downsampler to get wrong.
+        audioContext = new AudioContext({ sampleRate: LIVE_SAMPLE_RATE });
+        const workletUrl = URL.createObjectURL(new Blob([PCM_WORKLET], { type: 'application/javascript' }));
+        await audioContext.audioWorklet.addModule(workletUrl);
+        URL.revokeObjectURL(workletUrl);
+    } catch (err) {
+        console.error('Could not start live dictation:', err);
+        await teardownMic();
+        showError('Could not start dictation: ' + (err.message || 'unknown error'));
+        return;
+    }
     const micAskedAt = performance.now();
     try {
-        micStream = await navigator.mediaDevices.getUserMedia({
+        micStream = speechTestStream || await navigator.mediaDevices.getUserMedia({
             audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
         });
+        speechTestStream = null;
     } catch (err) {
         devMark('browser', 'microphone refused', {}, { level: 'error' });
         console.error('Microphone access denied:', err);
         showError('Microphone access denied. Allow microphone permissions in your browser settings, then try again.');
+        await teardownMic();  // closes the audio graph built above
         tlStep('Microphone refused');
         sessionTimeline.hidden = true;
         return;
@@ -1392,12 +1435,13 @@ async function startRecording() {
     tlStep('Microphone ready', (performance.now() - micAskedAt) / 1000);
 
     try {
-        // Asking the context for 16 kHz makes the browser resample for us, so
-        // there is no hand-written downsampler to get wrong.
-        audioContext = new AudioContext({ sampleRate: LIVE_SAMPLE_RATE });
-        const workletUrl = URL.createObjectURL(new Blob([PCM_WORKLET], { type: 'application/javascript' }));
-        await audioContext.audioWorklet.addModule(workletUrl);
-        URL.revokeObjectURL(workletUrl);
+        // Listen before connecting: the first words are often spoken while the
+        // socket is still opening, and they are held, not thrown away.
+        pendingPcm = [];
+        pendingSamples = 0;
+        micNode = new AudioWorkletNode(audioContext, 'pcm-tap');
+        micNode.port.onmessage = (event) => handleTapFrame(event.data);
+        audioContext.createMediaStreamSource(micStream).connect(micNode);
 
         const socketAskedAt = performance.now();
         liveSocket = null;  // the previous recording's socket stops being heard from here
@@ -1405,9 +1449,9 @@ async function startRecording() {
         devMark('browser', 'dictation socket open', {}, { ms: performance.now() - socketAskedAt });
         tlStep('Connected', (performance.now() - socketAskedAt) / 1000);
 
-        micNode = new AudioWorkletNode(audioContext, 'pcm-tap');
-        micNode.port.onmessage = (event) => handleTapFrame(event.data);
-        audioContext.createMediaStreamSource(micStream).connect(micNode);
+        const held = pendingPcm;
+        pendingPcm = null;
+        held.forEach(sendPcm);
     } catch (err) {
         console.error('Could not start live dictation:', err);
         await teardownMic();
@@ -1415,6 +1459,7 @@ async function startRecording() {
         return;
     }
 
+    flushLearning();
     baseText = editor.value.trim();
     committedText = '';
     previewText = '';
@@ -1429,6 +1474,50 @@ async function startRecording() {
     tlPhase('listening');
     showStatus('Listening', 'is-rec');
 }
+
+// ---------------------------------------------------------------------------
+// Test voice (developer tool, src/devtools/speech_test.py). The server speaks
+// the typed text; the WAV is played into the ordinary recording path as if it
+// were the microphone, and Stop is pressed when it ends. Delete this block,
+// the speechTestStream use in startRecording and the form in app.html to
+// remove the feature.
+// ---------------------------------------------------------------------------
+
+let speechTestStream = null;
+
+document.getElementById('speechTestForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const text = document.getElementById('speechTestText').value.trim();
+    const btn = document.getElementById('speechTestBtn');
+    if (!text || isRecording) return;
+    btn.disabled = true;
+    try {
+        const response = await fetch('/api/dev/speak', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+        });
+        if (!response.ok) throw new Error((await response.json()).detail || response.statusText);
+        const audio = new Audio(URL.createObjectURL(await response.blob()));
+        // Play for an instant so the stream has a track, then rewind and wait
+        // until recording is live: otherwise the opening words are lost.
+        await audio.play();
+        audio.pause();
+        audio.currentTime = 0;
+        speechTestStream = audio.captureStream();
+        audio.addEventListener('ended', () => {
+            // A second of silence first, so the last words are not cut off.
+            setTimeout(() => { if (isRecording) stopRecording(); }, 1000);
+        }, { once: true });
+        devMark('browser', 'test voice playing', { sec: Math.round(audio.duration) });
+        await startRecording();
+        if (isRecording) await audio.play();
+    } catch (err) {
+        showError('Test voice failed: ' + err.message);
+    } finally {
+        btn.disabled = false;
+    }
+});
 
 async function stopRecording() {
     if (!isRecording) return;
@@ -1605,6 +1694,68 @@ function initDisclaimer() {
 }
 
 // ---------------------------------------------------------------------------
+// Learning from the radiologist. Two signals, both gated on the same consent
+// the desktop asks for: an explicit answer to a marked word (take a fix, or
+// keep it as spoken), and the one-word fixes made to a finished dictation,
+// sent when the report is committed. The rules for what counts live in
+// src/features/adaptive_learning.py; the browser only reports what happened.
+// ---------------------------------------------------------------------------
+
+let learningEnabled = !!(BOOTSTRAP.learning && BOOTSTRAP.learning.enabled);
+// What the last dictation handed over; null once its edits have been sent.
+let learnSnapshot = null;
+
+async function learnChoice(word, replacement) {
+    if (!learningEnabled || !word.trim()) return;
+    try {
+        await fetch('/api/learn/choice', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ word: word.trim(), replacement }),
+        });
+    } catch (err) {
+        console.warn('Could not record the choice:', err);
+    }
+}
+
+function flushLearning() {
+    const dictated = learnSnapshot;
+    learnSnapshot = null;
+    if (!learningEnabled || !dictated || dictated === editor.value) return;
+    const body = JSON.stringify({ dictated, final: editor.value });
+    // sendBeacon survives the page closing, which is one of the commit points.
+    if (!navigator.sendBeacon('/api/learn/session', new Blob([body], { type: 'application/json' }))) {
+        console.warn('Could not send dictation edits for learning');
+    }
+}
+
+function initLearningConsent() {
+    window.addEventListener('pagehide', flushLearning);
+    const info = BOOTSTRAP.learning;
+    // Never stacked on the disclaimer: that one comes first, this one next load.
+    if (!info || !info.consent_needed || (BOOTSTRAP.disclaimer && BOOTSTRAP.disclaimer.needed)) return;
+    const scrim = document.getElementById('learningModal');
+    const answer = async (enabled) => {
+        scrim.hidden = true;
+        learningEnabled = enabled;
+        try {
+            await fetch('/api/learn/consent', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled }),
+            });
+        } catch (err) {
+            showError('Your answer was not saved and will be asked again: ' + err.message);
+        }
+        editor.focus();
+    };
+    document.getElementById('learningYesBtn').addEventListener('click', () => answer(true));
+    document.getElementById('learningNoBtn').addEventListener('click', () => answer(false));
+    scrim.hidden = false;
+    document.getElementById('learningYesBtn').focus();
+}
+
+// ---------------------------------------------------------------------------
 // The neighbourhood of a highlighted word. Highlight a term and a small panel
 // offers what it might have been (spelling) and what goes with it (related).
 // Both lists, and their order, come from src/medical/term_lookup.py, the
@@ -1655,6 +1806,7 @@ function applyTermSuggestion(term) {
     const range = termPopSelection;
     hideTermPop();
     if (!range) return;
+    learnChoice(editor.value.slice(range.start, range.end), term);
     editor.value = editor.value.slice(0, range.start) + term + editor.value.slice(range.end);
     const caret = range.start + term.length;
     editor.setSelectionRange(caret, caret);
@@ -1686,6 +1838,8 @@ let marksRequest = 0;
 // machine guessed at this", the other says "this word has alternatives worth
 // seeing", and collapsing them into one mark would lose that difference.
 let uncertainWords = new Set();
+// The spans painted last, so a click on an underlined word can open its fixes.
+let markedSpans = [];
 let lookupUses = BOOTSTRAP.term_lookup_uses || 0;
 const lookupHintUses = BOOTSTRAP.term_lookup_hint_uses || 3;
 
@@ -1697,6 +1851,7 @@ function clearMarks() {
     marksRequest += 1;
     editorMarks.innerHTML = '';
     marksHint.hidden = true;
+    markedSpans = [];
 }
 
 // Every word the decoder was unsure of, wherever it appears in the report.
@@ -1723,6 +1878,7 @@ function paintMarks(spans) {
     const text = editor.value;
     const all = spans.concat(uncertainSpans(text, spans))
         .sort((a, b) => a.start - b.start);
+    markedSpans = all;
     const out = document.createDocumentFragment();
     let at = 0;
     all.forEach((span) => {
@@ -1953,7 +2109,9 @@ function renderTermTier(host, items) {
 function showTermPop(result, range) {
     const spelling = result.similar_spelling || [];
     const related = result.related || [];
-    if (!spelling.length && !related.length) {
+    // A marked word always opens, even with nothing to offer: "Keep as is"
+    // is still an answer. A plain highlight with nothing to show stays shut.
+    if (!spelling.length && !related.length && !range.marked) {
         hideTermPop();
         return;
     }
@@ -1981,7 +2139,7 @@ async function lookupSelectedTerm() {
     let end = editor.selectionEnd;
     while (start < end && /\s/.test(raw[start])) start += 1;
     while (end > start && /\s/.test(raw[end - 1])) end -= 1;
-    const range = { start, end };
+    const range = { start, end, marked: markedSpans.some((m) => m.start === start && m.end === end) };
     const selected = raw.slice(start, end);
     if (!selected) {
         hideTermPop();
@@ -2011,6 +2169,24 @@ function scheduleTermLookup() {
 }
 
 function initTermPop() {
+    // One click on an underlined word selects it, which opens its fixes. The
+    // marks sit behind the textarea, so the click is matched by caret offset.
+    editor.addEventListener('click', () => {
+        if (isRecording || editor.selectionStart !== editor.selectionEnd) return;
+        const at = editor.selectionStart;
+        const hit = markedSpans.find((m) => at >= m.start && at <= m.end);
+        if (hit) editor.setSelectionRange(hit.start, hit.end);
+    });
+    document.getElementById('tpKeep').addEventListener('click', () => {
+        const range = termPopSelection;
+        hideTermPop();
+        if (!range) return;
+        const word = editor.value.slice(range.start, range.end);
+        uncertainWords.delete(word.toLowerCase());
+        learnChoice(word, null).then(scheduleMarks);
+        editor.setSelectionRange(range.end, range.end);
+        editor.focus();
+    });
     editor.addEventListener('mousemove', (event) => {
         lastPointer = { x: event.clientX, y: event.clientY };
     });
@@ -2057,6 +2233,7 @@ function initTermPop() {
 initPanels();
 initOverflowMenu();
 initDisclaimer();
+initLearningConsent();
 initTermPop();
 initTermMarks();
 initFindingMarks();

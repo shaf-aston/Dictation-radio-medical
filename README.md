@@ -72,7 +72,7 @@ Python, faster-whisper, PySide6, FastAPI with WebSockets, rapidfuzz, SymSpell, p
 |---|---|
 | Microphone errors | check the input device; close other apps using the mic |
 | Import errors | activate the venv, run `pip install -e .` |
-| Slow transcription | use a smaller Whisper model (`tiny` or `base`) |
+| Slow transcription | the developer console shows each decode's time; Whisper sizes only matter without Parakeet |
 | Over-correction | raise the fuzzy cutoff or protect the term |
 
 ## Docs

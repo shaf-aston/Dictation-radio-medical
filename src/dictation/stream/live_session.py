@@ -176,6 +176,7 @@ class LiveSession:
         self._last_stable = ""
         self._last_update: Optional[LiveUpdate] = None
         self._chunks_decoded = 0
+        self._chunks_polished = 0
         # Keyed by committed-chunk index, so the polish pass can replace one
         # chunk's doubts along with its text instead of leaving marks behind
         # on words the accurate model has since settled.
@@ -236,6 +237,11 @@ class LiveSession:
     @property
     def chunks_decoded(self) -> int:
         return self._chunks_decoded
+
+    @property
+    def chunks_polished(self) -> int:
+        """How many committed chunks the last :meth:`finalize` re-decoded."""
+        return self._chunks_polished
 
     @property
     def uncertain_words(self) -> Tuple[str, ...]:
@@ -666,7 +672,7 @@ class LiveSession:
         # The tail closed at Stop was decoded fast on purpose; a confident fast
         # decode is still a fast decode, so it is re-done here either way.
         forced = () if self._forced_polish_index is None else (self._forced_polish_index,)
-        polished = polish(
+        polished = self._chunks_polished = polish(
             self._ledger, self._audio(),
             lambda clip, stage: self._decode(
                 self.final_engine, clip, self.final_beam_size,
@@ -746,6 +752,8 @@ class LiveSession:
                     ),
                 )
                 note["words"] = len(result.text.split())
+                if result.engine:
+                    note["engine"] = result.engine
             self.decode_audio_sec += len(clip) / self.sr
         except Exception as exc:
             logger.warning("Decode failed (%s): %s", stage, exc)

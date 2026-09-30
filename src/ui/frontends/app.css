@@ -801,6 +801,7 @@ select:disabled, input:disabled { opacity: .5; }
 .tp-quiet button .tp-why { font-size: .66rem; }
 
 .tp-foot { margin: .45rem 0 0; font-size: .68rem; color: var(--text-dim); }
+.tp-keep { margin-top: .4rem; width: 100%; }
 
 /* --------------------------------------------------------------------------
    Modal: the first-launch clinical disclaimer
@@ -843,7 +844,10 @@ select:disabled, input:disabled { opacity: .5; }
     color: var(--text);
 }
 
-.modal-foot { display: flex; justify-content: flex-end; margin-top: 1.1rem; }
+.dev-speech { display: flex; gap: .5rem; padding: .4rem .75rem; }
+.dev-speech input { flex: 1; min-width: 0; }
+
+.modal-foot { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1.1rem; }
 
 /* --------------------------------------------------------------------------
    Developer console
