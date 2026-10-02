@@ -146,8 +146,16 @@ _TERM_PATTERNS = [
 ]
 
 # Pre-compile negation / uncertainty patterns
+# A denial carries down an "or" list: "no consolidation, effusion, or
+# pneumothorax" denies all three. Only "or"/"nor" closes the list: a bare
+# comma or "and" ("no effusion, large pneumothorax") may start a new
+# statement, and a missed Level-1 finding costs more than a false alarm.
+# List words may not include a word that ends the denial's reach.
+_LIST_WORD = r"(?!(?:but|however|although|though|except|apart|aside|yet|which|with|there|is|are|was|were)\b)[a-z-]+"
+_LIST_ITEM = rf"{_LIST_WORD}(?:\s+{_LIST_WORD})*"
+_NEG_LIST = rf"(?:\s*{_LIST_ITEM}\s*,)*\s*{_LIST_ITEM},?\s+n?or\s+"
 _NEG_PRE_RE = re.compile(
-    r"(?:" + "|".join(_NEGATION_PRE) + r")$",
+    r"(?:" + "|".join(_NEGATION_PRE) + rf")(?:{_NEG_LIST})?$",
     re.IGNORECASE,
 )
 _NEG_POST_RE = re.compile(
