@@ -248,3 +248,72 @@ p50 by -0.14 s (cloud) and +0.01 s (local), inside run-to-run noise.
 
 Not measured by this: accuracy (the simulator has none), and CPU contention
 from anything outside the loop.
+
+## Update 2026-10-10: Parakeet, measured end to end, and what you see sooner
+
+Every earlier number here priced Whisper or a stand-in. This round ran the real
+Parakeet TDT 0.6b v3 int8 weights (sherpa-onnx's GitHub copy; HuggingFace is
+blocked in the cloud container) behind the app's own `AsrEngine` port, through
+the real `LiveSession`, fed 20 ms frames at speaking pace with `cycle()` on a
+worker thread every 0.5 s, exactly as `/ws/dictate` does. Audio: radiology
+reports from `report_corpus.txt` spoken by Piper TTS with dictation-style
+pauses, 85-100 s each. "Busy" means two other processes spinning on a 4-core
+machine. A word counts as on screen once the aligned screen text contains it;
+its spoken end comes from a whole-file decode plus VAD. The instrument is now
+`scripts/eval/live_lag.py`, so the same numbers can be taken on the real
+laptop.
+
+### Findings
+
+1. **A by-the-README install never ran Parakeet.** `onnx-asr` sat in an
+   optional extra, `pip install -e .` skipped it, and the `local` chain fell
+   through to Whisper tiny.en with an info-level log line. It is a core
+   dependency now and a missing Parakeet is a warning.
+2. **Parakeet costs about 0.1 s + 0.1 s per second of audio** (2 threads): 2 s
+   clip 0.27 s, 5 s clip 0.56 s. It declared Whisper's 1 s-a-call price, so it
+   previewed on Whisper's terms (nothing under 1 s of tail).
+3. **onnxruntime on every core is twice as slow on a busy machine.** 5 s clip,
+   two cores busy elsewhere: 4 threads 1.15 s, 2 threads 0.60 s; idle the two
+   differ by 0.06 s. Parakeet now uses half the logical cores. CPU per dictation
+   fell from ~1.8 cores to ~1.0.
+4. **Short chunks make Parakeet less accurate.** Nine dictations, 353 lexicon
+   terms, post-processed: 2/5/20 WER 7.58 %, term 13.0 %; 1/3/8 8.37 %, 13.6 %;
+   4/12/20 6.80 %, 11.3 %. With no prompt, the clip is its only context. Cloud
+   engines keep 1/3/8 (unmeasured there); local ones keep 2/5/20.
+5. **The preview froze behind one mis-heard word.** Agreement had to extend
+   along the words already shown, so "There was a" (for "There is a") blocked
+   every later word until the chunk closed: 3.8 s with nine words spoken. And
+   Parakeet spells long medical words differently each decode ("super
+   spinetis", "supraspinatus"), so two-decode agreement stalled exactly on the
+   words that matter.
+6. **The polish is NOT redundant with Parakeet in both slots.** It decodes a run
+   of weak chunks as one clip, and context helps: polishing every chunk took
+   the nine dictations from WER 7.58 % to 6.08 %, term error 13.0 % to 10.5 %,
+   for ~12 s of background CPU per 90 s. Left at the shipped ceiling (0.75);
+   `polish_confidence_ceiling: 1.01` is the switch, untested on real voices.
+7. **Not worth it: a streaming model for the preview.** NeMo FastConformer
+   streaming (80 ms) got 21-57 % of terms wrong against Parakeet's 12-31 % on
+   the same audio, at RTF 0.26: no cheaper than re-decoding the tail.
+8. **Not worth it: `live_cycle_sec` 0.25.** -0.05 s p50, +15 % CPU.
+
+### Before and after (mean of three dictations, seconds after the word was spoken)
+
+| | idle: shown p50 / p90 | busy: shown p50 / p90 | busy: kept p50 / p90 | CPU-s per 97 s |
+|---|---|---|---|---|
+| before | 1.62 / 3.45 | 2.30 / 4.48 | 3.54 / 6.84 | ~180 |
+| after | **0.79 / 1.88** | **0.82 / 1.72** | **3.08 / 5.98** | **~100** |
+
+Accuracy of the kept text is unchanged by all of it (same chunking, and the
+preview never feeds the ledger). The price is in the preview: under
+`preview_mode: instant` the newest unconfirmed words can change in place,
+about 20-35 shown words a minute against 10-15 before. `preview_mode:
+confirmed` keeps the old behaviour (with the freeze fixed).
+
+Kept text still trails by ~3 s: a word becomes permanent when its phrase ends
+and 0.6 s of silence confirms it. That wait is the chunk policy, and shortening
+it costs accuracy (finding 4).
+
+### Still unverified
+
+Real voices (the `own` set), and the real laptop: run
+`python -m scripts.eval.live_lag --audio <a dictation>.wav --load 2` there.

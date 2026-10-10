@@ -38,9 +38,10 @@ def test_and_never_again_after_that():
     a = LocalAgreement2()
     a.update("The lungs are clear")
     assert a.update("The lungs were clearly") == "The lungs"
-    # A third decode disagreeing even earlier must NOT shrink the screen again.
-    a.update("A lung was clear")
-    assert a.update("A lung was clear") == "The lungs"
+    # A third decode disagreeing even earlier must NOT shrink the screen again,
+    # nor swap words without adding any.
+    a.update("A lung")
+    assert a.update("A lung") == "The lungs"
 
 
 def test_a_later_disagreement_cannot_shrink_what_is_on_screen():
@@ -61,15 +62,25 @@ def test_agreement_still_extends_along_the_words_already_shown():
     assert a.update("The lungs are clear without focal") == "The lungs are clear without"
 
 
-def test_a_longer_prefix_that_contradicts_the_screen_is_refused():
-    """Longer is not automatically better: it must agree with what was shown."""
+def test_a_longer_confirmed_reading_corrects_the_screen():
+    """Refusing it froze the preview: one mis-heard word ("was" for "is")
+    blocked every later word until the chunk closed, 3.8s measured."""
+    a = LocalAgreement2()
+    a.update("There was a")
+    assert a.update("There was a spiculated") == "There was a"
+    a.update("There is a spiculated nodule in the right")
+    assert a.update("There is a spiculated nodule in the right upper") == (
+        "There is a spiculated nodule in the right"
+    )
+
+
+def test_a_contradicting_reading_no_longer_than_the_screen_is_refused():
+    """Swapping words without adding any would only make the line flicker."""
     a = LocalAgreement2()
     a.update("The lungs are clear")
     assert a.update("The lungs are clear without") == "The lungs are clear"
-    # Both decodes agree on five words, but the second word differs from the
-    # text already read. That is a revision, and only the ledger revises.
-    a.update("The lung is clear without focal")
-    assert a.update("The lung is clear without focal") == "The lungs are clear"
+    a.update("The lung is clear")
+    assert a.update("The lung is clear") == "The lungs are clear"
 
 
 def test_an_empty_decode_clears_the_preview():
@@ -101,3 +112,50 @@ def test_agreeing_prefix_stops_at_the_first_differing_word():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+def test_punctuation_and_case_do_not_count_as_disagreement():
+    """A growing clip re-punctuates its last word ("contrast" -> "contrast.")
+    and capitalises the next sentence; the words themselves still agree."""
+    a = LocalAgreement2()
+    a.update("with contrast there is")
+    assert a.update("with contrast. There is a nodule") == "with contrast. There is"
+
+
+def test_a_shown_word_may_change_its_punctuation_but_not_its_word():
+    a = LocalAgreement2()
+    a.update("the lungs are")
+    a.update("the lungs are clear")
+    assert a.update("The lungs are clear. No") == "The lungs are clear."
+    assert agreeing_prefix("lungs clear", "lungs clean") == "lungs"
+
+
+def test_instant_shows_the_newest_words_before_they_are_confirmed():
+    """Waiting for a second decode put every word on screen a decode late."""
+    a = LocalAgreement2(show_unconfirmed=True)
+    assert a.update("There is a") == "There is a"
+    assert a.update("There is a spiculated nodule") == "There is a spiculated nodule"
+
+
+def test_instant_lets_only_unconfirmed_words_change():
+    a = LocalAgreement2(show_unconfirmed=True)
+    a.update("There is a")
+    a.update("There is a spiculated nodule")
+    # "spiculated" is now confirmed by two decodes; "nodule" was not, so the
+    # newest decode may still change it.
+    assert a.update("There is a spiculated module in") == "There is a spiculated module in"
+
+
+def test_instant_never_gets_shorter():
+    a = LocalAgreement2(show_unconfirmed=True)
+    a.update("There is a")
+    a.update("There is a spiculated nodule")
+    assert a.update("There is a") == "There is a spiculated nodule"
+    assert a.stable() == "There is a spiculated nodule"
+
+
+def test_confirmed_mode_is_the_default_class_behaviour():
+    """The class alone is plain LocalAgreement-2; LiveSession opts in."""
+    a = LocalAgreement2()
+    a.update("There is a")
+    assert a.update("There is a spiculated nodule") == "There is a"

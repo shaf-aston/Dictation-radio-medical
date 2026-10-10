@@ -3,6 +3,7 @@
 from src.core.settings import get_default
 from src.dictation.asr.engines.deepgram_engine import DeepgramEngine
 from src.dictation.asr.engines.faster_whisper_engine import FasterWhisperEngine
+from src.dictation.asr.engines.parakeet_engine import ParakeetEngine
 from src.dictation.asr.types import CostModel, EngineCaps
 from src.dictation.stream.policy import (
     CHEAP_POLICY,
@@ -12,8 +13,8 @@ from src.dictation.stream.policy import (
 )
 
 
-def _caps(fixed):
-    return EngineCaps(word_confidence=True, hotwords=False, cost=CostModel(fixed))
+def _caps(fixed, network=True):
+    return EngineCaps(word_confidence=True, hotwords=False, cost=CostModel(fixed), network=network)
 
 
 def test_cloud_engine_gets_short_chunks():
@@ -21,6 +22,15 @@ def test_cloud_engine_gets_short_chunks():
     assert plan.row == "cheap"
     assert (plan.policy.min_sec, plan.policy.soft_max_sec, plan.policy.force_cut_sec) == CHEAP_POLICY
     assert plan.preview_min_tail_sec < 1.0
+
+
+def test_parakeet_previews_early_but_keeps_long_chunks():
+    """Cheap enough (~0.25s for a 2s clip) to preview half a second of audio,
+    but short chunks measured less accurate on it (see plan_for)."""
+    plan = plan_for(ParakeetEngine().capabilities())
+    assert plan.row == "cheap"
+    assert plan.preview_min_tail_sec < 1.0
+    assert (plan.policy.min_sec, plan.policy.soft_max_sec, plan.policy.force_cut_sec) == LOCAL_POLICY
 
 
 def test_whisper_gets_the_measured_local_policy():

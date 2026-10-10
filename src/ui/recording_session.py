@@ -275,6 +275,7 @@ def on_start_recording(window: MainWindow) -> None:
         final_beam_size=int(window.settings.get("final_beam_size")),
         polish_confidence_ceiling=float(window.settings.get("polish_confidence_ceiling")),
         preview_max_lag_sec=float(window.settings.get("preview_max_lag_sec")),
+        preview_mode=str(window.settings.get("preview_mode")),
     )
     window.live_worker.moveToThread(window.live_thread)
     window.live_thread.started.connect(window.live_worker.run)

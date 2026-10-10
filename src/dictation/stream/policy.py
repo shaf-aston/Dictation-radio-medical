@@ -32,7 +32,7 @@ CHEAP_CALL_SEC = 0.5
 #: monologue, and cutting mid-speech any sooner risks cutting a word.
 LOCAL_POLICY = (2.0, 5.0, 20.0)
 
-#: Cheap (cloud) engines. Commit at the first pause after a second of speech.
+#: Cheap CLOUD engines. Commit at the first pause after a second of speech.
 #: Not yet measured against the accuracy veto on real Deepgram audio: this
 #: container has no key, so it is the PRD's starting row, to be confirmed with
 #: ``replay.py --engine deepgram`` before being trusted further.
@@ -65,9 +65,17 @@ def is_cheap(caps: EngineCaps) -> bool:
 
 
 def plan_for(caps: EngineCaps, trailing_silence_sec: float = 0.6) -> LivePlan:
-    """The live shape for an engine with these capabilities."""
+    """The live shape for an engine with these capabilities.
+
+    Two separate questions. How soon to preview is about price: a cheap call
+    can be spent on half a second of audio. How long a chunk runs is about
+    accuracy, and a cheap LOCAL engine keeps the long row: measured on
+    Parakeet (2026-10-10, nine synthetic dictations, 353 lexicon terms), 1/3/8
+    raised WER 7.58% -> 8.37% and term error 13.0% -> 13.6% against 2/5/20,
+    because a transducer with no prompt has only the clip itself as context.
+    """
     cheap = is_cheap(caps)
-    lo, soft, force = CHEAP_POLICY if cheap else LOCAL_POLICY
+    lo, soft, force = CHEAP_POLICY if cheap and caps.network else LOCAL_POLICY
     return LivePlan(
         policy=ChunkPolicy(
             min_sec=lo, soft_max_sec=soft, force_cut_sec=force,

@@ -67,6 +67,13 @@ purpose* (spoken units → `mm`, hyphen joins) but deliberately leaves spelling
 variants (`calibre`/`caliber`) visible, because silently Americanising a British
 report is a real change to the radiologist's text.
 
+**`live_lag.py` measures what the radiologist sees, on this machine**: the
+web app's own session, a real engine and a real recording at speaking pace,
+reporting when each word is first on screen (preview included), when it is
+kept, and how often a shown word changes. `--load N` adds busy processes. It
+is the instrument for preview changes and for "is this laptop the problem";
+it says nothing about accuracy.
+
 **`simulate_lag.py` and `web_lag_check.py` measure loop latency only**, with
 no model or key (`fake_deepgram.py` stands in for the live socket). They never
 answer an accuracy question.
@@ -89,6 +96,10 @@ python -m scripts.eval.replay --set tts_paused --chunk-min 4.0 --label shorter-c
 
 # --realtime feeds at true speaking pace and reports wall latency instead of
 # audio-seconds; use it to see what a loaded machine does to the numbers.
+
+# Seconds from speaking to seeing, on this machine (needs the real engine):
+python -m scripts.eval.live_lag --audio data/bench_audio/chest_long.wav --load 2
+python -m scripts.eval.live_lag --audio my.wav --preview-mode confirmed   # A/B
 
 # Loop latency with no model or key (latency only, never accuracy):
 python -m scripts.eval.simulate_lag --engine local --final small --seconds 90

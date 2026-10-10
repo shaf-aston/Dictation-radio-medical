@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 def _local_tiers(**kwargs: Any) -> List[Tuple[str, Any]]:
-    """Parakeet (if the optional ``onnx-asr`` package is installed), then
-    faster-whisper, which is always available.
+    """Parakeet (``onnx-asr``, a core dependency), then faster-whisper, which
+    is always available.
 
     Each tier only runs when the one before it raised, never on a middling
     result, ``ChainEngine`` has no ground truth to grade a decode against.
@@ -41,7 +41,13 @@ def _local_tiers(**kwargs: Any) -> List[Tuple[str, Any]]:
     elif importlib.util.find_spec("onnx_asr") is not None:
         tiers.append(("parakeet", ParakeetEngine()))
     else:
-        logger.info("onnx-asr not installed; ASR chain skips the Parakeet tier")
+        # A warning, not info: this silently put every install that skipped
+        # the old optional extra on Whisper tiny.en for live text, the slow
+        # engine every lag complaint in docs/ was measured on.
+        logger.warning(
+            "onnx-asr not installed, so live dictation runs on Whisper, which "
+            "is several times slower per word. Fix: pip install -e ."
+        )
     tiers.append(("faster-whisper", FasterWhisperEngine(**kwargs)))
     return tiers
 

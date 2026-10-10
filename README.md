@@ -32,7 +32,10 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-Requires Python 3.12+. Whisper models download to `~/.cache/huggingface/` on first use.
+Requires Python 3.12+. The first dictation downloads the Parakeet speech model
+(about 650 MB) into `data/cache/`; after that everything runs offline. If an
+older install predates this, run `pip install -e .` again: without `onnx-asr`
+the app falls back to Whisper, which is several times slower per word.
 
 ## Stack
 
@@ -72,7 +75,7 @@ Python, faster-whisper, PySide6, FastAPI with WebSockets, rapidfuzz, SymSpell, p
 |---|---|
 | Microphone errors | check the input device; close other apps using the mic |
 | Import errors | activate the venv, run `pip install -e .` |
-| Slow transcription | the developer console shows each decode's time; Whisper sizes only matter without Parakeet |
+| Slow transcription | open the developer console (`Ctrl`+`Shift`+`D`): each decode line names its `engine`. If it says `faster-whisper`, Parakeet is missing or failed to load: run `pip install -e .` and look for the "onnx-asr not installed" or "Parakeet failed to load" warning |
 | Over-correction | raise the fuzzy cutoff or protect the term |
 
 ## Docs

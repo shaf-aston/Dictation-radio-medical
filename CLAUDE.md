@@ -33,7 +33,7 @@ src/
 │   │                       the contract; EngineCaps: cost, streaming,
 │   │                       network) · factory.py (create_engine, the only
 │   │                       name→engine mapping; the asr_engine setting picks
-│   │                       one, default "local": parakeet (if installed) →
+│   │                       one, default "local": parakeet (core dep) →
 │   │                       faster-whisper; "deepgram" puts the cloud first.
 │   │                       Each result names the provider that made it)
 │   │                       · engines/deepgram_engine.py (cloud, nova-2-medical,
@@ -172,7 +172,8 @@ both:     → stream/live_session.py (one loop: Deepgram's live socket when it
 Both front-ends use two models: `live_model_size` (fast) decodes what appears
 while you speak, and `model_size` re-decodes the low-confidence chunks after
 Stop. Both sizes are Whisper's: on the default `local` engine Parakeet answers
-in both slots, so the polish is skipped (rule 8 below). **Stop never waits on that second pass in either front-end**: the live
+in both slots, and the polish still runs, because it re-decodes runs of weak
+chunks as one longer clip and Parakeet does better with context (rule 8 below). **Stop never waits on that second pass in either front-end**: the live
 text is handed back at once and the polish upgrades it in the background.
 Which makes one rule load-bearing, and it is written in both places: if the
 report has been edited since it was handed over, the polished version is
@@ -220,10 +221,18 @@ dictation used to get slower the longer it ran:
    (`ledger.py`): nothing ever re-decodes committed audio. Only the still-open
    tail (bounded by `ChunkPolicy.force_cut_sec`, default 20s) is re-decoded
    cycle to cycle, purely for a stable live preview via LocalAgreement-2
-   (`tail.py`). **The first decode is shown at once and may be corrected
-   exactly once; after that the preview never takes a word back.** Text that
-   un-writes itself mid-sentence reads as the app losing the dictation, so
-   confirmed words are pinned until the chunk closes. But requiring agreement
+   (`tail.py`). **The preview line never gets shorter; its newest words are
+   shown before they are confirmed** (`preview_mode: instant`, 2026-10-10).
+   Confirmed words (two decodes agree, ignoring case and punctuation) only give
+   way to a longer confirmed reading; only the newest, unconfirmed words can
+   change in place. Pinning every word exactly as first shown froze the
+   preview for seconds behind one mis-heard word, and confirming each word
+   before showing it put every word a decode late; on a busy CPU the two
+   together put words on screen p50 2.4s / p90 4.5s after they were spoken,
+   now 1.4s / 2.6s. `preview_mode: confirmed` keeps the stiller, slower
+   agreed-words-only preview. Text that
+   un-writes itself mid-sentence reads as the app losing the dictation, which
+   is why the line still never shrinks. Requiring agreement
    before showing anything means the earliest words possible are the SECOND
    decode, and a decode costs over a second whatever it is handed: measured end
    to end in the browser, that put the first words of a dictation 13.8 seconds
@@ -262,15 +271,22 @@ dictation used to get slower the longer it ran:
    `preview_max_lag_sec`, so the report arrived in one lump at Stop. Never call
    `httpx.post` directly from an engine. Each call has its own deadline
    (`deepgram_engine.call_timeout`); a flat 30s timeout froze dictation.
-6. **The engine declares its cost; chunk sizes follow it.** `EngineCaps.cost`
-   → `stream/policy.py`. `chunk_policy: auto` (default) sizes short chunks for
-   Deepgram, 2/5 for Whisper; old installs carry 6/15/20 as literal numbers.
+6. **The engine declares its cost; the preview follows it, chunk length
+   follows accuracy.** `EngineCaps.cost` → `stream/policy.py`. A cheap engine
+   (Parakeet, measured 0.25s for a 2s clip; Deepgram) previews from half a
+   second of audio. Short 1/3/8 chunks are for cloud engines only: on Parakeet
+   they measured LESS accurate than 2/5/20 (term error 13.0% → 13.6%), it has
+   no prompt, so the clip is its only context. Old installs carry 6/15/20 as
+   literal numbers; `chunk_policy: auto` (default) ignores them.
 7. **A streaming engine does the live work itself** (`asr_streaming`). Audio
    goes up Deepgram's live socket; settled results go straight into the
    ledger. Any failure falls back to chunks from the ledger frontier.
 8. **The polish starts before Stop** (`background_polish`), on a background
    thread behind the frontier; only the live loop writes the ledger. Skipped
-   entirely when the accurate and live engines are the same.
+   entirely when the accurate and live engines are the same cloud model. NOT
+   skipped for Parakeet in both slots (the default), and that is deliberate:
+   the polish decodes a run of adjacent weak chunks as one longer clip, and
+   Parakeet with more context measured WER 10.2% → 6.8% (2026-10-10).
 
 Measurements and what is still unverified:
 [docs/prd-live-dictation-speed.md](docs/prd-live-dictation-speed.md#delivered-2026-09-27).
@@ -373,6 +389,5 @@ npx pyright src              # type check (optional-dep import warnings expected
 
 # Optional extras (lazy-imported; core app runs without them):
 pip install -e ".[imaging]"     # Scan Assistant (local)
-pip install -e ".[parakeet]"    # Parakeet ASR engine (local)
 pip install groq                                            # AI Cleanup
 ```

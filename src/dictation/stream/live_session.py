@@ -38,7 +38,7 @@ from src.dictation.stream.rules import (
     should_skip_preview,
 )
 from src.dictation.stream.segmenter import Chunk, ChunkPolicy
-from src.dictation.stream.tail import LocalAgreement2
+from src.dictation.stream.tail import PREVIEW_INSTANT, LocalAgreement2
 from src.dictation.stream.vad import SAMPLE_RATE, SpeechMark, detect_speech
 
 logger = logging.getLogger(__name__)
@@ -96,6 +96,7 @@ class LiveSession:
         on_decoded: Optional[Callable[[AsrResult, int], None]] = None,
         streaming: bool = True,
         background_polish: bool = True,
+        preview_mode: str = PREVIEW_INSTANT,
     ) -> None:
         self.live_engine = live_engine
         self.final_engine = final_engine
@@ -153,7 +154,7 @@ class LiveSession:
         self._bg_applied: set = set()   # re-decoded by the accurate engine, frozen
 
         self._ledger = ChunkLedger(policy, pause_threshold=pause_threshold, sr=sr)
-        self._agreement = LocalAgreement2()
+        self._agreement = LocalAgreement2(show_unconfirmed=preview_mode == PREVIEW_INSTANT)
         self._post = IncrementalPostprocessor(accent=accent, cleanup_level=cleanup_level)
 
         # Amortised-doubling buffer: appending a block is O(block), not O(total),
@@ -658,11 +659,11 @@ class LiveSession:
 
         # The polish exists to hand weak chunks to a BETTER decode. When the
         # accurate engine is the same cloud model as the live one (Deepgram
-        # answering both, the default), it would send the same audio to the
-        # same model and get the same words back, for a billed call and a
-        # slower "final". Then only audio never decoded at all is worth a call.
-        # A local model is still re-run at the wider final beam, which is a
-        # better decode even on the same weights, so it is not skipped.
+        # answering both), it would send the same audio to the same model and
+        # get the same words back, for a billed call and a slower "final".
+        # Then only audio never decoded at all is worth a call. A local model
+        # is still re-run: Whisper at the wider final beam, Parakeet over the
+        # longer clip a merged run gives it (see _ignores_beam).
         same_model = (
             engine_identity(self.final_engine) == engine_identity(self.live_engine)
             and _ignores_beam(self.final_engine)
@@ -762,7 +763,13 @@ class LiveSession:
 
 
 def _ignores_beam(engine: AsrEngine) -> bool:
-    """A cloud engine decodes the same way whatever beam it is asked for."""
+    """A cloud engine decodes the same way whatever beam it is asked for.
+
+    Not true of Parakeet, though it is greedy: the polish re-decodes a run of
+    adjacent weak chunks as ONE clip, and more context is a better decode.
+    Measured 2026-10-10 with Parakeet in both slots and every chunk polished:
+    WER 10.2% -> 6.8%, term error 14.3% -> 11.9%. Skipping it as "the same
+    model" would throw that away."""
     try:
         return bool(engine.capabilities().network)
     except Exception:

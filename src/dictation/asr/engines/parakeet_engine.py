@@ -30,14 +30,15 @@ than an ImportError at startup.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any, List, Optional, Sequence, Tuple
 
 from src.dictation.asr.types import (
-    LOCAL_DECODE_COST,
     AsrResult,
     AsrSegment,
+    CostModel,
     EngineCaps,
     ProviderUnavailable,
     TranscribeContext,
@@ -48,7 +49,7 @@ from src.features.file_manager import onnx_asr_cache_dir
 logger = logging.getLogger(__name__)
 
 #: The onnx-asr model id this engine defaults to. Pinned here (with the pinned
-#: ``onnx-asr`` version in pyproject.toml's ``parakeet`` extra) so a download is reproducible:
+#: ``onnx-asr`` version in pyproject.toml's core dependencies) so a download is reproducible:
 #: the id resolves to one HuggingFace repo, and the copy under data/cache/ is
 #: fetched exactly once and reused offline from then on.
 DEFAULT_MODEL = "nemo-parakeet-tdt-0.6b-v3"
@@ -57,6 +58,25 @@ DEFAULT_MODEL = "nemo-parakeet-tdt-0.6b-v3"
 #: and faster-whisper already runs int8 on this CPU: matching the quantisation
 #: is what makes an engine comparison measure the engine.
 DEFAULT_QUANTIZATION = "int8"
+
+#: What one call costs (see :meth:`ParakeetEngine.capabilities`): about a
+#: tenth of a second to start plus a tenth per second of audio.
+PARAKEET_DECODE_COST = CostModel(fixed_sec=0.1, per_audio_sec=0.1)
+
+
+def default_cpu_threads() -> int:
+    """Half the logical cores, at least one.
+
+    onnxruntime otherwise takes every core, which is fastest only on an idle
+    machine. Measured 2026-10-10 on 4 cores, 5s clip: idle, 4 threads 0.49s
+    against 2 threads 0.56s; with two cores busy elsewhere, 4 threads 1.15s
+    against 2 threads 0.60s. Threads waiting on cores another program holds
+    stall every decode; half the cores gives up a little when idle and halves
+    the decode when busy. The same knee as Whisper's (8 of 16 beat 14,
+    docs/lag-map-2026-09-02.md).
+    """
+    return max(1, (os.cpu_count() or 2) // 2)
+
 
 #: Parakeet's fixed input rate. Anything else is resampled by onnx-asr.
 SAMPLE_RATE = 16000
@@ -67,7 +87,7 @@ SAMPLE_RATE = 16000
 _WORD_START = " "
 
 _MISSING_HINT = (
-    "The 'parakeet' ASR engine needs the onnx-asr package: pip install onnx-asr"
+    "The 'parakeet' ASR engine needs the onnx-asr package: pip install -e ."
 )
 
 
@@ -86,9 +106,11 @@ class ParakeetEngine:
         self,
         model_name: str = DEFAULT_MODEL,
         quantization: Optional[str] = DEFAULT_QUANTIZATION,
+        cpu_threads: Optional[int] = None,
     ) -> None:
         self.model_name = model_name
         self.quantization = quantization
+        self.cpu_threads = cpu_threads or default_cpu_threads()
         self._model: Any = None
 
     # -- port ---------------------------------------------------------------
@@ -96,7 +118,7 @@ class ParakeetEngine:
     def preload(self) -> None:
         """Download (once) and load the model, so no transcribe() pays for it."""
         if self._model is None:
-            key = (self.model_name, self.quantization)
+            key = (self.model_name, self.quantization, self.cpu_threads)
             with _MODELS_LOCK:
                 if key not in _MODELS:
                     try:
@@ -111,10 +133,11 @@ class ParakeetEngine:
         return ("parakeet", self.model_name, self.quantization)
 
     def capabilities(self) -> EngineCaps:
-        # No 30s pad (a CTC/TDT model prices by audio length), but its cost on
-        # this project's hardware has never been measured, so it declares the
-        # conservative local price rather than guessing a cheaper one.
-        return EngineCaps(word_confidence=True, hotwords=False, cost=LOCAL_DECODE_COST)
+        # No 30s pad: a Transducer prices by audio length. Measured 2026-10-10,
+        # int8, at default_cpu_threads() (2 of 4 cores), median of five:
+        # 0.27s for a 2s clip, 0.56s for 5s. Declaring Whisper's 1s-a-call price
+        # instead held its preview back until a second of tail had built up.
+        return EngineCaps(word_confidence=True, hotwords=False, cost=PARAKEET_DECODE_COST)
 
     def transcribe(self, audio: Any, ctx: TranscribeContext) -> AsrResult:
         source = _as_input(audio)
@@ -149,9 +172,16 @@ class ParakeetEngine:
         path = onnx_asr_cache_dir(f"{self.model_name}-{self.quantization or 'fp32'}")
         if not path.exists():
             logger.info("Downloading %s into %s (one time)", self.model_name, path)
-        logger.info("Loading %s (%s)", self.model_name, self.quantization or "fp32")
+        import onnxruntime  # noqa: PLC0415 - onnx-asr's own runtime
+
+        options = onnxruntime.SessionOptions()
+        options.intra_op_num_threads = self.cpu_threads
+        logger.info(
+            "Loading %s (%s, %d CPU threads)",
+            self.model_name, self.quantization or "fp32", self.cpu_threads,
+        )
         return onnx_asr.load_model(
-            self.model_name, path, quantization=self.quantization
+            self.model_name, path, quantization=self.quantization, sess_options=options,
         ).with_timestamps()
 
 

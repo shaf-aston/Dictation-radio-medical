@@ -1020,6 +1020,7 @@ def _live_session(settings, prefs: dict) -> LiveSession:
     # actually answer says a call costs (stream/policy.py), unless the
     # settings file asks for its own numbers.
     plan = plan_from_settings(settings.get, live_engine.capabilities())
+    preview_mode = str(settings.get("preview_mode", get_default("preview_mode")))
     # The knobs are read here and nowhere else, so this is the one honest place
     # to say which of them a recording actually ran with.
     event_log.emit(
@@ -1034,6 +1035,7 @@ def _live_session(settings, prefs: dict) -> LiveSession:
         final_beam_size=int(settings.get("final_beam_size")),
         preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
         preview_min_tail_sec=plan.preview_min_tail_sec,
+        preview_mode=preview_mode,
     )
     return LiveSession(
         live_engine,
@@ -1043,6 +1045,7 @@ def _live_session(settings, prefs: dict) -> LiveSession:
         cleanup_level=prefs["cleanup_level"],
         policy=plan.policy,
         preview_min_tail_sec=plan.preview_min_tail_sec,
+        preview_mode=preview_mode,
         streaming=bool(settings.get("asr_streaming", get_default("asr_streaming"))),
         background_polish=bool(settings.get("background_polish", get_default("background_polish"))),
         pause_threshold=float(settings.get("pause_threshold", 2.5)),

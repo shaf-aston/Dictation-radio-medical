@@ -43,6 +43,7 @@ from src.dictation.stream.live_session import LiveSession
 from src.dictation.stream.policy import plan_for
 from src.dictation.stream.rules import build_context_prompt
 from src.dictation.stream.segmenter import ChunkPolicy
+from src.dictation.stream.tail import PREVIEW_INSTANT
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,7 @@ class LiveTranscribeWorker(QObject):
         trailing_silence_sec: float = 0.6,
         streaming: bool = True,
         background_polish: bool = True,
+        preview_mode: str = PREVIEW_INSTANT,
     ) -> None:
         super().__init__()
         self.audio_path = audio_path
@@ -123,6 +125,7 @@ class LiveTranscribeWorker(QObject):
         self._trailing_silence_sec = float(trailing_silence_sec)
         self._streaming = bool(streaming)
         self._background_polish = bool(background_polish)
+        self._preview_mode = str(preview_mode)
         self._session: Optional[LiveSession] = None
         self._keep_running = True
         self._final_requested = False
@@ -261,6 +264,7 @@ class LiveTranscribeWorker(QObject):
             on_decoded=self._emit_absolute_segments,
             streaming=self._streaming,
             background_polish=self._background_polish,
+            preview_mode=self._preview_mode,
         )
 
     def _run_final_polish(self) -> None:
