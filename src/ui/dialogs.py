@@ -468,7 +468,7 @@ def confirm_unfilled_fields(window: MainWindow) -> bool:
         window,
         "Unfilled Template Fields",
         f"The report contains {len(fields)} unfilled field(s):\n\n"
-        + "\n".join(f"  • {f}" for f in fields[:10])
+        + "\n".join(f"  • {f if len(f) <= 60 else f[:59] + '…'}" for f in fields[:10])
         + ("\n  …" if len(fields) > 10 else "")
         + "\n\nDo you want to proceed anyway?",
         _Yes | _No,

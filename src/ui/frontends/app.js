@@ -566,7 +566,7 @@ function confirmUnfilledFields(fields) {
     const names = fields || [];
     return window.confirm(
         `The report contains ${names.length} unfilled field(s):\n\n`
-        + names.slice(0, 10).map((name) => `  • ${name}`).join('\n')
+        + names.slice(0, 10).map((name) => `  • ${name.length > 60 ? name.slice(0, 59) + '…' : name}`).join('\n')
         + (names.length > 10 ? '\n  …' : '')
         + '\n\nDo you want to proceed anyway?'
     );

@@ -23,11 +23,10 @@ timer is exactly what trains people to click the real one away.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from src.features import audit_log
+from src.features import audit_log, template_fields
 from src.medical.critical_findings import (
     CriticalFinding,
     format_findings_for_dialog,
@@ -36,21 +35,13 @@ from src.medical.critical_findings import (
 
 logger = logging.getLogger(__name__)
 
-#: What a template leaves behind for the radiologist to fill in: a SHOUTED
-#: bracketed name (``[FINDINGS]``) or a moustache placeholder (``{{name}}``).
-#: Deliberately narrow: ``[5 mm]`` and ``[Findings]`` are ordinary text.
-_UNFILLED_FIELD_RE = re.compile(r"\[([A-Z][A-Z0-9 _/-]{1,40})\]|\{\{([^}]{1,40})\}\}")
-
-
 def unfilled_fields(text: str) -> Tuple[str, ...]:
-    """Return the placeholder names still in *text*, in first-appearance order.
+    """The template fields still in *text*, once each, in first-appearance order.
 
-    Each name appears once however often it was left in the report: the
-    question asked is "which fields are unfilled?", not "how many brackets are
-    there?". Empty when the report is clean.
+    What counts as a field is decided in :mod:`src.features.template_fields`,
+    the same definition field navigation uses. Empty when the report is clean.
     """
-    names = [m[0] or m[1] for m in _UNFILLED_FIELD_RE.findall(text)]
-    return tuple(dict.fromkeys(names))
+    return template_fields.unfilled_fields(text)
 
 
 @dataclass(frozen=True)
