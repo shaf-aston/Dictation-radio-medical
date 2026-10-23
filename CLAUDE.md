@@ -1,7 +1,8 @@
 # CLAUDE.md: Architecture & Module Map
 
 Radio Dictate is an **offline medical dictation workstation** for radiologists.
-ASR (automatic speech recognition) runs locally via Parakeet (`onnx-asr`), with
+ASR (automatic speech recognition) runs locally via Parakeet TDT v2 (sherpa-onnx,
+biased toward the radiology lexicon with hotwords; `onnx-asr` for a fine-tune), with
 Whisper (`faster-whisper`) behind it; by default **no audio or text leaves the device**. Two front-ends share one
 dictation core: a PySide6 desktop GUI and a FastAPI web app.
 
@@ -50,7 +51,12 @@ src/
 │   │                       by a 30s circuit breaker) ·
 │   │                       engines/faster_whisper_engine.py (the CTranslate2
 │   │                       wrapper and its port adapter, one file) ·
-│   │                       engines/parakeet_engine.py (onnx-asr; no prompt,
+│   │                       engines/parakeet_hotword_engine.py (the default:
+│   │                       sherpa-onnx beam search boosted by the 870-term
+│   │                       radiology lexicon; measured 35% fewer term errors
+│   │                       than greedy, same speed) ·
+│   │                       engines/parakeet_engine.py (onnx-asr greedy; loads a
+│   │                       fine-tuned export from scripts/finetune/; no prompt,
 │   │                       one model shared process-wide) · prompt.py
 │   │                       (the radiology priming vocabulary, same for every
 │   │                       engine) · models.py (known model names + fallback)
@@ -177,7 +183,9 @@ Other optional, off-by-default add-ons:
 
 ```
 desktop:  microphone → audio.py → growing WAV → worker.py (QThread adapter)
-web:      microphone → AudioWorklet → /ws/dictate (16-bit PCM @16k)
+web:      microphone (raw: browser noise suppression, auto-gain, echo
+          cancellation all off) → AudioWorklet (resampler.js only where the
+          browser cannot run at 16 kHz) → /ws/dictate (16-bit PCM @16k)
 both:     → stream/live_session.py (one loop: Deepgram's live socket when it
             streams, else chunk-once over an in-memory buffer)
           → asr/ (AsrEngine port → Parakeet, Whisper behind it) → postprocess/ (10 stages)
@@ -340,7 +348,9 @@ when work touches that folder: the front-ends and their diagnostics
 (`src/dictation/postprocess/CLAUDE.md`), cloud fine-tuning (`src/cloud/CLAUDE.md`,
 opt-in), the scan assistant (`src/imaging/CLAUDE.md`, opt-in), and the
 accuracy-measuring harness (`scripts/eval/CLAUDE.md`). Any change to transcription or
-post-processing is judged by that harness's numbers, not by reading a sample:
+post-processing is judged by that harness's numbers, not by reading a sample
+(`stage_attribution.py` scores each post-processing stage on its own;
+`rescore.py` re-runs the pipeline on stored decodes in seconds):
 read `scripts/eval/CLAUDE.md` and [docs/dictation-accuracy.md](docs/dictation-accuracy.md)
 before proposing an accuracy change; several obvious ones are already refuted
 there.
