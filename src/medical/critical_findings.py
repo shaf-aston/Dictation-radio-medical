@@ -203,9 +203,11 @@ def scan_for_critical_findings(text: str) -> List[CriticalFinding]:
     Scan *text* for critical and urgent radiology findings.
 
     Returns a list of :class:`CriticalFinding` objects, sorted by severity
-    (Level 1 first).  Cleanly negated Level-2 findings are suppressed;
-    uncertain and Level-1 findings are always returned so the radiologist
-    can confirm communication or clarify the report.
+    (Level 1 first). A cleanly negated mention ("no pneumothorax") is dropped
+    at both levels: every normal report denies the big findings, and an alert
+    on each denial trains the radiologist to click the real one away. A hedged
+    mention ("cannot exclude ...") is kept and marked uncertain. Pinned by
+    ``tests/test_critical_findings.py``.
     """
     findings: List[CriticalFinding] = []
     seen_terms: set = set()
@@ -226,12 +228,8 @@ def scan_for_critical_findings(text: str) -> List[CriticalFinding]:
 
             negated, uncertain = _check_negation(text, m.start(), m.end())
 
-            # Skip cleanly negated non-life-threatening findings
-            if negated and not uncertain and level == 2:
-                continue
-            # Still report negated Level-1 findings so the radiologist can verify
-            if negated and not uncertain and level == 1:
-                # Only report if the negation itself is uncertain
+            # A clean denial is not a finding, at either level.
+            if negated and not uncertain:
                 continue
 
             # Marked seen only once the mention is ACCEPTED. Marking it above,

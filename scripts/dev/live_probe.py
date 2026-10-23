@@ -31,6 +31,8 @@ def load_pcm16(path: str) -> bytes:
         sr = w.getframerate()
         sampwidth = w.getsampwidth()
         channels = w.getnchannels()
+    if sampwidth != 2:
+        raise ValueError(f"{path}: expected 16-bit PCM, got {8 * sampwidth}-bit")
 
     audio = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
     if channels > 1:

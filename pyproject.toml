@@ -51,6 +51,16 @@ include = ["src*"]
 [tool.setuptools.package-data]
 "*" = ["*.txt", "*.json", "*.yaml", "*.qss", "*.html", "*.css", "*.js"]
 
+[tool.ruff]
+# Pinned, because ruff's default rule set has changed between versions: the
+# same "ruff check" passed on 0.5 and reports 1,158 issues on 0.17. These are
+# the classic defaults the code base is written to (pyflakes + the E4/E7/E9
+# pycodestyle subset). Widening the set is a decision, not an upgrade.
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
 [tool.pytest.ini_options]
 addopts = "-p no:randomly"
 testpaths = ["tests"]
