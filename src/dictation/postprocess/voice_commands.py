@@ -5,6 +5,11 @@
 * ``apply_spoken_commands`` substitutes spoken punctuation tokens
   (``"full stop"`` → ``.``) while guarding against medical context
   (``ascending colon`` stays a noun, ``menstrual period`` stays a noun).
+* ``apply_scratch_commands``: "scratch that" removes the last thing said.
+* ``apply_phrase_commands``: "insert <quick phrase name>" writes the phrase.
+
+Commands that only edit text live here, as pipeline stages, so both front-ends
+get them. Commands that move the caret ("next field") belong to the front-end.
 """
 
 from __future__ import annotations
@@ -132,3 +137,82 @@ def apply_spoken_commands(text: str) -> str:
     for pattern, repl in _SPOKEN_PATTERNS:
         text = pattern.sub(repl, text)  # type: ignore[call-overload]
     return text
+
+
+# ---------------------------------------------------------------------------
+# 3. "Scratch that": remove the last thing said
+# ---------------------------------------------------------------------------
+
+#: The command, with whatever punctuation the recogniser put around it.
+SCRATCH_PATTERN = re.compile(r"[,;:]?\s*\bscratch\s+that\b[.,!?;:]*", re.IGNORECASE)
+_BOUNDARY = ".!?\n"
+
+
+def _start_of_last_sentence(text: str) -> int:
+    """Index where the last sentence of *text* starts (after a boundary)."""
+    core = text.rstrip()
+    if core and core[-1] in ".!?":
+        core = core[:-1]  # the sentence just finished is the one to remove
+    return max(core.rfind(c) for c in _BOUNDARY) + 1
+
+
+def apply_scratch_commands(text: str) -> str:
+    """Remove the sentence before each "scratch that", and the command itself.
+
+    "The last thing said" is the sentence being spoken, or, if the command
+    starts a new sentence, the one just finished: a long pause already ends a
+    sentence (``ledger.close_sentence``), so a radiologist who stops, thinks,
+    and says "scratch that" removes what they said before stopping. Text before
+    a new line is never reached across: a heading stays.
+    """
+    while (m := SCRATCH_PATTERN.search(text)) is not None:
+        before, rest = text[: m.start()], text[m.end():].lstrip(" ")
+        keep = before[: _start_of_last_sentence(before)].rstrip(" ")
+        joiner = " " if keep and rest and not keep.endswith("\n") else ""
+        text = keep + joiner + rest
+    return text
+
+
+# ---------------------------------------------------------------------------
+# 4. "Insert <phrase>": a quick phrase by voice
+# ---------------------------------------------------------------------------
+
+_phrase_cache: Tuple[int, Optional[Pattern], dict] = (0, None, {})
+
+
+def _phrase_pattern() -> Tuple[Optional[Pattern], dict]:
+    """The "insert <name>" pattern for the current quick phrases, cached.
+
+    Rebuilt when the phrase library object changes (``macros.reload_macros``
+    replaces it), so a phrase added and reloaded works without a restart.
+    """
+    global _phrase_cache
+    from src.medical import macros
+
+    library = macros.MACROS
+    if _phrase_cache[0] != id(library):
+        by_name = {}
+        for entries in library.values():
+            for label, phrase in entries:
+                by_name.setdefault(" ".join(label.lower().split()), phrase)
+        names = sorted(by_name, key=len, reverse=True)
+        pattern = re.compile(
+            r"\binsert\s+(" + "|".join(
+                r"\s+".join(re.escape(w) for w in name.split()) for name in names
+            ) + r")\b[.,]?",
+            re.IGNORECASE,
+        ) if names else None
+        _phrase_cache = (id(library), pattern, by_name)
+    return _phrase_cache[1], _phrase_cache[2]
+
+
+def apply_phrase_commands(text: str) -> str:
+    """Replace "insert <quick phrase name>" with the phrase it names.
+
+    Only an exact name after the word "insert" fires, so "insert a drain"
+    stays as dictated. Names are matched without case.
+    """
+    pattern, by_name = _phrase_pattern()
+    if pattern is None:
+        return text
+    return pattern.sub(lambda m: by_name[" ".join(m.group(1).lower().split())], text)

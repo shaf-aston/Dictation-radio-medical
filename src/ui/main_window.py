@@ -53,6 +53,7 @@ from src.ui.views import (
 )
 
 # Recording control
+from src.ui.field_navigation import FieldKeys
 from src.ui.recording_session import (
     confirm_release, on_partial_text, on_processed_text, on_start_recording,
     on_stop_recording, on_transcription_finished, setup_level_timer,
@@ -269,6 +270,24 @@ class MainWindow(QMainWindow):
     def _setup_shortcuts(self) -> None:
         QShortcut(QKeySequence("F5"), self, partial(on_start_recording, self))
         QShortcut(QKeySequence("F6"), self, partial(on_stop_recording, self))
+        # One key that starts and stops: what a dictation mic's record button
+        # sends in keyboard mode. Configurable, like the field keys below.
+        QShortcut(
+            QKeySequence(self.settings.get("key_record_toggle")), self,
+            self._toggle_recording,
+        )
+        self._field_keys = FieldKeys(
+            self.editor,
+            self.settings.get("key_next_field"),
+            self.settings.get("key_previous_field"),
+            enabled=lambda: not self.dictation_active(),
+        )
+
+    def _toggle_recording(self) -> None:
+        if self.recorder.is_recording:
+            on_stop_recording(self)
+        elif self.btn_record.isEnabled():
+            on_start_recording(self)
 
     # ------------------------------------------------------------------
     # Background services (cloud training + report analysis)

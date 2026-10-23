@@ -1,14 +1,15 @@
 """Post-processing orchestrator.
 
 The pipeline is a small ordered list of pure functions; reordering is
-behaviour-changing so don't reshuffle without updating the tests in
-``tests/test_worker_logic.py::TestPostProcessingPipeline``.
+behaviour-changing so don't reshuffle without running the tests
+(``tests/test_voice_commands.py`` pins the command stages).
 
 Stage order
 -----------
 0. Hallucination filter: :func:`filter_hallucinations`
 1. Voice correction commands: :func:`apply_correction_commands`
 2. Spoken punctuation: :func:`apply_spoken_commands`
+2.5 "Scratch that": :func:`apply_scratch_commands`
 3. Whitespace: :func:`normalize_spaces`
 4. Measurements: :func:`apply_measurement_standardisation`
 5. Radiology terminology: :func:`apply_terminology`
@@ -21,6 +22,8 @@ Stage order
                                   real words: "spinal chord"->"cord")
 8. Learned user corrections: :func:`apply_learned_corrections` (runs last
                                   so user overrides win)
+8.5 "Insert <phrase>": :func:`apply_phrase_commands` (after every rewriting
+                                  stage, so the phrase lands as written)
 9. Smart capitalisation: :func:`smart_capitalize`
 
 Confidence veto
@@ -64,6 +67,8 @@ from src.dictation.postprocess.confidence_gate import (
 from src.dictation.postprocess.hallucinations import filter_hallucinations
 from src.dictation.postprocess.voice_commands import (
     apply_correction_commands,
+    apply_phrase_commands,
+    apply_scratch_commands,
     apply_spoken_commands,
 )
 from src.dictation.postprocess.text_utils import normalize_spaces, smart_capitalize
@@ -187,6 +192,7 @@ def postprocess_transcript(
         ("filter_hallucinations", filter_hallucinations, None),
         ("apply_correction_commands", apply_correction_commands, None),
         ("apply_spoken_commands", apply_spoken_commands, None),
+        ("apply_scratch_commands", apply_scratch_commands, None),
         ("normalize_spaces", normalize_spaces, None),
         ("apply_measurement_standardisation", apply_measurement_standardisation, None),
         ("apply_terminology", apply_terminology, None),
@@ -195,6 +201,8 @@ def postprocess_transcript(
         ("apply_medical_dictionary_suggestions", apply_medical_dictionary_suggestions, None),
         ("apply_context_correction", apply_context_correction, None),
         ("apply_learned_corrections", apply_learned_corrections, None),
+        # After every rewriting stage, so a quick phrase lands as written.
+        ("apply_phrase_commands", apply_phrase_commands, None),
         ("smart_capitalize", smart_capitalize, None),
     ]
 

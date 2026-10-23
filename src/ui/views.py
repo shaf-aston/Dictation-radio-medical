@@ -296,10 +296,11 @@ def build_editor_panel(window: MainWindow) -> QWidget:
     # Main editor
     window.editor = QTextEdit()
     window.editor.setPlaceholderText(
-        "Dictated text appears here.\n\n"
-        "F5 = Start recording   F6 = Stop\n"
-        "Load a template, then dictate into each section.\n"
-        "Use quick phrases on the left for common findings."
+        "Dictated text appears here, at the cursor.\n\n"
+        "F5 = Start recording   F6 = Stop   F2 = Start / stop\n"
+        "Load a template, press Tab to select the next field, then dictate.\n"
+        "Say \"scratch that\" to remove the last sentence, or\n"
+        "\"insert\" and a quick phrase's name to write the phrase."
     )
     font = QFont("Consolas", window.settings.get("font_size", 13))
     window.editor.setFont(font)

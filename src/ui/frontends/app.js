@@ -28,6 +28,7 @@ const editor = document.getElementById('editor');
 const livePreview = document.getElementById('livePreview');
 // What a template field is: the server's own pattern (template_fields.py).
 const FIELD_RE = new RegExp(BOOTSTRAP.field_pattern, 'g');
+const NOT_A_FIELD_RE = new RegExp(BOOTSTRAP.not_a_field_pattern, 'i');
 const newReportBtn = document.getElementById('newReportBtn');
 const saveTxtBtn = document.getElementById('saveTxtBtn');
 const exportWordBtn = document.getElementById('exportWordBtn');
@@ -807,8 +808,89 @@ templateSelect.addEventListener('change', syncTemplateButton);
 loadTemplateBtn.addEventListener('click', loadSelectedTemplate);
 themeBtn.addEventListener('click', toggleTheme);
 
+// -- template fields and bound keys -------------------------------------------
+// What a field is comes from the server (template_fields.py); the keys are the
+// same settings the desktop binds, so a dictation mic's buttons work in both.
+
+const KEYS = BOOTSTRAP.keys || {};
+
+// "Shift+Tab", "Ctrl+Alt+K", "F2": the spelling the settings use (Qt's).
+function canonicalKeys(spec) {
+    const parts = String(spec || '').split('+').map((p) => p.trim()).filter(Boolean);
+    const key = parts.pop() || '';
+    const mods = ['Ctrl', 'Alt', 'Shift', 'Meta'].filter((m) => parts.includes(m));
+    return [...mods, key.length === 1 ? key.toUpperCase() : key].join('+');
+}
+
+function pressedKeys(e) {
+    const mods = [];
+    if (e.ctrlKey) mods.push('Ctrl');
+    if (e.altKey) mods.push('Alt');
+    if (e.shiftKey) mods.push('Shift');
+    if (e.metaKey) mods.push('Meta');
+    const key = e.key === ' ' ? 'Space' : e.key;
+    return [...mods, key.length === 1 ? key.toUpperCase() : key].join('+');
+}
+
+function keyMatches(e, name) {
+    return Boolean(KEYS[name]) && pressedKeys(e) === canonicalKeys(KEYS[name]);
+}
+
+function templateFields(text) {
+    return [...text.matchAll(FIELD_RE)]
+        .filter((m) => !NOT_A_FIELD_RE.test(m[0]))
+        .map((m) => ({ start: m.index, end: m.index + m[0].length }));
+}
+
+// Select the next (or previous) field. False when there is none that way, so
+// the key keeps its ordinary meaning in a report with no template.
+function selectField(forward) {
+    const fields = templateFields(editor.value);
+    const field = forward
+        ? fields.find((f) => f.start >= editor.selectionEnd)
+        : fields.filter((f) => f.end <= editor.selectionStart).pop();
+    if (!field) return false;
+    editor.setSelectionRange(field.start, field.end);
+    // Re-focusing is what makes a textarea scroll its selection into view.
+    editor.blur();
+    editor.focus();
+    return true;
+}
+
+editor.addEventListener('keydown', (e) => {
+    if (isRecording) return;
+    const forward = keyMatches(e, 'next_field');
+    if ((forward || keyMatches(e, 'previous_field')) && selectField(forward)) {
+        e.preventDefault();
+    }
+});
+
+(function showKeyHint() {
+    const hint = document.getElementById('keyHint');
+    if (!hint || !KEYS.record_toggle) return;
+    const parts = [];
+    const add = (spec, label) => {
+        canonicalKeys(spec).split('+').forEach((key, i) => {
+            if (i) parts.push('+');
+            const el = document.createElement('kbd');
+            el.textContent = key;
+            parts.push(el);
+        });
+        parts.push(label);
+    };
+    add(KEYS.record_toggle, ' to record · ');
+    add(KEYS.next_field, ' next field · ');
+    add('Ctrl+Z', ' to undo');
+    hint.replaceChildren(...parts);
+})();
+
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
+    if (keyMatches(e, 'record_toggle')) {
+        e.preventDefault();
+        dictateBtn.click();
+        return;
+    }
     if (e.ctrlKey || e.metaKey) {
         if (e.key === 'z' && !isRecording) { e.preventDefault(); undo(); }
         if (e.key === 'y' && !isRecording) { e.preventDefault(); redo(); }

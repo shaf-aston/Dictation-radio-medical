@@ -294,6 +294,13 @@ def _bootstrap_payload() -> dict:
         # What a template field is, as a pattern valid in JS too: the page
         # finds fields with the server's own definition, not a copy of it.
         "field_pattern": template_fields.FIELD_PATTERN,
+        "not_a_field_pattern": template_fields.NOT_A_FIELD_PATTERN,
+        # The same key settings the desktop binds (a dictation mic's buttons
+        # send these in keyboard mode).
+        "keys": {
+            name: str(_settings().get(f"key_{name}") or get_default(f"key_{name}"))
+            for name in ("record_toggle", "next_field", "previous_field")
+        },
         "templates": templates,
         "selected_template": selected_template,
         "preferences": _current_preferences(),

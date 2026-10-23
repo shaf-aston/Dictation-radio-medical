@@ -159,6 +159,13 @@ _DEFAULTS: dict = {
     "learning_enabled": True,          # capture edits for adaptive learning
     "learning_consent_shown": False,   # has user seen the learning consent dialog
     "disclaimer_shown": False,         # has user seen the clinical disclaimer
+    # Keys for the actions a dictation microphone's buttons are usually set to
+    # send (SpeechMike / PowerMic "keyboard mode"). Qt key-sequence spelling;
+    # the web page reads the same strings. F2, not F5, because a browser
+    # reloads the page on F5: one key that works in both front-ends.
+    "key_record_toggle": "F2",
+    "key_next_field": "Tab",
+    "key_previous_field": "Shift+Tab",
 }
 
 
