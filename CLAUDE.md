@@ -48,7 +48,8 @@ src/
 │   │                       engines/faster_whisper_engine.py (the CTranslate2
 │   │                       wrapper and its port adapter, one file) ·
 │   │                       engines/parakeet_engine.py (onnx-asr; no prompt,
-│   │                       one model shared process-wide) · prompt.py
+│   │                       one model shared process-wide; full precision
+│   │                       unless parakeet_precision says int8) · prompt.py
 │   │                       (the radiology priming vocabulary, same for every
 │   │                       engine) · models.py (known model names + fallback)
 │   ├── stream/             chunk-once streaming, vad.py (Silero VAD, bundled

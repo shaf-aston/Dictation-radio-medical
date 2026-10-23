@@ -16,6 +16,12 @@ _DEFAULTS: dict = {
     # 2026-09-29 on the tts_paused set, live path: Parakeet 4.6 % medical-term
     # error, Whisper tiny.en + small.en 12.5 %. "deepgram" puts the cloud first.
     "asr_engine": "local",
+    # Parakeet's weights: "fp32" (full) or "int8" (rounded, smaller). Measured
+    # 2026-10-23 on the live path (replay.py, 30 reports each): medical-term
+    # error 7.1 % vs 7.9 % clean, 13.3 % vs 24.6 % in pink noise, with the same
+    # first-word time and lag. The cost is memory: 2.2 GB loaded against 0.7 GB,
+    # and a one-time 2.4 GB download. "int8" is for a machine short of memory.
+    "parakeet_precision": "fp32",
     "model_size": "base.en",   # English-only: faster AND more accurate than "base"
     "language": "en",
     "vad_filter": True,

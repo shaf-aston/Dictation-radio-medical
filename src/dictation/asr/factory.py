@@ -22,6 +22,22 @@ from src.core.settings import Settings, get_default
 logger = logging.getLogger(__name__)
 
 
+#: parakeet_precision setting -> onnx-asr's quantization argument.
+_PARAKEET_QUANTIZATION = {"fp32": None, "int8": "int8"}
+
+
+def _make_parakeet(**kwargs: Any) -> ParakeetEngine:
+    """Parakeet at the precision the ``parakeet_precision`` setting names.
+    Raises ``ValueError`` on an unknown value rather than guessing one."""
+    precision = Settings().get("parakeet_precision")
+    if precision not in _PARAKEET_QUANTIZATION:
+        raise ValueError(
+            f"Unknown parakeet_precision {precision!r}. Available: {sorted(_PARAKEET_QUANTIZATION)}"
+        )
+    kwargs.setdefault("quantization", _PARAKEET_QUANTIZATION[precision])
+    return ParakeetEngine(**kwargs)
+
+
 def _local_tiers(**kwargs: Any) -> List[Tuple[str, Any]]:
     """Parakeet (if the optional ``onnx-asr`` package is installed), then
     faster-whisper, which is always available.
@@ -39,7 +55,7 @@ def _local_tiers(**kwargs: Any) -> List[Tuple[str, Any]]:
     if kwargs.get("model_path"):
         logger.info("Fine-tuned voice model active; ASR chain skips the Parakeet tier")
     elif importlib.util.find_spec("onnx_asr") is not None:
-        tiers.append(("parakeet", ParakeetEngine()))
+        tiers.append(("parakeet", _make_parakeet()))
     else:
         logger.info("onnx-asr not installed; ASR chain skips the Parakeet tier")
     tiers.append(("faster-whisper", FasterWhisperEngine(**kwargs)))
@@ -58,7 +74,7 @@ def _make_deepgram_chain(**kwargs: Any) -> AsrEngine:
 
 _ENGINES = {
     "faster-whisper": FasterWhisperEngine,
-    "parakeet": ParakeetEngine,
+    "parakeet": _make_parakeet,
     "deepgram": _make_deepgram_chain,
     "local": _make_local_chain,
 }

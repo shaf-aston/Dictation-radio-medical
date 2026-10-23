@@ -157,3 +157,12 @@ fusion" and "ide. Ideify". Synthetic speech is unnaturally level, so 6 dB below
 the voice never touches it; a real voice's soft syllables sit there. This is the
 slice 2 pre-mortem, confirmed. Every step stays off until a real-voice set
 (`own`) shows one helps.
+
+## The bigger noise fix was the model's precision (2026-10-23)
+
+Parakeet had been running its int8 (rounded) copy. At full precision, same
+`replay.py` run: `tts` term error 7.13% (was 7.92), `tts_noise` 13.32% (was
+24.61), first-word time and lag unchanged. That is a 46% cut in noise, where
+the best cleaning step managed 10%. Now the default (`parakeet_precision`), so
+the baselines above are int8 numbers: any future step is judged against the
+fp32 ones (`data/eval/reports/fp32-<set>.replay.json`).

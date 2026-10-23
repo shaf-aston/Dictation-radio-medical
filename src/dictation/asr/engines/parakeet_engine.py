@@ -53,11 +53,6 @@ logger = logging.getLogger(__name__)
 #: fetched exactly once and reused offline from then on.
 DEFAULT_MODEL = "nemo-parakeet-tdt-0.6b-v3"
 
-#: int8 by default: the fp32 encoder alone is 2.4 GB against 652 MB quantised,
-#: and faster-whisper already runs int8 on this CPU: matching the quantisation
-#: is what makes an engine comparison measure the engine.
-DEFAULT_QUANTIZATION = "int8"
-
 #: Parakeet's fixed input rate. Anything else is resampled by onnx-asr.
 SAMPLE_RATE = 16000
 
@@ -85,8 +80,9 @@ class ParakeetEngine:
     def __init__(
         self,
         model_name: str = DEFAULT_MODEL,
-        quantization: Optional[str] = DEFAULT_QUANTIZATION,
+        quantization: Optional[str] = None,
     ) -> None:
+        # None is full precision; the parakeet_precision setting picks (factory.py).
         self.model_name = model_name
         self.quantization = quantization
         self._model: Any = None
