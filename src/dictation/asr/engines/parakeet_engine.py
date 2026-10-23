@@ -51,7 +51,12 @@ logger = logging.getLogger(__name__)
 #: ``onnx-asr`` version in pyproject.toml's ``parakeet`` extra) so a download is reproducible:
 #: the id resolves to one HuggingFace repo, and the copy under data/cache/ is
 #: fetched exactly once and reused offline from then on.
-DEFAULT_MODEL = "nemo-parakeet-tdt-0.6b-v3"
+#:
+#: v2, not v3: v3 adds 25 European languages this app does not use and is worse
+#: at English. Measured 2026-10-23 on the piper set (54 min, 5 voices), same
+#: speed: medical-term error 9.7% vs 12.6% after post-processing (17.0% vs
+#: 21.8% raw), WER 5.3% vs 6.4%. Both CC-BY-4.0.
+DEFAULT_MODEL = "nemo-parakeet-tdt-0.6b-v2"
 
 #: int8 by default: the fp32 encoder alone is 2.4 GB against 652 MB quantised,
 #: and faster-whisper already runs int8 on this CPU: matching the quantisation
