@@ -7,7 +7,7 @@ highlighted text. That is the only thing it can do to the report: nothing is
 ever applied on its own.
 
 Both lists and their order come from :mod:`src.medical.term_lookup`, the same
-service ``src/ui/web_app.py`` calls, so the desktop and the browser cannot
+service ``src/ui/web/terms.py`` calls, so the desktop and the browser cannot
 suggest different things for the same word. This module is a renderer: it
 decides nothing.
 

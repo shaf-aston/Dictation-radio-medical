@@ -11,7 +11,7 @@ from PySide6.QtCore import QThread, QTimer
 from PySide6.QtWidgets import QDialog, QMessageBox
 
 from src.core import perf
-from src.dictation.stream.policy import MANUAL, plan_from_settings
+from src.dictation.stream.policy import MANUAL, LiveKnobs, plan_from_settings
 from src.dictation.asr.models import resolve_model
 from src.dictation.worker import LiveTranscribeWorker
 from src.core.paths import create_temp_wav
@@ -256,7 +256,6 @@ def on_start_recording(window: MainWindow) -> None:
     model_size = window.model_combo.currentText()
     language = window.language_input.text().strip() or "en"
     vad_enabled = window.vad_checkbox.isChecked()
-    pause_threshold = float(window.settings.get("pause_threshold", 2.5))
     window._active_accent = window.accent_combo.currentData() or "neutral"
     window._active_cleanup_level = window.cleanup_combo.currentData() or "medium"
 
@@ -302,7 +301,8 @@ def on_start_recording(window: MainWindow) -> None:
 
     window.live_thread = QThread()
     window.live_worker = LiveTranscribeWorker(
-        path, model_size, language, vad_enabled, pause_threshold,
+        path, model_size, language, vad_enabled,
+        knobs=LiveKnobs.from_settings(window.settings.get),
         live_model_size=resolve_model(window.settings.get("live_model_size")),
         model_path=active_model_path,
         # None = "auto": the worker sizes chunks from its live engine's cost
@@ -312,12 +312,6 @@ def on_start_recording(window: MainWindow) -> None:
             if window.settings.get("chunk_policy") == MANUAL else None
         ),
         trailing_silence_sec=float(window.settings.get("chunk_trailing_silence_sec")),
-        streaming=bool(window.settings.get("asr_streaming")),
-        background_polish=bool(window.settings.get("background_polish")),
-        live_beam_size=int(window.settings.get("live_beam_size")),
-        final_beam_size=int(window.settings.get("final_beam_size")),
-        polish_confidence_ceiling=float(window.settings.get("polish_confidence_ceiling")),
-        preview_max_lag_sec=float(window.settings.get("preview_max_lag_sec")),
     )
     window.live_worker.moveToThread(window.live_thread)
     window.live_thread.started.connect(window.live_worker.run)

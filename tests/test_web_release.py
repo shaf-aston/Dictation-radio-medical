@@ -13,6 +13,7 @@ fastapi_testclient = pytest.importorskip("fastapi.testclient")
 
 from src.features import audit_log  # noqa: E402
 from src.ui import web_app  # noqa: E402
+from src.ui.web import report, state  # noqa: E402
 
 CLEAN = "EXAMINATION: MRI Right Knee\nFINDINGS:\nNormal.\nIMPRESSION:\n1. Normal study."
 
@@ -20,7 +21,7 @@ CLEAN = "EXAMINATION: MRI Right Knee\nFINDINGS:\nNormal.\nIMPRESSION:\n1. Normal
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(audit_log, "_log_path", tmp_path / "audit.log")
-    web_app._findings.reset()
+    state.findings.reset()
     return fastapi_testclient.TestClient(web_app.app)
 
 
@@ -72,7 +73,7 @@ def test_critical_finding_is_asked_after_the_report_checks(client):
 
 
 def test_communication_sentence_is_built_by_the_server(client, monkeypatch):
-    monkeypatch.setattr(web_app._settings(), "set", lambda *a, **k: None)
+    monkeypatch.setattr(state.settings(), "set", lambda *a, **k: None)
     got = client.post("/api/report/communication", json={"text": LEVEL_1, "communication": COMM}).json()
     assert got["statement"] == (
         "Finding of pneumothorax was communicated to Dr Patel by telephone "
@@ -93,10 +94,10 @@ def test_acknowledgement_audits_who_how_and_when(client, tmp_path):
 def test_every_exit_is_audited(client, tmp_path):
     client.post("/api/report/check", json={"text": CLEAN, "patient": {"id": "P1"}})
     client.post("/api/report/save-txt", json={"text": CLEAN, "patient": {"id": "P1"}})
-    if web_app.DOCX_AVAILABLE:
+    if report.DOCX_AVAILABLE:
         client.post("/api/report/export-word", json={"text": CLEAN, "patient": {"id": "P1"}})
     actions = {e["action"] for e in _audit(tmp_path)}
     expected = {"report_copied", "report_saved"} | (
-        {"report_exported"} if web_app.DOCX_AVAILABLE else set()
+        {"report_exported"} if report.DOCX_AVAILABLE else set()
     )
     assert expected <= actions

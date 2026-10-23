@@ -63,7 +63,9 @@ src/
 │   ├── stream/             chunk-once streaming, vad.py (Silero VAD, bundled
 │   │                       with faster-whisper, no new dep) · segmenter.py
 │   │                       (pure VAD-marks→chunk-cuts policy) · policy.py
-│   │                       (chunk sizes from the engine's cost) · live_session.py
+│   │                       (chunk sizes from the engine's cost; LiveKnobs, the
+│   │                        eight dictation settings both front-ends hand a
+│   │                        LiveSession, read in one place) · live_session.py
 │   │                       (the Qt-free live loop: a push-fed audio buffer
 │   │                        instead of the desktop's growing WAV, so the web
 │   │                        app streams over a WebSocket using these same
@@ -81,11 +83,18 @@ src/
 │   └── resources/        radiology_prompt.txt (Whisper priming prompt, ~200 terms)
 ├── ui/          main_window.py · views.py · recording_session.py · dialogs.py
 │   ├── postprocess_worker.py  runs the pipeline OFF the UI thread, latest-only
-│   ├── web_app.py        FastAPI single-page app (host/port from settings),
-│   │                       plus /developer, the local diagnostics table of
-│   │                       recorded runs (unlisted; no link from the report UI),
-│   │                       and GET /api/debug/events + /api/debug/perf, which
-│   │                       are what the in-page developer console reads
+│   ├── web_app.py        assembles the FastAPI app (start-up, routers);
+│   │                       `python -m src.ui.web_app` (host/port from settings)
+│   ├── web/              one router per job, all thin over features/:
+│   │                       state.py (the only between-request state: settings,
+│   │                       cached engines, the open report's findings; the
+│   │                       seam for per-user state later) · schemas.py ·
+│   │                       pages.py (page, assets, bootstrap payload) ·
+│   │                       preferences.py · report.py (release gate, exports) ·
+│   │                       terms.py (marks, suggestions, learning) ·
+│   │                       diagnostics.py (/api/runs, /api/debug/events +
+│   │                       /perf, which the developer console and the unlisted
+│   │                       /developer page read) · dictate.py (/ws/dictate)
 │   ├── field_navigation.py  Tab / Shift+Tab select the next / previous
 │   │                       template field (keys are settings, so a dictation
 │   │                       mic's buttons can send them); app.js does the same
@@ -217,7 +226,7 @@ session exists (`recording_session._abandon_unfinished_session`), so a stale
 pass cannot reach the new document.
 
 Front-end files are cached in memory keyed on the file's modification time
-(`web_app._frontend_cache`), and every page and asset is served `no-store`. Both
+(`web/pages._frontend_cache`), and every page and asset is served `no-store`. Both
 halves matter: without the mtime key an edit to app.js needed a server restart,
 and without `no-store` the browser kept running the previous release's script
 against the current server: which is how the page went on using the old

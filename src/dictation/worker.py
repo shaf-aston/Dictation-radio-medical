@@ -40,7 +40,7 @@ from src.core import perf
 from src.dictation.asr import AsrResult, create_engine
 from src.dictation.stream import live_session
 from src.dictation.stream.live_session import LiveSession
-from src.dictation.stream.policy import plan_for
+from src.dictation.stream.policy import LiveKnobs, plan_for
 from src.dictation.stream.rules import build_context_prompt
 from src.dictation.stream.segmenter import ChunkPolicy
 
@@ -89,17 +89,11 @@ class LiveTranscribeWorker(QObject):
         model_size: str,
         language: str,
         vad_enabled: bool,
-        pause_threshold: float = 2.5,
+        knobs: LiveKnobs = LiveKnobs(),
         live_model_size: Optional[str] = None,
         model_path: Optional[Union[str, Path]] = None,
         chunk_policy: Optional[ChunkPolicy] = None,
-        live_beam_size: int = 2,
-        final_beam_size: int = 5,
-        polish_confidence_ceiling: float = 0.75,
-        preview_max_lag_sec: float = 3.0,
         trailing_silence_sec: float = 0.6,
-        streaming: bool = True,
-        background_polish: bool = True,
     ) -> None:
         super().__init__()
         self.audio_path = audio_path
@@ -111,18 +105,12 @@ class LiveTranscribeWorker(QObject):
         # VAD is load-bearing for chunk cutting, so it is always on; this flag
         # only gates the engine's own VAD inside the polish decodes.
         self.vad_enabled = vad_enabled
-        self.pause_threshold = pause_threshold
-        self.live_beam_size = max(1, int(live_beam_size))
-        self.final_beam_size = max(1, int(final_beam_size))
-        self.polish_confidence_ceiling = float(polish_confidence_ceiling)
-        self.preview_max_lag_sec = float(preview_max_lag_sec)
+        self.knobs = knobs
         self.model_path = model_path
         # None means "size chunks from the live engine's cost", which is only
         # known once run() has built the engine.
         self._chunk_policy = chunk_policy
         self._trailing_silence_sec = float(trailing_silence_sec)
-        self._streaming = bool(streaming)
-        self._background_polish = bool(background_polish)
         self._session: Optional[LiveSession] = None
         self._keep_running = True
         self._final_requested = False
@@ -249,18 +237,12 @@ class LiveTranscribeWorker(QObject):
             final_engine,
             language=self.language,
             policy=policy,
-            pause_threshold=self.pause_threshold,
-            live_beam_size=self.live_beam_size,
-            final_beam_size=self.final_beam_size,
-            preview_max_lag_sec=self.preview_max_lag_sec,
             preview_min_tail_sec=plan.preview_min_tail_sec,
-            polish_confidence_ceiling=self.polish_confidence_ceiling,
             initial_prompt=build_context_prompt(),
             postprocess=False,
             polish_vad_filter=self.vad_enabled,
             on_decoded=self._emit_absolute_segments,
-            streaming=self._streaming,
-            background_polish=self._background_polish,
+            **self.knobs.as_kwargs(),
         )
 
     def _run_final_polish(self) -> None:

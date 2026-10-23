@@ -13,6 +13,7 @@ fastapi_testclient = pytest.importorskip("fastapi.testclient")
 
 from src.features import template_fields  # noqa: E402
 from src.ui import web_app  # noqa: E402
+from src.ui.web import dictate, pages  # noqa: E402
 
 
 class _FakeSession:
@@ -48,12 +49,12 @@ class _FakeSession:
 
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.setattr(web_app, "_record_web_run", lambda *a, **k: None)
+    monkeypatch.setattr(dictate, "record_web_run", lambda *a, **k: None)
     return fastapi_testclient.TestClient(web_app.app)
 
 
 def _dictate(client, monkeypatch, spoken: str, field=None) -> dict:
-    monkeypatch.setattr(web_app, "_live_session", lambda *_: _FakeSession(spoken))
+    monkeypatch.setattr(dictate, "build_live_session", lambda *_: _FakeSession(spoken))
     with client.websocket_connect("/ws/dictate") as ws:
         if field:
             ws.send_json({"command": "field", "text": field})
@@ -77,4 +78,4 @@ def test_dictation_without_a_field_is_left_as_spoken(client, monkeypatch):
 
 
 def test_the_page_gets_the_servers_field_pattern():
-    assert web_app._bootstrap_payload()["field_pattern"] == template_fields.FIELD_PATTERN
+    assert pages.bootstrap_payload()["field_pattern"] == template_fields.FIELD_PATTERN

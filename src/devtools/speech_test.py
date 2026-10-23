@@ -1,7 +1,7 @@
 """Speak typed text into a WAV, so dictation can be tested without a voice.
 
 Developer-only, and removable: delete this folder plus the ``/api/dev/speak``
-endpoint in ``src/ui/web_app.py`` and the "Test voice" row in the developer
+endpoint in ``src/ui/web/terms.py`` and the "Test voice" row in the developer
 console (search app.js for ``speechTest``). Nothing else depends on it.
 
 Uses the Windows speech engine through ``pyttsx3``: free, offline, already

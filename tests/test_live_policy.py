@@ -1,12 +1,16 @@
 """The live loop's shape comes from what the engine says a call costs."""
 
+import inspect
+
 from src.core.settings import get_default
 from src.dictation.asr.engines.deepgram_engine import DeepgramEngine
 from src.dictation.asr.engines.faster_whisper_engine import FasterWhisperEngine
 from src.dictation.asr.types import CostModel, EngineCaps
+from src.dictation.stream.live_session import LiveSession
 from src.dictation.stream.policy import (
     CHEAP_POLICY,
     LOCAL_POLICY,
+    LiveKnobs,
     plan_for,
     plan_from_settings,
 )
@@ -52,3 +56,10 @@ def test_shipped_defaults():
     assert get_default("chunk_policy") == "auto"
     assert (get_default("chunk_min_sec"), get_default("chunk_soft_max_sec")) == (2.0, 5.0)
     assert plan_from_settings(get_default, None).policy.min_sec == 2.0
+
+
+def test_live_knobs_are_live_session_arguments_with_the_shipped_defaults():
+    knobs = LiveKnobs.from_settings(get_default)
+    assert set(knobs.as_kwargs()) <= set(inspect.signature(LiveSession).parameters)
+    assert knobs.uncertain_word_confidence == get_default("uncertain_word_confidence")
+    assert knobs.streaming is bool(get_default("asr_streaming"))
