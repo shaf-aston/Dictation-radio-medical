@@ -48,10 +48,10 @@ rewrites their words:
   on similarity to a vocabulary, so the dictated words pass through almost
   verbatim.
 * ``"medium"`` (default): the full ten-stage pipeline above, unchanged.
-* ``"hard"``: the full pipeline, plus an AI cleanup pass
-  (:func:`~src.dictation.postprocess.llm_cleanup.clean_with_llm`) if that
-  optional, consent-gated feature is enabled; otherwise identical to
-  ``"medium"``.
+* ``"hard"``: identical to ``"medium"`` here. The extra AI polish it names
+  is not a pipeline stage: the desktop offers it once on the finished report,
+  through a review dialog (``ui/dialogs.offer_ai_cleanup``), so it is never
+  applied unseen and this module never touches the network.
 """
 
 from __future__ import annotations
@@ -178,7 +178,6 @@ def _apply_veto(
 
 def postprocess_transcript(
     text: str, accent: str = "neutral", cleanup_level: str = "medium",
-    live: bool = False,
     confidences: Optional[Sequence[Optional[float]]] = None,
     confidence_ceiling: Optional[float] = None,
     vetoed_out: Optional[List[str]] = None,
@@ -192,11 +191,6 @@ def postprocess_transcript(
             ``"east_asian"``, ``"west_african"``).
         cleanup_level: ``"soft"``, ``"medium"`` (default), or ``"hard"``:
             see the module docstring.
-        live: ``True`` when called per-chunk during live dictation. Forces the
-            ``"hard"`` AI-cleanup (network) stage to be skipped: that pass is
-            for the *finished* document only (see ``llm_cleanup`` docstring and
-            the CLAUDE.md "AI cleanup is on-demand only" invariant), never on
-            every live cycle.
         confidences: The decoder's per-word confidence for *text*, one entry per
             word, ``None`` where unknown. Omit it (the default) and the
             confidence veto is inert: output is byte-identical to a run without
@@ -258,14 +252,6 @@ def postprocess_transcript(
             block_input, text, block_confidences, confidence_ceiling, vetoed_out
         )
 
-    if cleanup_level == "hard" and not live:
-        from src.dictation.postprocess.llm_cleanup import clean_with_llm
-        stage_start = time.time() if _debug else 0.0
-        with perf.stage("postprocess.clean_with_llm"):
-            text, _ = clean_with_llm(text)
-        if analyzer:
-            analyzer.record_stage("clean_with_llm", text, time.time() - stage_start)
-
     elapsed = time.time() - t_start
     if analyzer:
         analyzer.save_analysis(accent)
@@ -275,16 +261,14 @@ def postprocess_transcript(
 
 def postprocess_transcript_with_changes(
     text: str, accent: str = "neutral", cleanup_level: str = "medium",
-    live: bool = False,
     confidences: Optional[Sequence[Optional[float]]] = None,
     confidence_ceiling: Optional[float] = None,
     vetoed_out: Optional[List[str]] = None,
 ) -> Tuple[str, List[str]]:
     """Run the pipeline and additionally return word-level change examples.
 
-    ``live=True`` skips the per-cycle AI-cleanup network call, and
     ``confidences`` / ``confidence_ceiling`` / ``vetoed_out`` drive the
-    confidence veto: all four behave exactly as in
+    confidence veto: all three behave exactly as in
     :func:`postprocess_transcript`.
 
     Returns:
@@ -294,7 +278,7 @@ def postprocess_transcript_with_changes(
     t_start = time.time()
     original_words = text.split()
     processed = postprocess_transcript(
-        text, accent, cleanup_level, live=live,
+        text, accent, cleanup_level,
         confidences=confidences, confidence_ceiling=confidence_ceiling,
         vetoed_out=vetoed_out,
     )

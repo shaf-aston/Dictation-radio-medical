@@ -260,28 +260,48 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
 
 
 def on_run_ai_cleanup(window: MainWindow) -> None:
-    """Run Groq cleanup on the current report and apply the result in-editor."""
+    """Tools → AI Cleanup: polish the current report, applied only if accepted."""
+    offer_ai_cleanup(window, automatic=False)
+
+
+def offer_ai_cleanup(window: MainWindow, *, automatic: bool) -> None:
+    """Ask Groq for a polished report and apply it only if the radiologist accepts.
+
+    The one path AI cleanup takes, from the menu or from the 'hard' cleanup
+    level after Stop. It never replaces the report unseen, and it always
+    passes the patient's details, so the de-identifier scrubs the known name
+    and ID rather than guessing at them. ``automatic`` (after Stop) stays
+    quiet when there is nothing to do: no pop-up for a disabled feature.
+    """
     from src.dictation.postprocess.llm_cleanup import clean_with_llm, is_enabled
 
-    text = window.editor.toPlainText().strip()
-    if not text:
-        window._show_status("Nothing to clean up", 2000)
+    text = window.editor.toPlainText()
+    if not text.strip():
+        if not automatic:
+            window._show_status("Nothing to clean up", 2000)
         return
     if not is_enabled():
-        QMessageBox.information(
-            window, "AI Cleanup Disabled",
-            "Enable AI cleanup first in Settings → AI Cleanup (Groq).")
+        if not automatic:
+            QMessageBox.information(
+                window, "AI Cleanup Disabled",
+                "Enable AI cleanup first in Settings → AI Cleanup (Groq).")
         return
 
     window._show_status("Running AI cleanup…", 0)
     try:
         cleaned, changes = clean_with_llm(text, window._get_patient_info())
     except Exception as exc:   # clean_with_llm is already best-effort; belt & braces
-        QMessageBox.warning(window, "AI Cleanup Failed", f"Could not clean up: {exc}")
+        if not automatic:
+            QMessageBox.warning(window, "AI Cleanup Failed", f"Could not clean up: {exc}")
         return
 
     if cleaned == text:
         window._show_status("AI cleanup made no changes", 3000)
+        return
+    if window.editor.toPlainText() != text:
+        # Edited while the request was out: the suggestion is for a report
+        # that no longer exists, and applying it would undo the edit.
+        window._show_status("AI cleanup dropped: the report was edited", 3000)
         return
 
     summary = "\n".join(f"  • {c}" for c in changes[:10]) or "  • (formatting only)"
@@ -289,11 +309,13 @@ def on_run_ai_cleanup(window: MainWindow) -> None:
         window, "Apply AI Cleanup?",
         f"The AI suggested {len(changes)} change(s):\n\n{summary}\n\n"
         "Apply them to the report? Review carefully before signing off.",
-        _Yes | _No, _Yes,
+        _Yes | _No, _No,
     )
     if reply == _Yes:
         window.editor.setPlainText(cleaned)
         window._show_status("AI cleanup applied", 3000)
+    else:
+        window._show_status("AI cleanup not applied", 2000)
 
 
 def show_scan_assistant_dialog(window: MainWindow) -> None:

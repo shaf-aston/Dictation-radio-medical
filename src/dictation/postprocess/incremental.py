@@ -147,7 +147,7 @@ class IncrementalPostprocessor:
             return ""
         with perf.stage("postprocess.incremental_piece"):
             return postprocess_transcript(
-                text, self.accent, self.cleanup_level, live=True
+                text, self.accent, self.cleanup_level
             )
 
     def _process_with_changes(self, text: str) -> Tuple[str, List[str]]:
@@ -155,5 +155,5 @@ class IncrementalPostprocessor:
             return "", []
         with perf.stage("postprocess.incremental_tail"):
             return postprocess_transcript_with_changes(
-                text, self.accent, self.cleanup_level, live=True
+                text, self.accent, self.cleanup_level
             )

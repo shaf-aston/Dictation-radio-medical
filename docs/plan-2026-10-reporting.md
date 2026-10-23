@@ -11,8 +11,10 @@ Calls the user made before planning (2026-10-23):
    report's own `EXAMINATION:` line, so it needs no field.
 3. The user is one radiologist on their own machine. HL7/FHIR, sign/addendum
    and multi-user stay cut (X4, X5, X9).
-4. **Not yet answered**: R6a (hard AI cleanup asks first, passes identifiers)
-   and R6b (drop "tendonitis → tendinopathy"). Both wait for a yes.
+4. **Approved 2026-10-23**: R6a (hard AI cleanup asks first, passes
+   identifiers; the pipeline itself no longer calls the AI) and R6b (drop
+   "tendonitis → tendinopathy", and the identical terminology rule for
+   "tendinitis"). Locked by `tests/test_no_unseen_rewrites.py`.
 
 ## Order, and why
 

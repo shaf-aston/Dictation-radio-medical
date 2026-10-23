@@ -156,9 +156,6 @@ _RULES: List[_Rule] = [
     (_ci(r"\bcommin(?:uted|ution)\b"), "comminuted"),
     (_ci(r"\bnon[- ]?displaced\b"), "non-displaced"),
 
-    # Modern tendinopathy term.
-    (_ci(r"\btendinitis\b"), "tendinopathy"),
-
     # UK spelling preferences (apply before fuzzy dictionary).
     (_ci(r"\badema\b"), "oedema"),
     (_ci(r"\b(?:oe|e)dema\b"), "oedema"),

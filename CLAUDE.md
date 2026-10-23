@@ -382,10 +382,15 @@ there.
   reaches the radiologist only if its label was trained AND its probability ≥
   the calibrated threshold AND Grad-CAM produced a region. Always an assistive
   suggestion with a non-diagnostic disclaimer: never a diagnosis.
-- **AI cleanup is off by default, scrubbed, and lossless on failure**: Groq
-  cleanup runs only when enabled + consented, de-identifies before sending,
-  edits only language (never clinical content), and returns the input
-  unchanged on any error.
+- **AI cleanup is off by default, scrubbed, reviewed, and lossless on
+  failure**: Groq cleanup runs only when enabled + consented, de-identifies
+  before sending (with the patient's own name and ID), edits only language
+  (never clinical content), returns the input unchanged on any error, and is
+  applied only after the radiologist accepts it (`ui/dialogs.offer_ai_cleanup`,
+  the one path, from the menu or the 'hard' level). The pipeline never calls it.
+- **No rule swaps one diagnosis for another.** A rule may fix a mishearing
+  ("menescus" → "meniscus") or a spelling convention, never a word the
+  radiologist chose ("tendinitis" stays "tendinitis").
 - **Settings file is `dictation_settings.json` at the project root.**
 - **File I/O goes through `core/paths.py`** path helpers
   (`autosave_dir`, `staging_db_path`, `model_registry_path`, `fine_tuned_dir`,

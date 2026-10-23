@@ -24,7 +24,7 @@ from src.features.report_release import (
     record_release,
 )
 from src.features.template_fields import find_fields, resolve_choice
-from src.ui.dialogs import CommunicationDialog, confirm_report_checks
+from src.ui.dialogs import CommunicationDialog, confirm_report_checks, offer_ai_cleanup
 from src.ui.styles import set_level_state
 
 if TYPE_CHECKING:
@@ -524,34 +524,13 @@ def _replace_dictation_region(window: MainWindow, processed: str) -> None:
 
 
 def _apply_finished_ai_cleanup(window: MainWindow) -> None:
-    """Run the optional 'hard' AI cleanup once on the finished report.
+    """The 'hard' cleanup level: offer the AI polish once, on the finished report.
 
-    This is the *only* place the network-backed AI polish runs (never per live
-    chunk). No-op unless the user selected the 'hard' cleanup level. The
-    underlying ``clean_with_llm`` de-identifies first, is consent-gated, and
-    returns the text unchanged on any error or when disabled: so when the
-    feature is off (the default) this neither blocks nor alters the report.
+    Never per live chunk (CLAUDE.md invariant), and never applied unseen: it
+    goes through the same review dialog as Tools → AI Cleanup.
     """
-    if getattr(window, "_active_cleanup_level", "medium") != "hard":
-        return
-    text = window.editor.toPlainText()
-    if not text.strip():
-        return
-    try:
-        from src.dictation.postprocess.llm_cleanup import clean_with_llm
-        window._show_status("AI cleanup...", state="busy")
-        cleaned, _ = clean_with_llm(text)
-    except Exception as exc:
-        logger.debug("Finished AI cleanup skipped: %s", exc)
-        return
-    if cleaned and cleaned != text:
-        window.editor.blockSignals(True)
-        window.editor.setPlainText(cleaned)
-        cursor = window.editor.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        window.editor.setTextCursor(cursor)
-        window.editor.blockSignals(False)
-        window._on_text_changed()
+    if getattr(window, "_active_cleanup_level", "medium") == "hard":
+        offer_ai_cleanup(window, automatic=True)
 
 
 def on_transcription_finished(window: MainWindow) -> None:
