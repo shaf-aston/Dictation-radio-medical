@@ -167,6 +167,14 @@ _DEFAULTS: dict = {
     # Who signs the communication record of a critical finding ("... by Dr
     # Shah."). Asked for in that dialog and remembered from it.
     "radiologist_name": "",
+    # A fine-tuned Parakeet exported for onnx-asr (scripts/finetune/README.md).
+    # Empty: the stock model. Switch only after it beats the stock model on
+    # your own recorded voice (run_eval --set own --engine parakeet --model DIR).
+    "parakeet_model_dir": "",
+    # "en-GB" writes British spelling for ordinary words the recogniser spells
+    # the US way (characterise, calibre); "en-US" leaves them. Medical words
+    # (oedema, haemorrhage) follow terminology.py either way.
+    "spelling": "en-GB",
     "key_next_field": "Tab",
     "key_previous_field": "Shift+Tab",
 }

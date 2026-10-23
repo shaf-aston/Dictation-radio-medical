@@ -48,6 +48,7 @@ UNREVIEWED_MARKER = "[UNREVIEWED]"
 KNOWN_SETS: Dict[str, str] = {
     "own": "user's own dictations, real acoustics, real accent",
     "tts": "synthesised radiology reports, medical vocabulary, clean audio",
+    "piper": "the same reports read by neural voices (UK + US), clean audio",
     "libri": "public-domain read speech, general-English regression + RTF",
     "bench": "existing data/bench_audio clips, hand-corrected",
 }

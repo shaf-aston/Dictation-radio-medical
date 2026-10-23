@@ -1,6 +1,7 @@
 """Build the dictation evaluation gold sets.
 
     python -m scripts.eval.build_sets --set tts
+    python -m scripts.eval.build_sets --set piper --voices <dir of Piper .onnx voices>
     python -m scripts.eval.build_sets --set own            # write the reading scripts
     python -m scripts.eval.build_sets --set own --record   # then record them
     python -m scripts.eval.build_sets --set bench
@@ -124,6 +125,69 @@ def build_tts(limit: int = 0) -> int:
     write_manifest("tts", clips)
     total = sum(c.duration_sec for c in clips)
     logger.info("tts set: %d clips, %.1f minutes of audio", len(clips), total / 60)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# piper: the same reports, read by neural voices
+# ---------------------------------------------------------------------------
+
+def build_piper(voices_dir: Path | None, limit: int = 0) -> int:
+    """Synthesise the report corpus with offline Piper neural voices.
+
+    The ``tts`` set needs the Windows speech engine; on Linux pyttsx3 falls back
+    to espeak, whose robotic voice is misheard for reasons a radiologist's voice
+    never would be ("oblique tear" -> "a leak tear"), so it measures the
+    synthesiser more than the app. Piper voices are natural enough that the
+    errors left are mostly the recogniser's. Still synthetic, still flagged so.
+
+    Every report is read by every voice in *voices_dir* (``*.onnx`` with their
+    ``.onnx.json``, from huggingface.co/rhasspy/piper-voices), at a slightly
+    different pace per voice, and saved as 16 kHz mono: the rate both engines
+    decode at, resampled once here by PyAV rather than per engine.
+    """
+    try:
+        import wave
+
+        import numpy as np
+        import soundfile as sf
+        from faster_whisper import decode_audio
+        from piper import PiperVoice, SynthesisConfig
+    except ImportError:
+        logger.error("piper-tts is not installed - needed only to build this set. "
+                     "Install it with: pip install piper-tts")
+        return 1
+    voice_paths = sorted(voices_dir.glob("*.onnx")) if voices_dir else []
+    if not voice_paths:
+        logger.error("No Piper voices given: pass --voices <dir with *.onnx voices>")
+        return 1
+
+    reports = load_report_corpus()
+    if limit:
+        reports = reports[:limit]
+    out_dir = eval_set_dir("piper")
+    clips: List[Clip] = []
+    for v, voice_path in enumerate(voice_paths):
+        voice = PiperVoice.load(str(voice_path))
+        pace = SynthesisConfig(length_scale=1.0 + (v % 3 - 1) * 0.08)
+        for i, text in enumerate(reports):
+            path = out_dir / f"{voice_path.stem}_{i:03d}.wav"
+            raw = path.with_suffix(".raw.wav")
+            with wave.open(str(raw), "wb") as wav:
+                voice.synthesize_wav(text, wav, syn_config=pace)
+            audio = decode_audio(str(raw), sampling_rate=16000)
+            raw.unlink()
+            sf.write(str(path), np.asarray(audio, dtype=np.float32), 16000, subtype="PCM_16")
+            clips.append(Clip(
+                set_name="piper", audio_path=path, reference=text,
+                source=f"scripts/eval/resources/report_corpus.txt, voice {voice_path.stem}",
+                licence="project-authored text; voice licence per its model card",
+                synthetic=True, duration_sec=audio_duration(path),
+            ))
+        logger.info("Voice %s: %d reports", voice_path.stem, len(reports))
+    write_manifest("piper", clips)
+    total = sum(c.duration_sec for c in clips)
+    logger.info("piper set: %d clips, %.1f minutes of audio", len(clips), total / 60)
     return 0
 
 
@@ -433,6 +497,7 @@ def build_libri(clip_count: int = _LIBRI_CLIPS) -> int:
 
 _BUILDERS = {
     "tts": lambda a: build_tts(limit=a.limit),
+    "piper": lambda a: build_piper(a.voices, limit=a.limit),
     "own": lambda a: record_own(force=a.force) if a.record else build_own(),
     "bench": lambda a: build_bench(),
     "libri": lambda a: build_libri(clip_count=a.limit or _LIBRI_CLIPS),
@@ -452,6 +517,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--limit", type=int, default=0,
         help="cap the number of clips (tts, libri) - useful for a quick smoke run",
+    )
+    parser.add_argument(
+        "--voices", type=Path, default=None,
+        help="piper: directory of Piper voice models (*.onnx + *.onnx.json)",
     )
     parser.add_argument(
         "--record", action="store_true",

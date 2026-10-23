@@ -87,7 +87,12 @@ class ParakeetEngine:
         model_name: str = DEFAULT_MODEL,
         quantization: Optional[str] = DEFAULT_QUANTIZATION,
     ) -> None:
-        self.model_name = model_name
+        # A directory instead of a model id is a local export, typically a
+        # fine-tune (scripts/finetune/): the same onnx-asr layout as the
+        # download (config.json, encoder-model*.onnx, decoder_joint-model*.onnx,
+        # vocab.txt), loaded in place and never downloaded over.
+        self.model_dir: Optional[Path] = Path(model_name) if Path(model_name).is_dir() else None
+        self.model_name = DEFAULT_MODEL if self.model_dir else model_name
         self.quantization = quantization
         self._model: Any = None
 
@@ -96,7 +101,7 @@ class ParakeetEngine:
     def preload(self) -> None:
         """Download (once) and load the model, so no transcribe() pays for it."""
         if self._model is None:
-            key = (self.model_name, self.quantization)
+            key = (self.model_name, str(self.model_dir or ""), self.quantization)
             with _MODELS_LOCK:
                 if key not in _MODELS:
                     try:
@@ -108,7 +113,7 @@ class ParakeetEngine:
                 self._model = _MODELS[key]
 
     def identity(self) -> tuple:
-        return ("parakeet", self.model_name, self.quantization)
+        return ("parakeet", str(self.model_dir or self.model_name), self.quantization)
 
     def capabilities(self) -> EngineCaps:
         # No 30s pad (a CTC/TDT model prices by audio length), but its cost on
@@ -146,10 +151,12 @@ class ParakeetEngine:
         except ImportError as exc:
             raise RuntimeError(_MISSING_HINT) from exc
 
-        path = onnx_asr_cache_dir(f"{self.model_name}-{self.quantization or 'fp32'}")
+        path = self.model_dir or onnx_asr_cache_dir(
+            f"{self.model_name}-{self.quantization or 'fp32'}"
+        )
         if not path.exists():
             logger.info("Downloading %s into %s (one time)", self.model_name, path)
-        logger.info("Loading %s (%s)", self.model_name, self.quantization or "fp32")
+        logger.info("Loading %s (%s) from %s", self.model_name, self.quantization or "fp32", path)
         return onnx_asr.load_model(
             self.model_name, path, quantization=self.quantization
         ).with_timestamps()

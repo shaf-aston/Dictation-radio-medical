@@ -50,15 +50,14 @@ _RULES: List[_Rule] = [
     # ------------------------------------------------------------------
     # Signal intensity / echogenicity compound terms.
     # ------------------------------------------------------------------
-    (_ci(r"\bhyper[- ]?intens(?:e|ity)\b"), "hyperintense"),
-    (_ci(r"\bhypo[- ]?intens(?:e|ity)\b"), "hypointense"),
-    (_ci(r"\biso[- ]?intens(?:e|ity)\b"), "isointense"),
-    (_ci(r"\bhyper[- ]?echo(?:ic|genicity)\b"), "hyperechoic"),
-    (_ci(r"\bhypo[- ]?echo(?:ic|genicity)\b"), "hypoechoic"),
-    (_ci(r"\biso[- ]?echo(?:ic|genicity)\b"), "isoechoic"),
-    (_ci(r"\ban[- ]?echo(?:ic|genicity)\b"), "anechoic"),
+    # These join a split word and keep the form that was spoken: "an area of
+    # hyperintensity" stays a noun. They used to collapse noun and adjective
+    # into one ("echogenic foci" -> "echogenicity foci"), measured 2026-10-23
+    # as the terminology stage's only false corrections on the piper set.
+    (_ci(r"\b(hyper|hypo|iso)[- ]?intens(e|ity)\b"), r"\1intens\2"),
+    (_ci(r"\b(hyper|hypo|iso|an)[- ]?echo(ic|genicity)\b"), r"\1echo\2"),
     (_ci(r"\becho[- ]?texture\b"), "echotexture"),
-    (_ci(r"\becho[- ]?genic(?:ity)?\b"), "echogenicity"),
+    (_ci(r"\becho[- ]?genic(ity)?\b"), r"echogenic\1"),
     (_ci(r"\bhomo[- ]?geneous\b"), "homogeneous"),
     (_ci(r"\bhetero[- ]?geneous\b"), "heterogeneous"),
     (_ci(r"\bbone\s+marrow\s+o[ea]dema\b"), "bone marrow oedema"),

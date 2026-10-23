@@ -39,7 +39,9 @@ def _local_tiers(**kwargs: Any) -> List[Tuple[str, Any]]:
     if kwargs.get("model_path"):
         logger.info("Fine-tuned voice model active; ASR chain skips the Parakeet tier")
     elif importlib.util.find_spec("onnx_asr") is not None:
-        tiers.append(("parakeet", ParakeetEngine()))
+        # A fine-tuned Parakeet export, if one is set (scripts/finetune/).
+        local = str(Settings().get("parakeet_model_dir") or "")
+        tiers.append(("parakeet", ParakeetEngine(local) if local else ParakeetEngine()))
     else:
         logger.info("onnx-asr not installed; ASR chain skips the Parakeet tier")
     tiers.append(("faster-whisper", FasterWhisperEngine(**kwargs)))

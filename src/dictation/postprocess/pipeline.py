@@ -13,6 +13,7 @@ Stage order
 3. Whitespace: :func:`normalize_spaces`
 4. Measurements: :func:`apply_measurement_standardisation`
 5. Radiology terminology: :func:`apply_terminology`
+5.5 British spelling of general words: :func:`apply_uk_spelling` (setting)
 6. Accent-specific Whisper fix, :func:`apply_accent_corrections`
 6.5 Split-compound rejoin, :func:`rejoin_split_compounds` (before fuzzy so
                                   "hydro nephrosis" becomes a real term instead
@@ -58,7 +59,7 @@ from __future__ import annotations
 import difflib
 import logging
 import time
-from typing import List, Optional, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from src.dictation.postprocess.confidence_gate import (
     carry_confidences,
@@ -74,6 +75,7 @@ from src.dictation.postprocess.voice_commands import (
 from src.dictation.postprocess.text_utils import normalize_spaces, smart_capitalize
 from src.dictation.postprocess.measurements import apply_measurement_standardisation
 from src.dictation.postprocess.terminology import apply_terminology
+from src.medical.spelling import apply_uk_spelling
 from src.dictation.postprocess.medical_dict_match import apply_medical_dictionary_suggestions
 from src.dictation.postprocess.context_correct import (
     apply_context_correction,
@@ -126,6 +128,33 @@ _GATED_STAGES = (
 # words, so above this bound the diff is skipped (the banner just shows no
 # examples) rather than stalling the live fallback path or the final pass.
 _MAX_DIFF_WORDS = 1500
+
+
+def pipeline_stages(accent: str = "neutral") -> List[Tuple[str, Callable, Optional[str]]]:
+    """The stages in order, as ``(name, function, extra argument)``.
+
+    One list, read by :func:`postprocess_transcript` and by the eval harness's
+    per-stage attribution (``scripts/eval/stage_attribution.py``), so what is
+    measured is exactly what runs.
+    """
+    return [
+        ("filter_hallucinations", filter_hallucinations, None),
+        ("apply_correction_commands", apply_correction_commands, None),
+        ("apply_spoken_commands", apply_spoken_commands, None),
+        ("apply_scratch_commands", apply_scratch_commands, None),
+        ("normalize_spaces", normalize_spaces, None),
+        ("apply_measurement_standardisation", apply_measurement_standardisation, None),
+        ("apply_terminology", apply_terminology, None),
+        ("apply_uk_spelling", apply_uk_spelling, None),
+        ("apply_accent_corrections", apply_accent_corrections, accent),
+        ("rejoin_split_compounds", rejoin_split_compounds, None),
+        ("apply_medical_dictionary_suggestions", apply_medical_dictionary_suggestions, None),
+        ("apply_context_correction", apply_context_correction, None),
+        ("apply_learned_corrections", apply_learned_corrections, None),
+        # After every rewriting stage, so a quick phrase lands as written.
+        ("apply_phrase_commands", apply_phrase_commands, None),
+        ("smart_capitalize", smart_capitalize, None),
+    ]
 
 
 def _apply_veto(
@@ -188,23 +217,7 @@ def postprocess_transcript(
     if analyzer:
         analyzer.record_input(text)
 
-    stages = [
-        ("filter_hallucinations", filter_hallucinations, None),
-        ("apply_correction_commands", apply_correction_commands, None),
-        ("apply_spoken_commands", apply_spoken_commands, None),
-        ("apply_scratch_commands", apply_scratch_commands, None),
-        ("normalize_spaces", normalize_spaces, None),
-        ("apply_measurement_standardisation", apply_measurement_standardisation, None),
-        ("apply_terminology", apply_terminology, None),
-        ("apply_accent_corrections", apply_accent_corrections, accent),
-        ("rejoin_split_compounds", rejoin_split_compounds, None),
-        ("apply_medical_dictionary_suggestions", apply_medical_dictionary_suggestions, None),
-        ("apply_context_correction", apply_context_correction, None),
-        ("apply_learned_corrections", apply_learned_corrections, None),
-        # After every rewriting stage, so a quick phrase lands as written.
-        ("apply_phrase_commands", apply_phrase_commands, None),
-        ("smart_capitalize", smart_capitalize, None),
-    ]
+    stages = pipeline_stages(accent)
 
     # The veto needs the text as it enters the guessing block, plus the input
     # confidences realigned onto that text (earlier stages have edited it).

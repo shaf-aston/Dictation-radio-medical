@@ -10,6 +10,9 @@ requires-python = ">=3.12"
 dependencies = [
     "PySide6>=6.6",                # desktop GUI
     "faster-whisper>=0.10.0",      # offline Whisper via CTranslate2 (also bundles Silero VAD)
+    "av<19",                       # PyAV 19 dropped an argument faster-whisper 1.2.1's
+                                   #   decode_audio passes: every file decode raises
+                                   #   TypeError. Lift when faster-whisper catches up.
     "sounddevice>=0.4.7",          # microphone capture
     "soundfile>=0.12.1",
     "numpy>=1.23.0",

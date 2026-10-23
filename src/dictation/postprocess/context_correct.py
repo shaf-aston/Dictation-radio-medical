@@ -298,6 +298,10 @@ def _rejoin_split_compounds(text: str) -> str:
                 and len(al) >= 3
                 and len(bl) >= 3
                 and joined in terms
+                # Where the prefix's last vowel meets the same vowel, British
+                # usage hyphenates ("extra-axial", "intra-arterial"): welding
+                # them gives a form the radiologist would not write.
+                and not (al[-1] in "aeiou" and bl[0] == al[-1])
                 # Justify the weld: either the first token is a medical combining
                 # form ("retro", "hydro": a compound was clearly split), or at
                 # least one piece isn't an ordinary English word. This blocks

@@ -57,6 +57,48 @@ _UNIT_CANON = {
 }
 
 
+#: Number words become digits, for the same reason as units: the reference is
+#: the spoken form ("twelve", "c five c six") and recognisers that write
+#: digits ("12", "C5-C6") are doing what a report wants. Before this, every
+#: number in a report scored as an error against an engine that got it right.
+_ONES = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen "
+    "fourteen fifteen sixteen seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * i for i, w in enumerate(
+    "_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()) if w != "_"}
+#: Spinal levels: a single letter then a number is one token ("c5", "l5", "s1").
+_SPINE_LETTERS = {"c", "t", "l", "s"}
+_JOINED_LEVELS = re.compile(r"^([ctls]\d{1,2})([ctls]\d{1,2})$")
+
+
+def _canonical_numbers(words: List[str]) -> List[str]:
+    """Number words to digits; spinal levels joined, then split per level."""
+    out: List[str] = []
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w in _TENS:
+            value = _TENS[w]
+            if i + 1 < len(words) and words[i + 1] in _ONES and 0 < _ONES[words[i + 1]] < 10:
+                value += _ONES[words[i + 1]]
+                i += 1
+            out.append(str(value))
+        elif w in _ONES:
+            out.append(str(_ONES[w]))
+        else:
+            out.append(w)
+        i += 1
+    joined: List[str] = []
+    for w in out:
+        if joined and joined[-1] in _SPINE_LETTERS and w.isdigit():
+            joined[-1] += w
+        elif m := _JOINED_LEVELS.match(w):
+            joined.extend(m.groups())
+        else:
+            joined.append(w)
+    return joined
+
+
 def normalize_words(text: str) -> List[str]:
     """Lower-case, de-punctuate and split *text* into comparable word tokens.
 
@@ -67,8 +109,8 @@ def normalize_words(text: str) -> List[str]:
 
     Hyphens split into separate tokens on *both* sides, so the pipeline joining
     "full thickness" into "full-thickness" (a deliberate terminology rule) does
-    not register as two word errors. Units are canonicalised for the same
-    reason; see :data:`_UNIT_CANON`.
+    not register as two word errors. Units and numbers are canonicalised for the
+    same reason; see :data:`_UNIT_CANON` and :func:`_canonical_numbers`.
     """
     text = unicodedata.normalize("NFKC", text).lower()
     text = _STRIP_PUNCT.sub(" ", text)
@@ -78,7 +120,7 @@ def normalize_words(text: str) -> List[str]:
             part = _EDGE_PUNCT.sub("", part)
             if part:
                 words.append(_UNIT_CANON.get(part, part))
-    return words
+    return _canonical_numbers(words)
 
 
 # ---------------------------------------------------------------------------

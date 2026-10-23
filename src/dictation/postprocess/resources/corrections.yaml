@@ -62,3 +62,21 @@
   pattern: "hylar"
   replacement: "hilar"
   note: "same mishear, adjectival form; 'hylar' is not an English word"
+
+- id: venous-homophone
+  pattern: "venus"
+  replacement: "venous"
+  note: >-
+    never valid in a report (the planet). Measured 2026-10-23: Parakeet wrote
+    "venus" for "venous" 7 times across 4 of 5 voices on the piper set.
+
+- id: computed-tomography
+  pattern: "computer"
+  replacement: "computed"
+  context_after:
+    - tomography
+    - tomographic
+  note: >-
+    "computer tomography" is not the modality's name. Measured 2026-10-23:
+    5 times on the piper set (Parakeet). Only before "tomography".
+

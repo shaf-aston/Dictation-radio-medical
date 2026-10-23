@@ -207,7 +207,13 @@ def is_english_word(word: str) -> Optional[bool]:
                 "(e.g. 'atelactasis'->'atelectasis', 'vertabra'->'vertebra') will "
                 "NOT be corrected. Install it: pip install pyspellchecker"
             )
-    return None if _ENGLISH is False else bool(_ENGLISH.known([word]))
+    if _ENGLISH is False:
+        return None
+    if _ENGLISH.known([word]):
+        return True
+    # The list is American: a British spelling is real English too.
+    from src.medical.spelling import us_variants  # noqa: PLC0415 - small, avoids a load-order tie
+    return bool(any(_ENGLISH.known([v]) for v in us_variants(word)))
 
 
 def get_correction_targets() -> List[str]:
