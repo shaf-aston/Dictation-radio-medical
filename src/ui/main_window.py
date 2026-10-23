@@ -175,6 +175,13 @@ class MainWindow(QMainWindow):
         # or typing into a form field mid-recording can no longer leave the
         # boundary pointing into the middle of someone else's text.
         self._dictation_start: Optional[QTextCursor] = None
+        # Where it ends: dictation goes in at the caret, so text after the
+        # region (the rest of a template) must be left alone. Moves with text
+        # written at it, unlike the start (recording_session._open_dictation_region).
+        self._dictation_end: Optional[QTextCursor] = None
+        # The template field the dictation replaced, if it replaced one: saying
+        # one of a pick-list's options answers it in the template's spelling.
+        self._dictation_field: Optional[str] = None
         self._last_editor_text: str = ""
         self._corrections_pending: list = []
         self._corrections_seen: set = set()

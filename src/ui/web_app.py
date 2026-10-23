@@ -51,7 +51,7 @@ from src.features.report_release import (
     unfilled_fields,
 )
 from src.devtools import speech_test
-from src.features import audit_log, run_log
+from src.features import audit_log, run_log, template_fields
 from src.features.adaptive_learning import get_adaptive_learning, learn_from_session
 from src.features.edit_tracking import record_session_edits
 from src.medical import macros, term_lookup
@@ -291,6 +291,9 @@ def _bootstrap_payload() -> dict:
         # The browser must capture at exactly the rate the decoder expects, so
         # the page is told the number rather than hardcoding its own copy of it.
         "live_sample_rate": LIVE_SAMPLE_RATE,
+        # What a template field is, as a pattern valid in JS too: the page
+        # finds fields with the server's own definition, not a copy of it.
+        "field_pattern": template_fields.FIELD_PATTERN,
         "templates": templates,
         "selected_template": selected_template,
         "preferences": _current_preferences(),
@@ -1087,6 +1090,15 @@ async def dictate_socket(ws: WebSocket) -> None:
     # capture of the audio itself. `cycle_task` guards against two decodes
     # running at once, which session.cycle() is not written to survive.
     cycle_task: Optional[asyncio.Task] = None
+    # The template field this dictation replaces, if the radiologist selected
+    # one. Saying one of a pick-list's options answers it in the template's own
+    # spelling: the same rule the desktop applies (template_fields.resolve_choice).
+    field_text: Optional[str] = None
+
+    def answered(text: str) -> str:
+        if field_text:
+            return template_fields.resolve_choice(field_text, text) or text
+        return text
 
     async def send(payload: dict) -> None:
         try:
@@ -1123,7 +1135,7 @@ async def dictate_socket(ws: WebSocket) -> None:
                 )
             await send({
                 "type": "partial",
-                "committed": update.committed,
+                "committed": answered(update.committed),
                 "preview": update.preview,
                 "state": update.state,
                 "audioSec": round(update.audio_sec, 1),
@@ -1160,8 +1172,12 @@ async def dictate_socket(ws: WebSocket) -> None:
                 continue
 
             try:
-                command = json.loads(text).get("command")
+                request = json.loads(text)
+                command = request.get("command")
             except (ValueError, AttributeError):
+                continue
+            if command == "field":
+                field_text = str(request.get("text") or "")[:400] or None
                 continue
             if command == "stop":
                 stop_at = time.time()
@@ -1187,7 +1203,7 @@ async def dictate_socket(ws: WebSocket) -> None:
                 # would put the old wait straight back.
                 await send({
                     "type": "stopped",
-                    "text": session.committed_text(),
+                    "text": answered(session.committed_text()),
                     "uncertain": list(session.uncertain_words),
                 })
                 audio_ended = time.time()
@@ -1208,7 +1224,7 @@ async def dictate_socket(ws: WebSocket) -> None:
                     return
                 await send({
                     "type": "final",
-                    "text": text_out,
+                    "text": answered(text_out),
                     "uncertain": list(session.uncertain_words),
                 })
                 _record_web_run(

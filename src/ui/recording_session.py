@@ -19,6 +19,7 @@ from src.features import run_log
 from src.ui.postprocess_worker import PostprocessWorker, build_changes
 from src.features.accent_corrections import ACCENT_LABELS, suggest_accent
 from src.features.report_release import record_release
+from src.features.template_fields import find_fields, resolve_choice
 from src.ui.dialogs import confirm_unfilled_fields
 from src.ui.styles import set_level_state
 
@@ -165,6 +166,60 @@ def _abandon_unfinished_session(window: MainWindow) -> None:
     window.live_worker = None
 
 
+def _open_dictation_region(window: MainWindow) -> None:
+    """Mark where this recording's text goes: at the caret, or over a selection.
+
+    The region has two ends, both ``QTextCursor``s, because Qt moves a cursor
+    along when text is inserted before it, so a template loaded or a field
+    typed elsewhere mid-recording never leaves a boundary cutting into text
+    that isn't dictation. The start stays put when text is written AT it:
+    without that, the first live update (which starts exactly there) pushed
+    the anchor past its own words and every later cycle appended instead of
+    replacing ("The lungs areThe lungs are clear..."). The end does move with
+    text written at it, which is how the region grows.
+
+    A selected template field is replaced, and remembered so that saying one
+    of its options ("left" into ``[Right / Left]``) answers it in the
+    template's own spelling (``template_fields.resolve_choice``).
+    """
+    editor = window.editor
+    cursor = editor.textCursor()
+    selected = cursor.selectedText() if cursor.hasSelection() else ""
+    fields = find_fields(selected)
+    window._dictation_field = (
+        selected if len(fields) == 1 and fields[0].text == selected else None
+    )
+    cursor.beginEditBlock()
+    if cursor.hasSelection():
+        cursor.removeSelectedText()
+    text = editor.toPlainText()
+    pos = cursor.position()
+    # Dictation must not weld onto the words either side of it.
+    if pos < len(text) and not text[pos].isspace() and text[pos] not in ".,;:)":
+        cursor.insertText(" ")
+        cursor.setPosition(pos)
+    if pos > 0 and not text[pos - 1].isspace():
+        cursor.insertText(" ")
+        pos += 1
+    cursor.endEditBlock()
+
+    start = editor.textCursor()
+    start.setPosition(pos)
+    start.setKeepPositionOnInsert(True)
+    end = editor.textCursor()
+    end.setPosition(pos)
+    window._dictation_start = start
+    window._dictation_end = end
+    editor.setTextCursor(end)
+
+
+def _close_dictation_region(window: MainWindow) -> None:
+    """The dictated region no longer exists; nothing may write into it again."""
+    window._dictation_start = None
+    window._dictation_end = None
+    window._dictation_field = None
+
+
 def on_start_recording(window: MainWindow) -> None:
     """Start a new recording session."""
     if window.recorder.is_recording:
@@ -192,23 +247,7 @@ def on_start_recording(window: MainWindow) -> None:
     window._status.last_progress = ("Recording...", "rec")
     window._show_status("Recording...", state="rec")
 
-    # Remember where dictation text starts so we can replace it each cycle.
-    # A cursor, not an integer: Qt shifts it when text is inserted before it,
-    # so a template loaded or a form field typed mid-recording no longer leaves
-    # the boundary cutting into text that isn't dictation.
-    anchor = window.editor.textCursor()
-    anchor.movePosition(anchor.MoveOperation.End)
-    current_text = window.editor.toPlainText()
-    if current_text and not current_text.endswith(("\n", " ")):
-        anchor.insertText(" ")
-    # Text written AT the anchor must not push it along. Without this, the very
-    # first live update -- which starts exactly at the anchor -- left the anchor
-    # sitting after those words, so every later cycle rewrote the region from
-    # there and the opening fragment was stranded: reports began "The lungs
-    # areThe lungs are clear...". Insertions *before* the anchor still move it,
-    # which is what a template load or a form-field edit relies on.
-    anchor.setKeepPositionOnInsert(True)
-    window._dictation_start = anchor
+    _open_dictation_region(window)
 
     model_size = window.model_combo.currentText()
     language = window.language_input.text().strip() or "en"
@@ -426,43 +465,54 @@ def on_processed_text(
 def dictation_start_offset(window: MainWindow, doc_len: int) -> int:
     """Where the dictated region begins, clamped inside the document.
 
-    The anchor is a ``QTextCursor`` that Qt moves along whenever text is
-    inserted before it, so it survives a template load or a form edit made
-    while recording. The clamp is the last line of defence: a document
-    replaced wholesale (Open, New, Clear) leaves an anchor Qt has already
-    reset, and appending after the end of the text is not a valid edit.
+    The clamp is the last line of defence: a document replaced wholesale
+    (Open, New, Clear) leaves an anchor Qt has already reset, and writing
+    after the end of the text is not a valid edit.
     """
     anchor = getattr(window, "_dictation_start", None)
     position = anchor.position() if anchor is not None else 0
     return max(0, min(position, doc_len))
 
 
+def dictation_end_offset(window: MainWindow, doc_len: int) -> int:
+    """Where the dictated region ends; the end of the document if unbounded."""
+    anchor = getattr(window, "_dictation_end", None)
+    position = anchor.position() if anchor is not None else doc_len
+    return max(dictation_start_offset(window, doc_len), min(position, doc_len))
+
+
 def _replace_dictation_region(window: MainWindow, processed: str) -> None:
-    """Rewrite only the changed suffix of the dictated region.
+    """Rewrite only the changed tail of the dictated region.
 
     ``setPlainText`` rebuilt the entire document on every cycle, which gets
-    expensive as the report grows and forces a full re-layout. Nearly all of the
-    text is identical between cycles, so only the differing tail is replaced,
-    via a cursor selection.
+    expensive as the report grows and forces a full re-layout. Nearly all of
+    the text is identical between cycles, so only the part of the region that
+    differs is replaced, via a cursor selection. Text after the region (the
+    rest of the template, when dictating into the middle of it) is never
+    touched.
     """
+    field = getattr(window, "_dictation_field", None)
+    if field:
+        processed = resolve_choice(field, processed) or processed
     current = window.editor.toPlainText()
     start = dictation_start_offset(window, len(current))
-    new_text = current[:start] + processed
-    if new_text == current:
+    end = dictation_end_offset(window, len(current))
+    region = current[start:end]
+    if region == processed:
         return
 
     # First index where old and new differ; everything before it is untouched.
-    common = start
-    limit = min(len(current), len(new_text))
-    while common < limit and current[common] == new_text[common]:
-        common += 1
+    same = 0
+    limit = min(len(region), len(processed))
+    while same < limit and region[same] == processed[same]:
+        same += 1
 
     cursor = window.editor.textCursor()
     window.editor.blockSignals(True)
     cursor.beginEditBlock()
-    cursor.setPosition(common)
-    cursor.setPosition(len(current), cursor.MoveMode.KeepAnchor)
-    cursor.insertText(new_text[common:])
+    cursor.setPosition(start + same)
+    cursor.setPosition(end, cursor.MoveMode.KeepAnchor)
+    cursor.insertText(processed[same:])
     cursor.endEditBlock()
     window.editor.setTextCursor(cursor)
     window.editor.blockSignals(False)
@@ -566,7 +616,7 @@ def _complete_finish(window: MainWindow) -> None:
     window._post_dictation_snapshot = window.editor.toPlainText()
     # The dictated region no longer exists: a template loaded from here on
     # replaces the document again, as it does outside a recording.
-    window._dictation_start = None
+    _close_dictation_region(window)
     # De-identify the session audio while the WAV still exists; the collector
     # session stays open so spelling fixes made during review are captured too.
     _prepare_training_audio()

@@ -25,6 +25,9 @@ const tlLiveMsg = document.getElementById('tlLiveMsg');
 const tlLiveSub = document.getElementById('tlLiveSub');
 const tlTrail = document.getElementById('tlTrail');
 const editor = document.getElementById('editor');
+const livePreview = document.getElementById('livePreview');
+// What a template field is: the server's own pattern (template_fields.py).
+const FIELD_RE = new RegExp(BOOTSTRAP.field_pattern, 'g');
 const newReportBtn = document.getElementById('newReportBtn');
 const saveTxtBtn = document.getElementById('saveTxtBtn');
 const exportWordBtn = document.getElementById('exportWordBtn');
@@ -863,7 +866,14 @@ let micStream = null;
 let micNode = null;
 let committedText = '';       // what the server has frozen this session
 let previewText = '';         // the provisional tail, dimmed on screen
-let baseText = '';            // whatever was in the editor before recording
+// Dictation goes in at the caret. The editor is rebuilt every update as
+// the text before the caret + the dictation + the text after it, so the rest of
+// a template below the caret is never rewritten. A selected field is replaced.
+let baseBefore = '';
+let baseAfter = '';
+let baseOriginal = '';        // the editor exactly as it was, for Discard
+let gapBefore = '';
+let gapAfter = '';
 let recordStartedAt = 0;
 let timerHandle = null;
 let handedOverText = null;  // what Stop handed back, to detect edits since
@@ -977,12 +987,40 @@ function sendPcm(pcm) {
 
 // -- what the radiologist sees ---------------------------------------------
 
+function openDictationRegion() {
+    const value = editor.value;
+    const start = editor.selectionStart ?? value.length;
+    const end = editor.selectionEnd ?? start;
+    baseOriginal = value;
+    baseBefore = value.slice(0, start);
+    baseAfter = value.slice(end);
+    // Dictation must not weld onto the words either side of it.
+    gapBefore = baseBefore && !/\s$/.test(baseBefore) ? ' ' : '';
+    gapAfter = baseAfter && !/^[\s.,;:)]/.test(baseAfter) ? ' ' : '';
+    // A selected field travels to the server, which answers a pick-list
+    // ("left" into [Right / Left]) by the one rule in template_fields.py.
+    const selected = value.slice(start, end);
+    const fields = selected.match(FIELD_RE) || [];
+    return fields.length === 1 && fields[0] === selected ? selected : null;
+}
+
 function renderLiveText() {
-    const gap = baseText && !baseText.endsWith('\n') ? ' ' : '';
-    const settled = baseText + (committedText ? gap + committedText : '');
-    editor.value = settled;
-    editor.scrollTop = editor.scrollHeight;
-    paintPreview(settled);
+    const head = baseBefore + (committedText ? gapBefore + committedText + gapAfter : '');
+    const keepScroll = editor.scrollTop;
+    editor.value = head + baseAfter;
+    editor.setSelectionRange(head.length, head.length);
+    if (baseAfter) {
+        // Mid-report: stay where the radiologist is looking, and show the
+        // words still being decoded under the editor (see #livePreview).
+        editor.scrollTop = keepScroll;
+        paintPreview('');
+        livePreview.textContent = previewText;
+        livePreview.hidden = !previewText;
+    } else {
+        editor.scrollTop = editor.scrollHeight;
+        livePreview.hidden = true;
+        paintPreview(head);
+    }
     // The count is the only thing on screen saying the report is growing while
     // you speak. It is one split of the text, unlike the marks and findings
     // scans, which is why it runs every cycle and they do not.
@@ -1332,6 +1370,7 @@ function finishSession(okMessage) {
     setRecordingUi(false);
     previewText = '';
     paintPreview('');
+    livePreview.hidden = true;
     pushUndoState();
     announceReportChanged();
     syncReportButtons();
@@ -1449,6 +1488,9 @@ async function startRecording() {
         devMark('browser', 'dictation socket open', {}, { ms: performance.now() - socketAskedAt });
         tlStep('Connected', (performance.now() - socketAskedAt) / 1000);
 
+        const field = openDictationRegion();
+        if (field) liveSocket.send(JSON.stringify({ command: 'field', text: field }));
+
         const held = pendingPcm;
         pendingPcm = null;
         held.forEach(sendPcm);
@@ -1460,7 +1502,6 @@ async function startRecording() {
     }
 
     flushLearning();
-    baseText = editor.value.trim();
     committedText = '';
     previewText = '';
     // The doubts belong to the dictation that raised them. A new session will
@@ -1545,8 +1586,9 @@ async function cancelRecording() {
     await teardownMic();
     committedText = '';
     previewText = '';
-    editor.value = baseText;
+    editor.value = baseOriginal;
     paintPreview('');
+    livePreview.hidden = true;
     stopTimer();
     setRecordingUi(false);
     // Discard means discard: the session it described is gone, so its timeline

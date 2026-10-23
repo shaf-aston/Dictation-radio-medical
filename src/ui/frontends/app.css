@@ -521,6 +521,10 @@ body {
    was faint enough that the first word of a dictation could be missed
    altogether. The token on its own is 5.3:1 and still clearly quieter. */
 .editor-marks .preview { color: var(--text-dim); }
+.live-preview {
+    margin: .4rem 0 0; color: var(--text-dim); font-style: italic;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 /* ---- the session timeline ------------------------------------------------
    Time is the dimension the old single status label threw away: it said what
