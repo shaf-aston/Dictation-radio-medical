@@ -311,6 +311,44 @@
     </div>
 </div>
 
+<!-- A critical or urgent finding, at release. Records who was told, how and
+     when (the ACR practice parameter's four facts), and can add that as a
+     sentence to the report. Never withholds the report: both buttons release
+     it, and only the audit entry differs. The sentence is built by the server
+     (report_release.communication_statement), the same rule as the desktop. -->
+<div id="commModal" class="scrim" hidden>
+    <form id="commForm" class="modal" role="dialog" aria-modal="true"
+          aria-labelledby="commTitle" aria-describedby="commSummary">
+        <h2 id="commTitle" class="modal-title">Critical finding</h2>
+        <p id="commSummary" class="modal-text"></p>
+        <div class="grid comm-grid">
+            <p class="field">
+                <label for="commRecipient">Told to</label>
+                <input id="commRecipient" type="text" required autocomplete="off"
+                       placeholder="Dr Patel, ED registrar">
+            </p>
+            <p class="field">
+                <label for="commMethod">How</label>
+                <select id="commMethod"></select>
+            </p>
+            <p class="field">
+                <label for="commAt">When</label>
+                <input id="commAt" type="datetime-local" required>
+            </p>
+            <p class="field">
+                <label for="commRadiologist">Your name</label>
+                <input id="commRadiologist" type="text" autocomplete="off">
+            </p>
+        </div>
+        <label class="comm-add"><input id="commAdd" type="checkbox" checked>
+            Add this to the report</label>
+        <div class="modal-foot">
+            <button id="commSkip" class="btn btn-quiet" type="button">Not communicated: release anyway</button>
+            <button class="btn btn-primary" type="submit">Communicated</button>
+        </div>
+    </form>
+</div>
+
 <div id="disclaimerModal" class="scrim" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="disclaimerTitle"
          aria-describedby="disclaimerText">

@@ -8,7 +8,7 @@ import time
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThread, QTimer
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QDialog, QMessageBox
 
 from src.core import perf
 from src.dictation.stream.policy import MANUAL, plan_from_settings
@@ -18,9 +18,13 @@ from src.features.file_manager import create_temp_wav
 from src.features import run_log
 from src.ui.postprocess_worker import PostprocessWorker, build_changes
 from src.features.accent_corrections import ACCENT_LABELS, suggest_accent
-from src.features.report_release import record_release
+from src.features.report_release import (
+    add_communication_statement,
+    communication_statement,
+    record_release,
+)
 from src.features.template_fields import find_fields, resolve_choice
-from src.ui.dialogs import confirm_report_checks
+from src.ui.dialogs import CommunicationDialog, confirm_report_checks
 from src.ui.styles import set_level_state
 
 if TYPE_CHECKING:
@@ -727,25 +731,31 @@ def confirm_release(window: MainWindow) -> bool:
         window.finding_gutter.show_state()
         return True
 
-    msg = QMessageBox(window)
-    msg.setWindowTitle("Critical / Urgent Finding Detected")
-    msg.setIcon(
-        QMessageBox.Icon.Critical if check.worst_level == 1 else QMessageBox.Icon.Warning
-    )
-    msg.setText(
-        "The following critical or urgent finding(s) were detected in this report.\n\n"
-        "Please confirm verbal communication with the referring clinician before saving."
-    )
-    msg.setDetailedText(check.summary)
-    btn_ack = msg.addButton("I have communicated this finding", QMessageBox.ButtonRole.AcceptRole)
-    msg.addButton("Proceed without acknowledging", QMessageBox.ButtonRole.RejectRole)
-    msg.setDefaultButton(btn_ack)
-    msg.exec()
-
-    acknowledged = msg.clickedButton() == btn_ack
+    dialog = CommunicationDialog(window, check, str(window.settings.get("radiologist_name") or ""))
+    acknowledged = dialog.exec() == QDialog.DialogCode.Accepted
+    comm = dialog.communication() if acknowledged else None
+    if comm is not None:
+        if comm.radiologist:
+            window.settings.set("radiologist_name", comm.radiologist)
+        if dialog.add_to_report.isChecked():
+            # Before the caller reads the text, so the sentence leaves with it.
+            # One undoable edit at the end of the report.
+            text = window.editor.toPlainText()
+            updated = add_communication_statement(
+                text, communication_statement(check.findings, comm)
+            )
+            if updated != text:
+                cursor = window.editor.textCursor()
+                cursor.beginEditBlock()
+                cursor.movePosition(cursor.MoveOperation.End)
+                cursor.movePosition(cursor.MoveOperation.Start, cursor.MoveMode.KeepAnchor)
+                cursor.insertText(updated)
+                cursor.endEditBlock()
     # Only what was still outstanding is audited: re-exporting a report whose
     # findings were already communicated must not log a second phone call.
-    record_release(outstanding, window._get_patient_info().get("id", ""), acknowledged)
+    record_release(
+        outstanding, window._get_patient_info().get("id", ""), acknowledged, comm
+    )
     if acknowledged:
         window.findings.acknowledge(check)
     window.finding_gutter.show_state()

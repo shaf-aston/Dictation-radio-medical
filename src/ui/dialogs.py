@@ -5,11 +5,29 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import QDateTime
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDateTimeEdit,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from src.features import clinical_disclaimer
 from src.features.adaptive_learning import get_adaptive_learning
-from src.features.report_release import report_warnings
+from src.features.report_release import (
+    COMMUNICATION_METHODS,
+    Communication,
+    ReleaseCheck,
+    report_warnings,
+)
 
 if TYPE_CHECKING:
     from src.ui.main_window import MainWindow
@@ -487,6 +505,68 @@ def confirm_report_checks(window: MainWindow) -> bool:
         _No,
     )
     return reply == _Yes
+
+
+class CommunicationDialog(QDialog):
+    """Ask whether a critical finding was communicated, and to whom, how, when.
+
+    The desktop shape of the web app's #commModal. Never withholds the report:
+    both buttons release it and only the audit entry differs. "Communicated"
+    needs a recipient, because the record it writes says someone was told.
+    """
+
+    def __init__(self, parent: QWidget, check: ReleaseCheck, radiologist: str) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(
+            "Life-threatening finding" if check.worst_level == 1 else "Urgent finding"
+        )
+        layout = QVBoxLayout(self)
+        summary = QLabel(
+            check.summary + "\n\nConfirm it was communicated to the referring clinician."
+        )
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+
+        form = QFormLayout()
+        self.recipient = QLineEdit()
+        self.recipient.setPlaceholderText("Dr Patel, ED registrar")
+        self.method = QComboBox()
+        self.method.addItems([m[0].upper() + m[1:] for m in COMMUNICATION_METHODS])
+        self.at = QDateTimeEdit(QDateTime.currentDateTime())
+        self.at.setDisplayFormat("dd/MM/yyyy HH:mm")
+        self.radiologist = QLineEdit(radiologist)
+        form.addRow("Told to:", self.recipient)
+        form.addRow("How:", self.method)
+        form.addRow("When:", self.at)
+        form.addRow("Your name:", self.radiologist)
+        layout.addLayout(form)
+        self.add_to_report = QCheckBox("Add this to the report")
+        self.add_to_report.setChecked(True)
+        layout.addWidget(self.add_to_report)
+
+        buttons = QDialogButtonBox()
+        self.btn_communicated = buttons.addButton(
+            "Communicated", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        buttons.addButton(
+            "Not communicated: release anyway", QDialogButtonBox.ButtonRole.RejectRole
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.btn_communicated.setEnabled(False)
+        self.recipient.textChanged.connect(
+            lambda text: self.btn_communicated.setEnabled(bool(text.strip()))
+        )
+        self.recipient.setFocus()
+
+    def communication(self) -> Communication:
+        return Communication(
+            self.recipient.text().strip(),
+            COMMUNICATION_METHODS[self.method.currentIndex()],
+            self.at.dateTime().toPython(),  # type: ignore[arg-type]
+            self.radiologist.text().strip(),
+        )
 
 
 def on_show_learning_stats(window: MainWindow) -> None:

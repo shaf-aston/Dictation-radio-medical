@@ -547,6 +547,7 @@ function postReport(url, answers) {
             patient: collectPatientInfo(),
             acknowledged: answers.acknowledged,
             proceed_with_warnings: answers.proceed_with_warnings,
+            communication: answers.communication || null,
         }),
     });
 }
@@ -586,17 +587,73 @@ function confirmReportChecks(gate) {
 }
 
 // Never cancellable: the report is not withheld, only the audit entry differs.
-function confirmCriticalFindings(info) {
-    return window.confirm(
-        (info.worst_level === 1
-            ? 'LIFE-THREATENING FINDING DETECTED\n\n'
-            : 'URGENT FINDING DETECTED\n\n')
-        + info.summary
-        + '\nConfirm verbal communication with the referring clinician '
-        + 'before releasing this report.\n\n'
-        + 'OK = I have communicated this finding\n'
-        + 'Cancel = proceed without acknowledging (recorded in the audit log)'
-    );
+// "Communicated" records who was told, how and when, and can add that sentence
+// to the report first, so the text that leaves is the text on screen.
+const commModal = document.getElementById('commModal');
+const commForm = document.getElementById('commForm');
+const commMethod = document.getElementById('commMethod');
+const commRadiologist = document.getElementById('commRadiologist');
+(BOOTSTRAP.communication?.methods || ['telephone']).forEach((method) => {
+    const option = document.createElement('option');
+    option.value = method;
+    option.textContent = method[0].toUpperCase() + method.slice(1);
+    commMethod.append(option);
+});
+commRadiologist.value = BOOTSTRAP.communication?.radiologist || '';
+
+function localMinute(date) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+        + `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function askCommunication(gate) {
+    document.getElementById('commTitle').textContent =
+        gate.worst_level === 1 ? 'Life-threatening finding' : 'Urgent finding';
+    document.getElementById('commSummary').textContent = gate.summary
+        + '\n\nConfirm it was communicated to the referring clinician.';
+    document.getElementById('commAt').value = localMinute(new Date());
+    commModal.hidden = false;
+    document.getElementById('commRecipient').focus();
+    return new Promise((resolve) => {
+        const done = (answer) => {
+            commModal.hidden = true;
+            commForm.onsubmit = null;
+            document.getElementById('commSkip').onclick = null;
+            resolve(answer);
+        };
+        document.getElementById('commSkip').onclick = () => done({ acknowledged: false });
+        commForm.onsubmit = async (event) => {
+            event.preventDefault();
+            const communication = {
+                recipient: document.getElementById('commRecipient').value.trim(),
+                method: commMethod.value,
+                at: document.getElementById('commAt').value,
+                radiologist: commRadiologist.value.trim(),
+            };
+            try {
+                if (document.getElementById('commAdd').checked) {
+                    const response = await fetch('/api/report/communication', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: editor.value, communication }),
+                    });
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    const { text } = await response.json();
+                    if (text !== editor.value) {
+                        editor.value = text;
+                        pushUndoState();
+                        announceReportChanged();
+                    }
+                }
+            } catch (err) {
+                // The acknowledgement still stands and is audited; only the
+                // sentence is missing, and the radiologist is told so.
+                showError('Could not add the communication sentence: ' + err.message);
+            }
+            done({ acknowledged: true, communication });
+        };
+    });
 }
 
 // Sends the report and clears the release gate on the way. Both answers start
@@ -606,7 +663,7 @@ function confirmCriticalFindings(info) {
 // app goes through here, clipboard included: a gate one button can skip is not a
 // gate. Returns null when the radiologist cancelled: not an error, just a stop.
 async function postGatedReport(endpoint) {
-    const answers = { acknowledged: null, proceed_with_warnings: false };
+    const answers = { acknowledged: null, proceed_with_warnings: false, communication: null };
     let response = await postReport(endpoint, answers);
 
     for (let rule = 0; rule < 2; rule++) {
@@ -620,7 +677,9 @@ async function postGatedReport(endpoint) {
             }
             answers.proceed_with_warnings = true;
         } else {
-            answers.acknowledged = confirmCriticalFindings(gate);
+            const answer = await askCommunication(gate);
+            answers.acknowledged = answer.acknowledged;
+            answers.communication = answer.communication || null;
         }
         response = await postReport(endpoint, answers);
     }

@@ -8,6 +8,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from typing import Literal, Optional
@@ -46,7 +47,12 @@ from src.features.file_manager import (
 )
 from src.features.report_manager import DOCX_AVAILABLE, export_to_word_bytes, format_plain_text_report
 from src.features.report_release import (
+    COMMUNICATION_METHODS,
+    Communication,
     OutstandingFindings,
+    add_communication_statement,
+    check_release,
+    communication_statement,
     record_release,
     report_warnings,
 )
@@ -136,6 +142,26 @@ class ConsentRequest(BaseModel):
     enabled: bool
 
 
+class CommunicationIn(BaseModel):
+    """Who a critical finding was communicated to, as the browser's dialog asks."""
+
+    recipient: str = Field(min_length=1, max_length=120)
+    method: str = Field(min_length=1, max_length=40)
+    #: Local time as the radiologist typed it, ISO ``YYYY-MM-DDTHH:MM``.
+    at: datetime
+    radiologist: str = Field(default="", max_length=120)
+
+    def to_record(self) -> Communication:
+        return Communication(
+            self.recipient.strip(), self.method.strip(), self.at, self.radiologist.strip()
+        )
+
+
+class StatementRequest(BaseModel):
+    text: str = ""
+    communication: CommunicationIn
+
+
 class ReportRequest(BaseModel):
     text: str = ""
     patient: PatientInfo = Field(default_factory=PatientInfo)
@@ -143,6 +169,9 @@ class ReportRequest(BaseModel):
     #: True = radiologist confirmed verbal communication; False = proceeded anyway.
     #: Both outcomes are audited; only None is refused (see _confirm_release).
     acknowledged: Optional[bool] = None
+    #: Who was told, how and when; sent with acknowledged=True. Optional so
+    #: that an answer without it is still audited, with the fields blank.
+    communication: Optional[CommunicationIn] = None
     #: The answer to the report-checks question (unfilled fields, side, sex,
     #: impression), which is a plain permission rather than an audited one:
     #: only True releases the report. Not asked yet and "no, take me back" are
@@ -295,6 +324,11 @@ def _bootstrap_payload() -> dict:
         "live_sample_rate": LIVE_SAMPLE_RATE,
         # What a template field is, as a pattern valid in JS too: the page
         # finds fields with the server's own definition, not a copy of it.
+        # The communication dialog's choices and the name it last signed with.
+        "communication": {
+            "methods": list(COMMUNICATION_METHODS),
+            "radiologist": str(_settings().get("radiologist_name") or ""),
+        },
         "field_pattern": template_fields.FIELD_PATTERN,
         "not_a_field_pattern": template_fields.NOT_A_FIELD_PATTERN,
         # The same key settings the desktop binds (a dictation mic's buttons
@@ -598,6 +632,7 @@ async def load_template(template_name: str):
 
     settings = _settings()
     settings.set("last_template", path.name)
+    audit_log.log_template_loaded(path.name)
     return {"name": path.name, "content": content}
 
 
@@ -646,6 +681,7 @@ async def reset_findings_endpoint():
     finding as already communicated.
     """
     _findings.reset()
+    audit_log.log_report_cleared("")
     return {"count": 0, "state": "clear", "findings": []}
 
 
@@ -701,9 +737,28 @@ def _confirm_release(payload: ReportRequest) -> None:
         outstanding,
         _model_to_dict(payload.patient).get("id", ""),
         payload.acknowledged,
+        payload.communication.to_record() if payload.communication else None,
     )
     if payload.acknowledged:
         _findings.acknowledge(check)
+
+
+@app.post("/api/report/communication")
+async def communication_statement_endpoint(payload: StatementRequest):
+    """The report with its communication sentence added, built by the shared rule.
+
+    The browser shows the result in the editor before releasing the report, so
+    the sentence the radiologist sees is the one that is exported. Also
+    remembers the radiologist's name for next time, as the desktop does.
+    """
+    comm = payload.communication.to_record()
+    if comm.radiologist:
+        _settings().set("radiologist_name", comm.radiologist)
+    findings = check_release(payload.text).findings
+    if not findings:
+        return {"text": payload.text, "statement": ""}
+    statement = communication_statement(findings, comm)
+    return {"text": add_communication_statement(payload.text, statement), "statement": statement}
 
 
 @app.post("/api/report/check")
@@ -712,8 +767,10 @@ async def check_report_endpoint(payload: ReportRequest):
 
     Copy puts the report on the clipboard, which leaves the app just as surely as a
     download does. It has no file to fetch, so it asks the gate this way instead.
+    It is only called by Copy, so passing it is what audits the copy.
     """
     _confirm_release(payload)
+    audit_log.log_report_copied(payload.patient.id, len(payload.text.split()))
     return {"ok": True}
 
 
@@ -723,6 +780,7 @@ async def save_report_txt_endpoint(payload: ReportRequest):
     patient = _model_to_dict(payload.patient)
     content = format_plain_text_report(payload.text, patient)
     filename = _download_filename(patient, "txt")
+    audit_log.log_report_saved(filename, patient.get("id", ""), len(payload.text.split()))
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return Response(content=content, media_type="text/plain; charset=utf-8", headers=headers)
 
@@ -742,6 +800,7 @@ async def export_word_endpoint(payload: ReportRequest):
         raise HTTPException(status_code=500, detail="Failed to export Word document") from exc
 
     filename = _download_filename(patient, "docx")
+    audit_log.log_report_exported(filename, patient.get("id", ""), "docx")
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return Response(content=docx_bytes, media_type=DOCX_MIME, headers=headers)
 

@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from datetime import datetime
+from typing import Optional, Sequence, Tuple
 
 from src.features import audit_log, report_checks, template_fields
 from src.medical.critical_findings import (
@@ -133,10 +134,8 @@ class OutstandingFindings:
     acknowledgement given for one patient silently answers the identical
     finding for the next one.
 
-    Currently read by the desktop front-end only
-    (:mod:`src.ui.finding_marks`, :mod:`src.ui.main_window`); the web app
-    gates exports through :func:`check_release` per request and has no
-    equivalent of the always-visible count.
+    Read by both front-ends: the desktop gutter (:mod:`src.ui.finding_marks`)
+    and the web app's ``/api/report/findings``, which draws the same strip.
     """
 
     #: What the last :meth:`update` found. Empty until the first scan.
@@ -187,8 +186,61 @@ class OutstandingFindings:
         return "outstanding" if self.outstanding else "acknowledged"
 
 
+#: How a finding can be communicated; the first is the default offered.
+COMMUNICATION_METHODS: Tuple[str, ...] = (
+    "telephone", "in person", "secure message", "bleep",
+)
+
+
+@dataclass(frozen=True)
+class Communication:
+    """Who a finding was communicated to, how, when, and by whom.
+
+    The ACR practice parameter on communicating imaging findings asks for the
+    date, time, method and recipient to be documented, and for the record to
+    say it happened, not that it will ("will be notified" does not count).
+    """
+
+    recipient: str
+    method: str
+    at: datetime
+    radiologist: str = ""
+
+
+def _list_words(words: Sequence[str]) -> str:
+    if len(words) <= 1:
+        return "".join(words)
+    return ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def communication_statement(
+    findings: Sequence[CriticalFinding], comm: Communication
+) -> str:
+    """The sentence that goes into the report, in the past tense.
+
+    ``"Findings of tension pneumothorax were communicated to Dr Patel by
+    telephone at 14:20 on 23/10/2026 by Dr Shah."``
+    """
+    terms = list(dict.fromkeys(f.term.lower() for f in findings))
+    noun = "Finding" if len(terms) == 1 else "Findings"
+    verb = "was" if len(terms) == 1 else "were"
+    by = f" by {comm.radiologist}" if comm.radiologist else ""
+    return (
+        f"{noun} of {_list_words(terms)} {verb} communicated to {comm.recipient} "
+        f"by {comm.method} at {comm.at:%H:%M} on {comm.at:%d/%m/%Y}{by}."
+    )
+
+
+def add_communication_statement(text: str, statement: str) -> str:
+    """*text* with *statement* as its last paragraph; unchanged if already there."""
+    if statement in text:
+        return text
+    return f"{text.rstrip()}\n\n{statement}\n"
+
+
 def record_release(
-    findings: Tuple[CriticalFinding, ...], patient_id: str, acknowledged: bool
+    findings: Tuple[CriticalFinding, ...], patient_id: str, acknowledged: bool,
+    communication: Optional[Communication] = None,
 ) -> None:
     """Write the radiologist's answer to the audit log.
 
@@ -204,8 +256,15 @@ def record_release(
     if not findings:
         return
     if acknowledged:
+        comm = communication
         for f in findings:
-            audit_log.log_critical_finding_acknowledged(f.term, patient_id, f.level)
+            audit_log.log_critical_finding_acknowledged(
+                f.term, patient_id, f.level,
+                recipient=comm.recipient if comm else "",
+                method=comm.method if comm else "",
+                communicated_at=comm.at.isoformat(timespec="minutes") if comm else "",
+                radiologist=comm.radiologist if comm else "",
+            )
     else:
         audit_log.log_critical_finding_overridden(
             "; ".join(f.term for f in findings), patient_id

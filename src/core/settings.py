@@ -164,6 +164,9 @@ _DEFAULTS: dict = {
     # the web page reads the same strings. F2, not F5, because a browser
     # reloads the page on F5: one key that works in both front-ends.
     "key_record_toggle": "F2",
+    # Who signs the communication record of a critical finding ("... by Dr
+    # Shah."). Asked for in that dialog and remembered from it.
+    "radiologist_name": "",
     "key_next_field": "Tab",
     "key_previous_field": "Shift+Tab",
 }

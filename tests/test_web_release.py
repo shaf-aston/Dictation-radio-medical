@@ -58,3 +58,45 @@ def test_sex_mismatch_uses_the_patient_details_sent(client):
 def test_unfilled_field_is_a_report_check(client):
     detail = _check(client, CLEAN + "\n[Right / Left]").json()["detail"]
     assert detail["fields"] == ["Right / Left"]
+
+
+LEVEL_1 = CLEAN.replace("Normal.\n", "Large right pneumothorax.\n")
+COMM = {"recipient": "Dr Patel", "method": "telephone", "at": "2026-10-23T14:20",
+        "radiologist": "Dr Shah"}
+
+
+def test_critical_finding_is_asked_after_the_report_checks(client):
+    detail = _check(client, LEVEL_1).json()["detail"]
+    assert detail["reason"] == "critical_findings"
+    assert detail["worst_level"] == 1
+
+
+def test_communication_sentence_is_built_by_the_server(client, monkeypatch):
+    monkeypatch.setattr(web_app._settings(), "set", lambda *a, **k: None)
+    got = client.post("/api/report/communication", json={"text": LEVEL_1, "communication": COMM}).json()
+    assert got["statement"] == (
+        "Finding of pneumothorax was communicated to Dr Patel by telephone "
+        "at 14:20 on 23/10/2026 by Dr Shah."
+    )
+    assert got["text"].endswith(got["statement"] + "\n")
+
+
+def test_acknowledgement_audits_who_how_and_when(client, tmp_path):
+    ok = _check(client, LEVEL_1, acknowledged=True, communication=COMM)
+    assert ok.status_code == 200
+    ack = [e for e in _audit(tmp_path) if e["action"] == "critical_finding_acknowledged"]
+    assert [(e["recipient"], e["method"], e["communicated_at"]) for e in ack] == [
+        ("Dr Patel", "telephone", "2026-10-23T14:20")
+    ]
+
+
+def test_every_exit_is_audited(client, tmp_path):
+    client.post("/api/report/check", json={"text": CLEAN, "patient": {"id": "P1"}})
+    client.post("/api/report/save-txt", json={"text": CLEAN, "patient": {"id": "P1"}})
+    if web_app.DOCX_AVAILABLE:
+        client.post("/api/report/export-word", json={"text": CLEAN, "patient": {"id": "P1"}})
+    actions = {e["action"] for e in _audit(tmp_path)}
+    expected = {"report_copied", "report_saved"} | (
+        {"report_exported"} if web_app.DOCX_AVAILABLE else set()
+    )
+    assert expected <= actions

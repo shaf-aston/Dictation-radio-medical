@@ -678,7 +678,9 @@ class MainWindow(QMainWindow):
         # The clipboard leaves the app just as surely as a file does.
         if not confirm_release(self):
             return
-        QApplication.clipboard().setText(self.editor.toPlainText())
+        text = self.editor.toPlainText()
+        QApplication.clipboard().setText(text)
+        audit_log.log_report_copied(self._get_patient_info().get("id", ""), len(text.split()))
         self._show_status("Copied to clipboard.", 1500, state="ok")
 
     def _post_save(self, path: str, verb: str, log_fn) -> None:  # type: ignore[type-arg]

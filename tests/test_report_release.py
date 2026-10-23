@@ -6,13 +6,17 @@ temporary file so each test can read back exactly what was recorded.
 """
 
 import json
+from datetime import datetime
 
 import pytest
 
 from src.features import audit_log
 from src.features.report_release import (
+    Communication,
     OutstandingFindings,
+    add_communication_statement,
     check_release,
+    communication_statement,
     record_release,
 )
 
@@ -85,3 +89,36 @@ def test_reset_forgets_the_previous_patient():
     state.reset()
     state.update("Large right pneumothorax.")
     assert state.state == "outstanding"
+
+
+COMM = Communication("Dr Patel", "telephone", datetime(2026, 10, 23, 14, 20), "Dr Shah")
+
+
+def test_communication_statement_says_who_how_when_and_by_whom():
+    check = check_release("Tension pneumothorax.")
+    assert communication_statement(check.findings, COMM) == (
+        "Finding of tension pneumothorax was communicated to Dr Patel "
+        "by telephone at 14:20 on 23/10/2026 by Dr Shah."
+    )
+
+
+def test_several_findings_are_listed_in_one_sentence():
+    check = check_release("Tension pneumothorax. Acute appendicitis.")
+    assert communication_statement(check.findings, COMM).startswith(
+        "Findings of tension pneumothorax and acute appendicitis were communicated"
+    )
+
+
+def test_statement_is_added_once():
+    statement = communication_statement(check_release("Tension pneumothorax.").findings, COMM)
+    once = add_communication_statement("Tension pneumothorax.", statement)
+    assert once == "Tension pneumothorax.\n\n" + statement + "\n"
+    assert add_communication_statement(once, statement) == once
+
+
+def test_audit_records_recipient_method_time_and_radiologist(audit_file):
+    record_release(check_release("Tension pneumothorax.").findings, "P1", True, COMM)
+    (entry,) = _entries(audit_file)
+    assert (entry["recipient"], entry["method"], entry["communicated_at"], entry["radiologist"]) == (
+        "Dr Patel", "telephone", "2026-10-23T14:20", "Dr Shah"
+    )
