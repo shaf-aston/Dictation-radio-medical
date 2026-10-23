@@ -16,8 +16,8 @@
 # Context guards keep real-word homophones safe: "plural" is only rewritten to
 # "pleural" before an anatomical word, so grammatical "plural form" is left alone.
 #
-# After adding a rule here, add an input->expected pair to
-# tests/corpus/corrections.yaml and run pytest. See docs/CORRECTIONS.md.
+# After adding a rule here, add an input->expected case to
+# tests/test_corrections_rules.py and run pytest.
 
 - id: pleural-homophone
   pattern: "plural"

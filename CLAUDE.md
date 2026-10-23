@@ -77,6 +77,9 @@ src/
 │   │                       recorded runs (unlisted; no link from the report UI),
 │   │                       and GET /api/debug/events + /api/debug/perf, which
 │   │                       are what the in-page developer console reads
+│   ├── field_navigation.py  Tab / Shift+Tab select the next / previous
+│   │                       template field (keys are settings, so a dictation
+│   │                       mic's buttons can send them); app.js does the same
 │   ├── term_popup.py · term_marks.py   highlight a word → suggestions; and the
 │   │                       marks saying which word to highlight. Both are view
 │   │                       overlays (ExtraSelection / an underlay div): never
@@ -113,6 +116,15 @@ src/
 │                           all import it downward without dictation touching
 │                           src.cloud.*
 ├── features/    accent_corrections.py · adaptive_learning.py · audit_log.py
+│   ├── template_fields.py  what a template field is ([Right / Left], [X]),
+│   │                       declared once: the release gate, Tab navigation and
+│   │                       pick-list answers ("left") all read it; the web page
+│   │                       gets the pattern in its bootstrap payload
+│   ├── report_release.py   the gate on every exit (Copy/Save/Word): report
+│   │                       checks first (can go back), then critical findings
+│   │                       (never withheld; records who was told, how, when)
+│   ├── report_checks.py    side / sex / missing-impression checks, scored on
+│   │                       scripts/eval/report_checks_corpus.py
 │   ├── run_log.py        one capped JSONL record per dictation (timings +
 │   │                       optional report text), the history behind /developer
 │   └── file_manager.py · report_manager.py · report_analyzer.py
@@ -168,6 +180,16 @@ both:     → stream/live_session.py (one loop: Deepgram's live socket when it
           → asr/ (AsrEngine port → Parakeet, Whisper behind it) → postprocess/ (10 stages)
           → UI (views.py / web_app.py) → report_manager.py (.docx / .txt export)
 ```
+
+**Dictation goes in at the caret, not at the end.** The dictated region has
+two ends (desktop: two `QTextCursor`s, the start fixed on insert and the end
+growing; web: the text before and after the caret), and text after the region,
+the rest of a template, is never rewritten. A selected template field is
+replaced; if the dictation is exactly one of a pick-list's options it becomes
+that option (`template_fields.resolve_choice`, run by the desktop renderer and
+by the web server). Saying "next field" mid-recording is not built: it would
+split the region inside the live loop; Tab (or a mic button) does it between
+dictations.
 
 Both front-ends use two models: `live_model_size` (fast) decodes what appears
 while you speak, and `model_size` re-decodes the low-confidence chunks after
@@ -366,7 +388,8 @@ there.
 ```bash
 python -m src.ui            # desktop GUI
 python -m src.ui.web_app    # web app on 127.0.0.1:8005
-ruff check src tests
+ruff check src tests scripts
+python -m pytest -q          # safety tables + streaming rules; CI runs both
 npx pyright src              # type check (optional-dep import warnings expected)
 
 # Accuracy + speed measurement: see scripts/eval/CLAUDE.md

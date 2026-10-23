@@ -799,7 +799,7 @@ class MainWindow(QMainWindow):
             "referring": self.patient_referrer,
             "accession": self.patient_accession,
         }
-        info = {key: widget.text() for key, widget in fields.items()}
+        info: dict[str, object] = {key: widget.text() for key, widget in fields.items()}
         info["sex"] = self.patient_sex.currentText()
         return normalize_patient_info(info)
 
