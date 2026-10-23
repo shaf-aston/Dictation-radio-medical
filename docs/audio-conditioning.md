@@ -65,9 +65,9 @@ Gating before gain, so the volume step never turns up the gaps between words.
 | Step | What it does | Knobs |
 |---|---|---|
 | highpass | gain 0 below `cutoff_hz`, smooth ramp up to it; stateless | `cutoff_hz` 80 |
-| denoise | tracks each bin's noise floor (falls at once, rises `noise_rise_db_per_sec`); spectral subtraction, never below `min_gain_db` (the floor is the "blend some original back" fix from the research) | `strength` 1.0, `min_gain_db` -12, `noise_rise_db_per_sec` 3 |
-| expander | follows the main voice's level (`PeakFollower`); frames more than `below_voice_db` under it are turned down, at most `max_cut_db` | `below_voice_db` 20, `max_cut_db` 15, `voice_release_db_per_sec` 6 |
-| agc | moves the voice toward `target_dbfs`, at most `slew_db_per_sec`, never above `max_gain_db`; adapts only on frames within 10 dB of the voice level | `target_dbfs` -20, `max_gain_db` 24, `slew_db_per_sec` 6 |
+| denoise | tracks each bin's noise floor (falls at once, rises `noise_rise_db_per_sec`); spectral subtraction, never below `min_gain_db` (the floor is the "blend some original back" fix from the research) | `strength` 2.0, `min_gain_db` -20, `noise_rise_db_per_sec` 3, `smoothing` 0.9 |
+| expander | follows the main voice's level (`PeakFollower`); frames more than `below_voice_db` under it are turned down, at most `max_cut_db` | `below_voice_db` 6, `max_cut_db` 15, `voice_release_db_per_sec` 6 |
+| agc | moves the voice toward `target_dbfs`, at most `slew_db_per_sec`, never above `max_gain_db`; adapts only on frames within 10 dB of the voice level | `target_dbfs` -20, `max_gain_db` 24, `slew_db_per_sec` 20 |
 
 Settings (`src/core/settings.py` `_DEFAULTS`):
 
@@ -75,9 +75,9 @@ Settings (`src/core/settings.py` `_DEFAULTS`):
 "audio_conditioning": {
     "window_samples": 512,
     "highpass": {"on": False, "cutoff_hz": 80.0},
-    "denoise":  {"on": False, "strength": 1.0, "min_gain_db": -12.0, "noise_rise_db_per_sec": 3.0},
-    "expander": {"on": False, "below_voice_db": 20.0, "max_cut_db": 15.0, "voice_release_db_per_sec": 6.0},
-    "agc":      {"on": False, "target_dbfs": -20.0, "max_gain_db": 24.0, "slew_db_per_sec": 6.0},
+    "denoise":  {"on": False, "strength": 2.0, "min_gain_db": -20.0, "noise_rise_db_per_sec": 3.0, "smoothing": 0.9},
+    "expander": {"on": False, "below_voice_db": 6.0, "max_cut_db": 15.0, "voice_release_db_per_sec": 6.0},
+    "agc":      {"on": False, "target_dbfs": -20.0, "max_gain_db": 24.0, "slew_db_per_sec": 20.0},
 },
 ```
 
@@ -135,3 +135,25 @@ expander is judged on `tts_talker15`, a colleague across the room. The quiet
 set's loss is likely the hiss (about 16 dB under the speech), not the level, since
 Parakeet normalises gain: test agc on and off, and denoise, on it.
 Reports: `data/eval/reports/cond-baseline-<set>.replay.json`.
+
+## Steps (slice 2, 2026-10-23): none passes, all stay off
+
+Mean over 30 clips, `replay.py --condition <step>`, best attempt per step.
+
+| Step | Set | WER | Term error (baseline) | Verdict |
+|---|---|---|---|---|
+| agc | `tts_quiet` | 9.41% | 12.79% (13.51) | fails: Parakeet already normalises level |
+| denoise | `tts_quiet` | 8.84% | 11.14% (13.51) | fails: -2.4 pts is 17.5%, short of a quarter |
+| denoise | `tts_noise` | 15.01% | 22.05% (24.61) | fails: -2.6 pts is 10% |
+| expander | `tts_talker15` | 12.00% | 9.92% (13.27) | passes on synthetic speech |
+| expander | `tts` (clean) | 6.55% | 7.96% (7.92) | passes |
+| all four | `tts` (clean) | 6.82% | 8.61% (7.92) | fails: +0.7 on clean |
+
+**The expander fails on a real voice.** The `own` set is still unrecorded, so it
+was checked on the three real-voice `bench_audio` clips (references unreviewed,
+so compared raw vs cleaned, not scored). Raw read "osseous", "pleural effusion"
+and "identified"; with the expander the same audio read "osteo", "plural of
+fusion" and "ide. Ideify". Synthetic speech is unnaturally level, so 6 dB below
+the voice never touches it; a real voice's soft syllables sit there. This is the
+slice 2 pre-mortem, confirmed. Every step stays off until a real-voice set
+(`own`) shows one helps.

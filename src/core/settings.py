@@ -159,9 +159,18 @@ _DEFAULTS: dict = {
     "learning_enabled": True,          # capture edits for adaptive learning
     "learning_consent_shown": False,   # has user seen the learning consent dialog
     "disclaimer_shown": False,         # has user seen the clinical disclaimer
-    # Mic cleaning before anything listens (src/dictation/conditioning). Each
-    # later step adds its own section here, all off until measured to help.
-    "audio_conditioning": {"window_samples": 512},
+    # Mic cleaning before anything listens (src/dictation/conditioning). Every
+    # step is off until replay.py shows it passes its marks (docs/audio-conditioning.md).
+    "audio_conditioning": {
+        "window_samples": 512,
+        "highpass": {"on": False, "cutoff_hz": 80.0},
+        "denoise": {"on": False, "strength": 2.0, "min_gain_db": -20.0,
+                    "noise_rise_db_per_sec": 3.0, "smoothing": 0.9},
+        "expander": {"on": False, "below_voice_db": 6.0, "max_cut_db": 15.0,
+                     "voice_release_db_per_sec": 6.0},
+        "agc": {"on": False, "target_dbfs": -20.0, "max_gain_db": 24.0,
+                "slew_db_per_sec": 20.0},
+    },
 }
 
 

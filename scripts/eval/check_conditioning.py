@@ -15,7 +15,7 @@ import numpy as np
 
 from src.core import perf
 from src.dictation.conditioning.chain import Chain
-from src.dictation.conditioning.factory import build_chain
+from src.dictation.conditioning.factory import ORDER, build_chain
 
 WINDOW = 512
 BLOCK = 320                 # 20 ms at 16 kHz, the browser's block
@@ -39,15 +39,16 @@ class Drift:
         return np.full(len(power), 0.5 + 0.4 * np.sin(self.n * 0.7))
 
 
-class Tilt:
-    """Trivial per-bin gain, for the timing run."""
+ALL_ON = {name: {"on": True} for name in ORDER}
 
-    def gain(self, power: np.ndarray) -> np.ndarray:
-        return 1.0 / (1.0 + 0.001 * np.arange(len(power)))
+
+def real_chain() -> Chain:
+    """Every shipped step switched on, built the way the app builds it."""
+    return build_chain(ALL_ON, 16000)
 
 
 def run(steps, audio: np.ndarray, block: int) -> np.ndarray:
-    chain = Chain(steps, WINDOW)
+    chain = steps() if callable(steps) else Chain(steps, WINDOW)
     parts = [chain.process(audio[i : i + block]) for i in range(0, len(audio), block)]
     parts.append(chain.flush())
     return np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
@@ -83,6 +84,20 @@ def main() -> None:
         check(np.array_equal(run([Drift()], audio, block), ref),
               f"stateful chain identical at block size {block}")
 
+    # Speech-like input (bursts and gaps) so every real step has work to do.
+    t = np.arange(16000 * 3) / 16000
+    burst = (np.sin(2 * np.pi * 220 * t) * (np.sin(2 * np.pi * 1.5 * t) > 0)).astype(np.float32)
+    voiced = (burst * 0.3 + rng.standard_normal(len(t)).astype(np.float32) * 0.01)
+    real_ref = run(real_chain, voiced, len(voiced))
+    check(len(real_ref) == len(voiced) and bool(np.isfinite(real_ref).all()),
+          "all four real steps: length kept, output finite")
+    for block in (1, 160, 320, 511, 512, 4000):
+        check(np.array_equal(run(real_chain, voiced, block), real_ref),
+              f"all four real steps identical at block size {block}")
+    for n in (0, 1, 255, 256, 257, 16000):
+        check(len(run(real_chain, voiced[:n], BLOCK)) == n,
+              f"all four real steps: length in == out for {n} samples")
+
     for n in (0, 1, 255, 256, 257, 16000):
         check(len(run([Unity()], audio[:n], BLOCK)) == n, f"length in == out for {n} samples")
 
@@ -95,12 +110,12 @@ def main() -> None:
         check(raises_value_error(cfg), f"factory rejects {cfg}")
 
     perf.reset()
-    chain = Chain([Tilt(), Tilt(), Tilt(), Tilt()], WINDOW)
+    chain = real_chain()
     long_audio = (rng.standard_normal(16000 * 30) * 0.1).astype(np.float32)
     for i in range(0, len(long_audio), BLOCK):
         chain.process(long_audio[i : i + BLOCK])
     p95 = perf.snapshot()["audio.condition"]["p95_ms"]
-    print(f"audio.condition p95 per {BLOCK}-sample block, 4 steps: {p95:.3f} ms")
+    print(f"audio.condition p95 per {BLOCK}-sample block, all 4 real steps: {p95:.3f} ms")
     check(p95 <= P95_LIMIT_MS, f"p95 under {P95_LIMIT_MS} ms")
 
 
