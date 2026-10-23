@@ -243,6 +243,17 @@
                             <label for="patientAccession">Accession number</label>
                             <input id="patientAccession" type="text" autocomplete="off">
                         </p>
+                        <!-- Optional. Only F and M are checked against the
+                             report; blank or X and the sex check is skipped. -->
+                        <p class="field">
+                            <label for="patientSex">Sex</label>
+                            <select id="patientSex">
+                                <option value="">Not recorded</option>
+                                <option value="F">Female</option>
+                                <option value="M">Male</option>
+                                <option value="X">Other</option>
+                            </select>
+                        </p>
                     </div>
                 </div>
             </details>

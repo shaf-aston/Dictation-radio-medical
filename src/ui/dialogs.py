@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from src.features import clinical_disclaimer
 from src.features.adaptive_learning import get_adaptive_learning
-from src.features.report_release import unfilled_fields
+from src.features.report_release import report_warnings
 
 if TYPE_CHECKING:
     from src.ui.main_window import MainWindow
@@ -453,24 +453,36 @@ def show_disclaimer_if_needed(window: MainWindow) -> None:
     clinical_disclaimer.mark_shown(window.settings)
 
 
-def confirm_unfilled_fields(window: MainWindow) -> bool:
-    """Ask before releasing a report that still has template fields in it.
+def confirm_report_checks(window: MainWindow) -> bool:
+    """Ask before releasing a report with unfilled fields or a consistency issue.
 
-    The desktop shape of ``report_release.unfilled_fields``: what counts as
-    unfilled lives there, alongside the web app's 409. This function owns only
-    the message box, including how many names fit in it. Returns True to
-    proceed; False means the radiologist cancelled and the report stays put.
+    The desktop shape of ``report_release.report_warnings``: the rules live
+    there, alongside the web app's 409. This function owns only the message
+    box, including how much fits in it. Returns True to proceed; False means
+    the radiologist went back to fix it and the report stays put.
     """
-    fields = unfilled_fields(window.editor.toPlainText())
-    if not fields:
+    found = report_warnings(
+        window.editor.toPlainText(), window._get_patient_info().get("sex", "")
+    )
+    if not found:
         return True
+
+    def short(line: str) -> str:
+        return line if len(line) <= 90 else line[:89] + "…"
+
+    parts = []
+    if found.issues:
+        parts.append("Worth a second look:\n" + "\n".join(f"  • {short(i)}" for i in found.issues[:8]))
+    if found.fields:
+        parts.append(
+            f"{len(found.fields)} unfilled template field(s):\n"
+            + "\n".join(f"  • {short(f)}" for f in found.fields[:10])
+            + ("\n  …" if len(found.fields) > 10 else "")
+        )
     reply = QMessageBox.warning(
         window,
-        "Unfilled Template Fields",
-        f"The report contains {len(fields)} unfilled field(s):\n\n"
-        + "\n".join(f"  • {f if len(f) <= 60 else f[:59] + '…'}" for f in fields[:10])
-        + ("\n  …" if len(fields) > 10 else "")
-        + "\n\nDo you want to proceed anyway?",
+        "Check the report",
+        "\n\n".join(parts) + "\n\nRelease the report anyway?",
         _Yes | _No,
         _No,
     )

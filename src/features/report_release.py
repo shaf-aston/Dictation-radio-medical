@@ -5,8 +5,10 @@ shows a dialog, the web app answers 409. Neither owns the rules, so neither can
 drift from the other; this module has no Qt, no HTTP and no dialog vocabulary
 in it.
 
-1. **Unfilled template fields** (``unfilled_fields``): report quality. The
-   answer *can* cancel: "No" means the report does not leave. Not audited.
+1. **Report checks** (``report_warnings``): unfilled template fields, plus
+   the consistency checks in :mod:`src.features.report_checks` (side, sex,
+   impression). Asked together, once. The answer *can* cancel: "No" means the
+   report does not leave. Not audited.
 2. **Critical or urgent findings** (``check_release`` / ``record_release``):
    clinical safety. The report is **never withheld**: a radiologist must always
    be able to get their report out, so both answers proceed and only the audit
@@ -26,7 +28,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from src.features import audit_log, template_fields
+from src.features import audit_log, report_checks, template_fields
 from src.medical.critical_findings import (
     CriticalFinding,
     format_findings_for_dialog,
@@ -42,6 +44,31 @@ def unfilled_fields(text: str) -> Tuple[str, ...]:
     the same definition field navigation uses. Empty when the report is clean.
     """
     return template_fields.unfilled_fields(text)
+
+
+@dataclass(frozen=True)
+class ReportWarnings:
+    """What the radiologist is asked about before release; may cancel."""
+
+    fields: Tuple[str, ...] = ()
+    issues: Tuple[str, ...] = ()
+
+    def __bool__(self) -> bool:
+        return bool(self.fields or self.issues)
+
+
+def report_warnings(text: str, sex: str = "") -> ReportWarnings:
+    """Unfilled fields and consistency issues in *text*, for one question.
+
+    Fails open, like the findings scan: a broken check must never stop a
+    report leaving, so a fault is logged and that check is skipped.
+    """
+    try:
+        issues = tuple(i.message for i in report_checks.check_report(text, sex))
+    except Exception as exc:  # a checker fault must not block a report
+        logger.warning("Report consistency check failed: %s", exc)
+        issues = ()
+    return ReportWarnings(unfilled_fields(text), issues)
 
 
 @dataclass(frozen=True)

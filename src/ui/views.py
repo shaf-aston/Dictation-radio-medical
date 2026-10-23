@@ -127,6 +127,11 @@ def build_patient_panel(window: MainWindow) -> QFrame:
     window.patient_study_date = make_field("Study date", 100)
     window.patient_referrer = make_field("Referring clinician", 180)
     window.patient_accession = make_field("Accession #", 130)
+    # Optional. Only F and M are checked against the report (report_checks):
+    # anything else, or blank, and the sex check is skipped, never guessed.
+    window.patient_sex = QComboBox()
+    window.patient_sex.addItems(["", "F", "M", "X"])
+    window.patient_sex.setToolTip("Sex: used to check for organs of the other sex")
 
     row1.addWidget(QLabel("Name:"))
     row1.addWidget(window.patient_name)
@@ -142,6 +147,8 @@ def build_patient_panel(window: MainWindow) -> QFrame:
     row2.addWidget(window.patient_referrer)
     row2.addWidget(QLabel("Acc #:"))
     row2.addWidget(window.patient_accession)
+    row2.addWidget(QLabel("Sex:"))
+    row2.addWidget(window.patient_sex)
     row2.addStretch()
 
     layout.addLayout(row1)

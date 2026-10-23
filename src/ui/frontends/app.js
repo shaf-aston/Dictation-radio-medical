@@ -41,6 +41,7 @@ const patientDob = document.getElementById('patientDob');
 const patientStudyDate = document.getElementById('patientStudyDate');
 const patientReferrer = document.getElementById('patientReferrer');
 const patientAccession = document.getElementById('patientAccession');
+const patientSex = document.getElementById('patientSex');
 const modelSelect = document.getElementById('modelSelect');
 const languageInput = document.getElementById('languageInput');
 const accentSelect = document.getElementById('accentSelect');
@@ -193,6 +194,7 @@ function collectPatientInfo() {
         study_date: patientStudyDate.value.trim(),
         referring: patientReferrer.value.trim(),
         accession: patientAccession.value.trim(),
+        sex: patientSex.value,
     };
 }
 
@@ -204,6 +206,7 @@ function applyPatientInfo(info) {
     patientStudyDate.value = data.study_date || '';
     patientReferrer.value = data.referring || '';
     patientAccession.value = data.accession || '';
+    patientSex.value = data.sex || '';
 }
 
 function populateModelOptions() {
@@ -543,7 +546,7 @@ function postReport(url, answers) {
             text: editor.value,
             patient: collectPatientInfo(),
             acknowledged: answers.acknowledged,
-            proceed_unfilled: answers.proceed_unfilled,
+            proceed_with_warnings: answers.proceed_with_warnings,
         }),
     });
 }
@@ -557,23 +560,29 @@ async function readReleaseGate(response) {
     try {
         const body = await response.clone().json();
         const detail = body && body.detail;
-        const known = detail && (detail.reason === 'unfilled_fields' || detail.reason === 'critical_findings');
+        const known = detail && (detail.reason === 'report_checks' || detail.reason === 'critical_findings');
         return known ? detail : null;
     } catch (err) {
         return null;
     }
 }
 
-// Cancellable: No means the report does not leave. Field names come from the
-// server, so the browser holds no copy of what counts as unfilled.
-function confirmUnfilledFields(fields) {
-    const names = fields || [];
-    return window.confirm(
-        `The report contains ${names.length} unfilled field(s):\n\n`
-        + names.slice(0, 10).map((name) => `  • ${name.length > 60 ? name.slice(0, 59) + '…' : name}`).join('\n')
-        + (names.length > 10 ? '\n  …' : '')
-        + '\n\nDo you want to proceed anyway?'
-    );
+// Cancellable: No means the report does not leave. What is listed comes from
+// the server, so the browser holds no copy of the rules (report_release.py).
+function confirmReportChecks(gate) {
+    const short = (line) => (line.length > 90 ? line.slice(0, 89) + '…' : line);
+    const issues = gate.issues || [];
+    const fields = gate.fields || [];
+    const parts = [];
+    if (issues.length) {
+        parts.push('Worth a second look:\n' + issues.slice(0, 8).map((i) => `  • ${short(i)}`).join('\n'));
+    }
+    if (fields.length) {
+        parts.push(`${fields.length} unfilled template field(s):\n`
+            + fields.slice(0, 10).map((f) => `  • ${short(f)}`).join('\n')
+            + (fields.length > 10 ? '\n  …' : ''));
+    }
+    return window.confirm(parts.join('\n\n') + '\n\nRelease the report anyway?');
 }
 
 // Never cancellable: the report is not withheld, only the audit entry differs.
@@ -597,7 +606,7 @@ function confirmCriticalFindings(info) {
 // app goes through here, clipboard included: a gate one button can skip is not a
 // gate. Returns null when the radiologist cancelled: not an error, just a stop.
 async function postGatedReport(endpoint) {
-    const answers = { acknowledged: null, proceed_unfilled: false };
+    const answers = { acknowledged: null, proceed_with_warnings: false };
     let response = await postReport(endpoint, answers);
 
     for (let rule = 0; rule < 2; rule++) {
@@ -605,11 +614,11 @@ async function postGatedReport(endpoint) {
         if (!gate) {
             break;
         }
-        if (gate.reason === 'unfilled_fields') {
-            if (!confirmUnfilledFields(gate.fields)) {
+        if (gate.reason === 'report_checks') {
+            if (!confirmReportChecks(gate)) {
                 return null;
             }
-            answers.proceed_unfilled = true;
+            answers.proceed_with_warnings = true;
         } else {
             answers.acknowledged = confirmCriticalFindings(gate);
         }
@@ -717,7 +726,7 @@ async function loadSelectedTemplate() {
 // Track text changes for undo and persist patient fields locally.
 editor.addEventListener('input', pushUndoState);
 editor.addEventListener('input', updateWordCount);
-[patientName, patientId, patientDob, patientStudyDate, patientReferrer, patientAccession].forEach((field) => {
+[patientName, patientId, patientDob, patientStudyDate, patientReferrer, patientAccession, patientSex].forEach((field) => {
     field.addEventListener('input', () => {
         savePatientDraft();
     });

@@ -48,7 +48,7 @@ from src.features.report_manager import DOCX_AVAILABLE, export_to_word_bytes, fo
 from src.features.report_release import (
     OutstandingFindings,
     record_release,
-    unfilled_fields,
+    report_warnings,
 )
 from src.devtools import speech_test
 from src.features import audit_log, run_log, template_fields
@@ -98,6 +98,7 @@ class PatientInfo(BaseModel):
     study_date: str = ""
     referring: str = ""
     accession: str = ""
+    sex: str = ""
 
 
 # The API contract must not drift from the fields the de-identifier scrubs and
@@ -142,10 +143,11 @@ class ReportRequest(BaseModel):
     #: True = radiologist confirmed verbal communication; False = proceeded anyway.
     #: Both outcomes are audited; only None is refused (see _confirm_release).
     acknowledged: Optional[bool] = None
-    #: The answer to the unfilled-fields question, which is a plain permission
-    #: rather than an audited one: only True releases the report. Not asked yet
-    #: and "no, take me back" are the same thing here, so both are False.
-    proceed_unfilled: bool = False
+    #: The answer to the report-checks question (unfilled fields, side, sex,
+    #: impression), which is a plain permission rather than an audited one:
+    #: only True releases the report. Not asked yet and "no, take me back" are
+    #: the same thing here, so both are False.
+    proceed_with_warnings: bool = False
 
 
 def _model_to_dict(model: BaseModel) -> dict:
@@ -660,14 +662,19 @@ def _confirm_release(payload: ReportRequest) -> None:
     first would audit an acknowledgement for a report that then did not leave.
 
     Raises:
-        HTTPException: 409 with the unfilled field names while proceed_unfilled is
-            False, then 409 with the findings while acknowledged is still None.
+        HTTPException: 409 with the unfilled fields and consistency issues
+            while proceed_with_warnings is False, then 409 with the findings
+            while acknowledged is still None.
     """
-    fields = unfilled_fields(payload.text)
-    if fields and not payload.proceed_unfilled:
+    found = report_warnings(payload.text, payload.patient.sex)
+    if found and not payload.proceed_with_warnings:
         raise HTTPException(
             status_code=409,
-            detail={"reason": "unfilled_fields", "fields": list(fields)},
+            detail={
+                "reason": "report_checks",
+                "fields": list(found.fields),
+                "issues": list(found.issues),
+            },
         )
 
     # Scanned through the shared state object, so this answer settles the same

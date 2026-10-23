@@ -20,7 +20,7 @@ from src.ui.postprocess_worker import PostprocessWorker, build_changes
 from src.features.accent_corrections import ACCENT_LABELS, suggest_accent
 from src.features.report_release import record_release
 from src.features.template_fields import find_fields, resolve_choice
-from src.ui.dialogs import confirm_unfilled_fields
+from src.ui.dialogs import confirm_report_checks
 from src.ui.styles import set_level_state
 
 if TYPE_CHECKING:
@@ -713,7 +713,7 @@ def confirm_release(window: MainWindow) -> bool:
     The dialog itself still appears at every exit, answered or not: asking
     twice costs a click, and not asking could cost a phone call.
     """
-    if not confirm_unfilled_fields(window):
+    if not confirm_report_checks(window):
         return False
 
     window.findings.update(window.editor.toPlainText())

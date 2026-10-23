@@ -118,6 +118,7 @@ class MainWindow(QMainWindow):
     patient_study_date: QLineEdit
     patient_referrer: QLineEdit
     patient_accession: QLineEdit
+    patient_sex: QComboBox
     splitter: QSplitter
     macros_panel: QFrame
     macro_region_combo: QComboBox
@@ -641,6 +642,7 @@ class MainWindow(QMainWindow):
         self.patient_study_date.clear()
         self.patient_referrer.clear()
         self.patient_accession.clear()
+        self.patient_sex.setCurrentIndex(0)
         self._show_status("New report started.")
 
     def _load_report_from_path(self, path: str) -> None:
@@ -795,9 +797,9 @@ class MainWindow(QMainWindow):
             "referring": self.patient_referrer,
             "accession": self.patient_accession,
         }
-        return normalize_patient_info(
-            {key: widget.text() for key, widget in fields.items()}
-        )
+        info = {key: widget.text() for key, widget in fields.items()}
+        info["sex"] = self.patient_sex.currentText()
+        return normalize_patient_info(info)
 
     def _default_filename(self, ext: str) -> str:
         return report_filename(self._get_patient_info(), ext)
