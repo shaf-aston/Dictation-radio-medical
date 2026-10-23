@@ -178,6 +178,9 @@ body {
 .status.is-busy .dot  { background: var(--glow); animation: breathe 1.4s var(--ease) infinite; }
 .status.is-rec .dot   { background: var(--rec); animation: breathe .9s var(--ease) infinite; }
 .status.is-ok .dot    { background: var(--ok); }
+/* A microphone problem: amber, never red. Red is recording and severity. */
+.status.is-warn       { color: var(--warn-text); }
+.status.is-warn .dot  { background: var(--warn); }
 .status.is-error      { background: color-mix(in srgb, var(--rec) 18%, transparent); color: var(--rec); }
 .status.is-error .dot { background: var(--rec); }
 

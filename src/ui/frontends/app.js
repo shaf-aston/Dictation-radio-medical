@@ -95,7 +95,7 @@ function setThemeSavingState(isSaving) {
 // .is-ok / .is-error) so it comes from tokens.json like every other colour:
 // this used to set colours inline here, which both hardcoded them and named
 // classes app.css no longer has, so the dot never changed at all.
-const STATUS_STATES = ['is-rec', 'is-busy', 'is-ok', 'is-error'];
+const STATUS_STATES = ['is-rec', 'is-busy', 'is-ok', 'is-warn', 'is-error'];
 let statusGeneration = 0;
 
 function showStatus(message, state = '', timeout = 0) {
@@ -1062,8 +1062,12 @@ const FRAME_SAMPLES = Math.max(128, Math.round(LIVE_SAMPLE_RATE * FRAME_SECONDS)
 const PCM_WORKLET = [
     `const FRAME_SAMPLES = ${FRAME_SAMPLES};`,
     'class PcmTap extends AudioWorkletProcessor {',
-    '    constructor() {',
+    '    constructor(options) {',
     '        super();',
+    '        const o = (options && options.processorOptions) || {};',
+    '        // Only when the context could not run at 16 kHz (resampler.js).',
+    '        this._resampler = o.inRate && o.inRate !== o.outRate',
+    '            ? new StreamResampler(o.inRate, o.outRate) : null;',
     '        this._buf = new Float32Array(FRAME_SAMPLES);',
     '        this._len = 0;',
     '        this.port.onmessage = (event) => {',
@@ -1074,7 +1078,13 @@ const PCM_WORKLET = [
     '        };',
     '    }',
     '    process(inputs) {',
-    '        const ch = inputs[0] && inputs[0][0];',
+    '        const input = inputs[0] || [];',
+    '        let ch = input[0];',
+    '        if (ch && input.length > 1) {',
+    '            // Mono was asked for; some browsers return stereo anyway.',
+    '            ch = ch.map((v, i) => input.reduce((s, c) => s + c[i], 0) / input.length);',
+    '        }',
+    '        if (ch && this._resampler) ch = this._resampler.process(ch);',
     '        if (ch) {',
     '            let offset = 0;',
     '            while (offset < ch.length) {',
@@ -1094,6 +1104,23 @@ const PCM_WORKLET = [
     '}',
     'registerProcessor("pcm-tap", PcmTap);',
 ].join('\n');
+
+// An audio context with the tap worklet loaded, and the resampler too when the
+// context does not run at the decoder's rate (asked for and refused, or a
+// browser that ignores the request).
+async function prepareAudioContext(options) {
+    const ctx = new AudioContext(options);
+    if (ctx.sampleRate !== LIVE_SAMPLE_RATE) {
+        await ctx.audioWorklet.addModule('/static/resampler.js');
+    }
+    const url = URL.createObjectURL(new Blob([PCM_WORKLET], { type: 'application/javascript' }));
+    try {
+        await ctx.audioWorklet.addModule(url);
+    } finally {
+        URL.revokeObjectURL(url);
+    }
+    return ctx;
+}
 
 function floatToPcm16(frame) {
     const out = new Int16Array(frame.length);
@@ -1115,9 +1142,36 @@ function peakLevel(frame) {
 
 // Shared by the worklet's normal frames and its stop-time flush, so a
 // flushed tail is metered and sent exactly like any other frame.
+// The microphone level is watched, never changed: both recognisers normalise
+// level themselves, and software gain raises the noise between words as much
+// as the speech. What cannot be fixed afterwards is clipping (lost waveform)
+// and a level so low it sits in the microphone's own hiss, so those are said.
+const CLIP_PEAK = 0.99;
+const QUIET_PEAK = 0.03;          // about -30 dBFS
+const QUIET_AFTER_SEC = 4;
+const mic = { loudest: 0, samples: 0, clipped: 0, warned: false };
+
+function watchLevel(frame, peak) {
+    mic.samples += frame.length;
+    mic.loudest = Math.max(mic.loudest, peak);
+    if (peak >= CLIP_PEAK) mic.clipped++;
+    if (mic.warned) return;
+    if (mic.clipped >= 3) {
+        mic.warned = true;
+        showStatus('Microphone is clipping: lower its input level', 'is-warn', 6000);
+        devMark('browser', 'microphone clipping', {}, { level: 'warn' });
+    } else if (mic.samples > QUIET_AFTER_SEC * LIVE_SAMPLE_RATE && mic.loudest < QUIET_PEAK) {
+        mic.warned = true;
+        showStatus('Microphone is very quiet: check it is the right one, and its level', 'is-warn', 6000);
+        devMark('browser', 'microphone very quiet', { peak: mic.loudest.toFixed(3) }, { level: 'warn' });
+    }
+}
+
 function handleTapFrame(frame) {
     if (!frame || !frame.length) return;
-    setLevel(peakLevel(frame));
+    const peak = peakLevel(frame);
+    setLevel(peak);
+    watchLevel(frame, peak);
     const pcm = floatToPcm16(frame).buffer;
     if (pendingPcm) {
         pendingPcm.push(pcm);
@@ -1594,10 +1648,7 @@ async function startRecording() {
     try {
         // Asking the context for 16 kHz makes the browser resample for us, so
         // there is no hand-written downsampler to get wrong.
-        audioContext = new AudioContext({ sampleRate: LIVE_SAMPLE_RATE });
-        const workletUrl = URL.createObjectURL(new Blob([PCM_WORKLET], { type: 'application/javascript' }));
-        await audioContext.audioWorklet.addModule(workletUrl);
-        URL.revokeObjectURL(workletUrl);
+        audioContext = await prepareAudioContext({ sampleRate: LIVE_SAMPLE_RATE });
     } catch (err) {
         console.error('Could not start live dictation:', err);
         await teardownMic();
@@ -1606,8 +1657,19 @@ async function startRecording() {
     }
     const micAskedAt = performance.now();
     try {
+        // The browser's own voice-call processing is switched off. Noise
+        // suppression and automatic gain both alter speech in ways recognisers
+        // were not trained on (Google's and Deepgram's guidance for
+        // transcription: send unaltered audio), and gain control also drifts
+        // the microphone level during a session. Echo cancellation has nothing
+        // to cancel: this page plays no sound.
         micStream = speechTestStream || await navigator.mediaDevices.getUserMedia({
-            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+            audio: {
+                channelCount: 1,
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+            },
         });
         speechTestStream = null;
     } catch (err) {
@@ -1620,7 +1682,12 @@ async function startRecording() {
         return;
     }
 
-    devMark('browser', 'microphone granted', {}, { ms: performance.now() - micAskedAt });
+    const applied = micStream.getAudioTracks()[0]?.getSettings?.() || {};
+    devMark('browser', 'microphone granted', {
+        rate: applied.sampleRate, ns: applied.noiseSuppression,
+        agc: applied.autoGainControl, ec: applied.echoCancellation,
+    }, { ms: performance.now() - micAskedAt });
+    Object.assign(mic, { loudest: 0, samples: 0, clipped: 0, warned: false });
     tlStep('Microphone ready', (performance.now() - micAskedAt) / 1000);
 
     try {
@@ -1628,9 +1695,22 @@ async function startRecording() {
         // socket is still opening, and they are held, not thrown away.
         pendingPcm = [];
         pendingSamples = 0;
-        micNode = new AudioWorkletNode(audioContext, 'pcm-tap');
+        let source;
+        try {
+            source = audioContext.createMediaStreamSource(micStream);
+        } catch (err) {
+            // Firefox: a microphone can only feed a context at its own rate.
+            // Run at that rate and resample in the worklet instead.
+            devMark('browser', 'resampling in the page', { reason: err.name });
+            await audioContext.close();
+            audioContext = await prepareAudioContext({});
+            source = audioContext.createMediaStreamSource(micStream);
+        }
+        micNode = new AudioWorkletNode(audioContext, 'pcm-tap', {
+            processorOptions: { inRate: audioContext.sampleRate, outRate: LIVE_SAMPLE_RATE },
+        });
         micNode.port.onmessage = (event) => handleTapFrame(event.data);
-        audioContext.createMediaStreamSource(micStream).connect(micNode);
+        source.connect(micNode);
 
         const socketAskedAt = performance.now();
         liveSocket = null;  // the previous recording's socket stops being heard from here
