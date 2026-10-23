@@ -244,7 +244,7 @@ def _boosted_keywords() -> Tuple[str, ...]:
     call: the medical model still runs, just without the spotlight.
     """
     try:
-        from src.features.file_manager import radiology_lexicon_path
+        from src.core.paths import radiology_lexicon_path
 
         lines = radiology_lexicon_path().read_text(encoding="utf-8").splitlines()
     except OSError as exc:

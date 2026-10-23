@@ -27,7 +27,7 @@ _log_path: Optional[Path] = None
 def _get_log_path() -> Path:
     global _log_path
     if _log_path is None:
-        from src.features.file_manager import audit_log_path
+        from src.core.paths import audit_log_path
         _log_path = audit_log_path()
     return _log_path
 

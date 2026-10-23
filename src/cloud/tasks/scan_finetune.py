@@ -81,7 +81,7 @@ class ScanClassifierTask:
         Backward compatibility: If no datasets are registered, falls back to
         reading from the legacy ``imaging_training_dir()``.
         """
-        from src.features.file_manager import imaging_training_dir
+        from src.core.paths import imaging_training_dir
         from src.imaging.datasets import DatasetRegistry
 
         registry = DatasetRegistry()

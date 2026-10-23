@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from src.core.json_store import write_json
-from src.features.file_manager import analysis_dir
+from src.core.paths import analysis_dir
 
 logger = logging.getLogger(__name__)
 

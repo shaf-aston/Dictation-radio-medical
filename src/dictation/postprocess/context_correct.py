@@ -36,7 +36,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 from src.dictation.postprocess import context_model
-from src.features.file_manager import confusion_sets_path
+from src.core.paths import confusion_sets_path
 
 logger = logging.getLogger(__name__)
 

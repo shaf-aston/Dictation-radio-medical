@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, List
 
 from src.core.json_store import read_json, write_json
-from src.features.file_manager import settings_file
+from src.core.paths import settings_file
 
 _DEFAULTS: dict = {
     # Which speech engine transcribes (names in src/dictation/asr/factory.py).
@@ -154,7 +154,6 @@ _DEFAULTS: dict = {
     "min_corrections_before_upload": 20,  # don't train on tiny datasets
     "auto_download_models": True,      # auto-fetch fine-tuned models when jobs finish
     "active_model_version": None,      # active fine-tuned version, or None for base model
-    "report_analysis_enabled": True,   # run local report pattern analysis on startup
     # --- Learning & UI state ---
     "learning_enabled": True,          # capture edits for adaptive learning
     "learning_consent_shown": False,   # has user seen the learning consent dialog
@@ -175,6 +174,12 @@ _DEFAULTS: dict = {
     # the US way (characterise, calibre); "en-US" leaves them. Medical words
     # (oedema, haemorrhage) follow terminology.py either way.
     "spelling": "en-GB",
+    # Bias Parakeet toward the radiology lexicon while it decodes (sherpa-onnx
+    # beam search with hotwords). Measured 2026-10-23: medical-term error
+    # 10.9% -> 7.1% after post-processing, same speed. Score 1.0: at 2.0 it
+    # started inserting terms that were not said.
+    "asr_hotwords": True,
+    "hotword_score": 1.0,
     "key_next_field": "Tab",
     "key_previous_field": "Shift+Tab",
 }
@@ -191,8 +196,20 @@ def get_default(key: str) -> Any:
 
 
 class Settings:
+    """The settings file, read through and written key by key.
+
+    Only keys this instance changed are written, merged into the file as it is
+    on disk at that moment. The desktop app, the web app and several modules
+    each hold an instance; writing the whole in-memory dict (as before) let
+    whichever saved last undo every change the others made since it loaded.
+
+    Defaults are not written to the file: a key that was never set stays a
+    default, so a better default in a later version reaches existing installs.
+    """
+
     def __init__(self) -> None:
         self._data: dict = {}
+        self._dirty: set = set()
         self._path: Path = settings_file()
         self._mtime: float = -1.0
         self.load()
@@ -204,9 +221,7 @@ class Settings:
 
     def load(self) -> None:
         self._data = read_json(self._path, {})
-        for key, val in _DEFAULTS.items():
-            if key not in self._data:
-                self._data[key] = val
+        self._dirty = set()
         self._mtime = self._current_mtime()
 
     def refresh(self) -> None:
@@ -216,7 +231,7 @@ class Settings:
         without going stale when the other front-end, or the user, edits
         ``dictation_settings.json``. A stat is cheap; a parse is not.
         """
-        if self._current_mtime() != self._mtime:
+        if not self._dirty and self._current_mtime() != self._mtime:
             self.load()
 
     def _current_mtime(self) -> float:
@@ -226,20 +241,30 @@ class Settings:
             return -1.0
 
     def save(self) -> None:
-        write_json(self._path, self._data)
+        """Write this instance's changed keys into the file as it is now."""
+        on_disk = read_json(self._path, {})
+        for key in self._dirty:
+            on_disk[key] = self._data[key]
+        write_json(self._path, on_disk)
+        self._data = on_disk
+        self._dirty = set()
         self._mtime = self._current_mtime()
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, _DEFAULTS.get(key, default))
 
-    def set(self, key: str, value: Any) -> None:
+    def _put(self, key: str, value: Any) -> None:
         self._data[key] = value
+        self._dirty.add(key)
+
+    def set(self, key: str, value: Any) -> None:
+        self._put(key, value)
         self.save()
 
     def batch_set(self, updates: dict) -> None:
         """Update multiple settings and save once."""
         for key, value in updates.items():
-            self._data[key] = value
+            self._put(key, value)
         self.save()
 
     def add_recent_report(self, path: str) -> None:
@@ -247,7 +272,7 @@ class Settings:
         if path in recent:
             recent.remove(path)
         recent.insert(0, path)
-        self._data["recent_reports"] = recent[:20]
+        self._put("recent_reports", recent[:20])
         self.save()
 
     def get_recent_reports(self) -> List[str]:

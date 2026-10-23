@@ -30,7 +30,7 @@ from typing import List, Sequence
 
 from scripts.eval.corpus import Clip, KNOWN_SETS, audio_duration, write_manifest
 from src.core.logging_setup import setup_logging
-from src.features.file_manager import bench_audio_dir, eval_set_dir
+from src.core.paths import bench_audio_dir, eval_set_dir
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +258,7 @@ def record_own(force: bool = False) -> int:
     """
     from src.core.json_store import read_jsonl
     from src.dictation.audio import Recorder
-    from src.features.file_manager import eval_manifest_path
+    from src.core.paths import eval_manifest_path
 
     manifest_path = eval_manifest_path("own")
     if not manifest_path.exists():

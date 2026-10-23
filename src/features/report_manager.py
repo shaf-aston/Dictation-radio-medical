@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from src.core.patient_schema import PATIENT_FIELDS
-from src.features.file_manager import autosave_dir, report_filename
+from src.core.paths import autosave_dir, report_filename
 
 if TYPE_CHECKING:
     from docx import Document

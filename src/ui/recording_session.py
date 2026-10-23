@@ -14,7 +14,7 @@ from src.core import perf
 from src.dictation.stream.policy import MANUAL, plan_from_settings
 from src.dictation.asr.models import resolve_model
 from src.dictation.worker import LiveTranscribeWorker
-from src.features.file_manager import create_temp_wav
+from src.core.paths import create_temp_wav
 from src.features import run_log
 from src.ui.postprocess_worker import PostprocessWorker, build_changes
 from src.features.accent_corrections import ACCENT_LABELS, suggest_accent

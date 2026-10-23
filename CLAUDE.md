@@ -11,7 +11,10 @@ Read this first. For conventions, see [CODING_STANDARDS.md](CODING_STANDARDS.md)
 
 ```
 src/
-├── core/        settings.py (JSON at project root) · logging_setup.py ·
+├── core/        settings.py (JSON at project root) · paths.py (every file path
+│                  the app uses: data/, cache/, templates; one place, so the
+│                  data layout and a future per-user data dir have one seam) ·
+│                  logging_setup.py ·
 │                  json_store.py (shared atomic JSON + JSONL read/write) ·
 │                  keychain.py (OS-keychain secret helpers, wraps keyring) ·
 │                  patient_schema.py (the patient-info fields, declared once) ·
@@ -127,7 +130,7 @@ src/
 │   │                       scripts/eval/report_checks_corpus.py
 │   ├── run_log.py        one capped JSONL record per dictation (timings +
 │   │                       optional report text), the history behind /developer
-│   └── file_manager.py · report_manager.py · report_analyzer.py
+│   └── report_manager.py
 ├── imaging/     OPTIONAL local chest X-ray assistant (offline inference)
 │   ├── classifier.py     TorchXRayVision DenseNet121 wrapper (lazy torch)
 │   ├── abstention.py     calibrated rejection gate, the imaging safety gate
@@ -374,7 +377,7 @@ there.
   edits only language (never clinical content), and returns the input
   unchanged on any error.
 - **Settings file is `dictation_settings.json` at the project root.**
-- **File I/O goes through `features/file_manager.py`** path helpers
+- **File I/O goes through `core/paths.py`** path helpers
   (`autosave_dir`, `staging_db_path`, `model_registry_path`, `fine_tuned_dir`,
   `imaging_thresholds_path`, `imaging_overlay_dir`, …).
 - **Every rebuildable cache lives under `data/cache/`** (`cache_dir()`:

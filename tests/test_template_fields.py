@@ -10,7 +10,7 @@ import re
 
 import pytest
 
-from src.features.file_manager import templates_dir
+from src.core.paths import templates_dir
 from src.features.report_release import unfilled_fields
 from src.features.template_fields import (
     find_fields,

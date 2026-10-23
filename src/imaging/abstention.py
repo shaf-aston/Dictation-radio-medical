@@ -45,7 +45,7 @@ def load_thresholds() -> Dict[str, float]:
     per-key, so a site can tune individual pathologies without restating them all.
     """
     thresholds = dict(_packaged_thresholds())
-    from src.features.file_manager import imaging_thresholds_path
+    from src.core.paths import imaging_thresholds_path
     user = read_json(imaging_thresholds_path(), {})
     try:
         thresholds |= {k: float(v) for k, v in user.items() if not k.startswith("_")}

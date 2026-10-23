@@ -21,7 +21,7 @@ import random
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
-from src.features.file_manager import templates_dir
+from src.core.paths import templates_dir
 from src.features.report_checks import check_report
 
 

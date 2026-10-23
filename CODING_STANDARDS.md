@@ -67,7 +67,7 @@ module boundaries, and for `.claude/` agents/skills/workflows, see
 
 ## File I/O & state
 
-- Route filesystem paths through `features/file_manager.py` helpers rather
+- Route filesystem paths through `core/paths.py` helpers rather
   than hardcoding paths; this keeps `data/` layout in one place.
 - Persistent state is file-first and human-inspectable (JSON settings/registry,
   SQLite only where relational queries are needed, e.g. the staging DB).

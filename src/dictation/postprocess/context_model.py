@@ -34,7 +34,7 @@ import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from src.features.file_manager import (
+from src.core.paths import (
     context_model_cache_path,
     context_seed_corpus_path,
     learned_context_corpus_path,

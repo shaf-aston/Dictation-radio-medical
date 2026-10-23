@@ -45,7 +45,7 @@ from src.core.json_store import write_json
 from src.core.logging_setup import setup_logging
 from src.core.settings import Settings
 from src.dictation.asr.factory import DEFAULT_ENGINE, ENGINE_NAMES
-from src.features.file_manager import eval_reports_dir
+from src.core.paths import eval_reports_dir
 
 logger = logging.getLogger(__name__)
 

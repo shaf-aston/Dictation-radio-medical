@@ -9,7 +9,7 @@ import pytest
 
 from src.dictation.postprocess import voice_commands
 from src.dictation.postprocess.pipeline import postprocess_transcript
-from src.features.file_manager import templates_dir
+from src.core.paths import templates_dir
 
 
 @pytest.mark.parametrize(

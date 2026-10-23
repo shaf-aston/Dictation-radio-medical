@@ -182,7 +182,7 @@ class SyncManager:
     def _download_and_register(self, client, batch, status) -> Optional[str]:
         from src.cloud.framework.registry import ModelRegistry
         from src.core.settings import Settings
-        from src.features.file_manager import fine_tuned_dir
+        from src.core.paths import fine_tuned_dir
 
         artifact_url = status.get("artifact_url")
         if not artifact_url:

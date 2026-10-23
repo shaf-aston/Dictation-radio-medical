@@ -18,7 +18,7 @@ from src.dictation.asr.models import SUPPORTED_MODELS, resolve_model
 from src.dictation.postprocess import CLEANUP_LEVEL_LABELS
 from src.features.accent_corrections import ACCENT_LABELS
 from src.medical import macros
-from src.features.file_manager import templates_dir
+from src.core.paths import templates_dir
 from src.ui.collapsible import Section
 from src.ui.finding_marks import FindingGutter
 from src.ui.styles import set_findings_state, set_level_state, set_status_state

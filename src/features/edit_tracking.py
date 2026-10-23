@@ -113,7 +113,7 @@ def record_session_edits(dictated: str, final: str) -> int:
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for rec in records:
         rec["ts"] = ts
-    from src.features.file_manager import dictation_edits_path
+    from src.core.paths import dictation_edits_path
     written = append_jsonl(dictation_edits_path(), records)
     if written:
         logger.info("Logged %d post-dictation edit(s)", written)
@@ -122,7 +122,7 @@ def record_session_edits(dictated: str, final: str) -> int:
 
 def load_edits(limit: Optional[int] = None) -> List[Dict[str, str]]:
     """Return logged edit records, newest last; missing log -> ``[]``."""
-    from src.features.file_manager import dictation_edits_path
+    from src.core.paths import dictation_edits_path
     records = read_jsonl(dictation_edits_path())
     return records[-limit:] if limit else records
 
@@ -139,7 +139,7 @@ def edit_stats() -> Dict[str, int]:
 def reset_edits() -> None:
     """Delete the edit log."""
     try:
-        from src.features.file_manager import dictation_edits_path
+        from src.core.paths import dictation_edits_path
         path = dictation_edits_path()
         if path.exists():
             path.unlink()

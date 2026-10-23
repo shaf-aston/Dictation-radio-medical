@@ -8,7 +8,7 @@ The heavy pieces live in sibling modules and are re-exported here for back-compa
   * :class:`~src.imaging.retrieval_index.EmbeddingIndex`: search + persistence.
 
 Index and embeddings are cached to disk in ``data/cache/imaging_embeddings/``
-(:func:`src.features.file_manager.imaging_embeddings_dir`) for reuse across
+(:func:`src.core.paths.imaging_embeddings_dir`) for reuse across
 sessions.
 """
 
@@ -28,7 +28,7 @@ from src.imaging.exceptions import ImagingError
 from src.imaging.retrieval_embed import EmbeddingExtractor
 from src.imaging.retrieval_index import EmbeddingIndex, Filters
 from src.imaging.schemas import ReferenceCase, RetrievalMatch
-from src.features.file_manager import imaging_embeddings_dir
+from src.core.paths import imaging_embeddings_dir
 
 __all__ = [
     "EmbeddingExtractor",

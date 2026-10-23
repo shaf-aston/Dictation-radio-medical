@@ -43,7 +43,7 @@ from src.dictation.asr.types import (
     TranscribeContext,
     Word,
 )
-from src.features.file_manager import onnx_asr_cache_dir
+from src.core.paths import onnx_asr_cache_dir
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +138,7 @@ class ParakeetEngine:
         if not text:
             return AsrResult(text="")
 
-        words = _merge_pieces(result.tokens, result.timestamps, result.logprobs)
+        words = merge_pieces(result.tokens, result.timestamps, result.logprobs)
         end = words[-1].end if words else 0.0
         # One segment: a Transducer emits a continuous token stream with no
         # segment concept of its own, and inventing boundaries here would be a
@@ -187,7 +187,7 @@ def _as_input(audio: Any) -> Any:
     return samples
 
 
-def _merge_pieces(
+def merge_pieces(
     tokens: Optional[Sequence[str]],
     timestamps: Optional[Sequence[float]],
     logprobs: Optional[Sequence[float]],

@@ -40,7 +40,7 @@ from typing import Dict, Iterable, Optional, Set
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.features.file_manager import analysis_dir, _data_dir  # noqa: E402
+from src.core.paths import analysis_dir, _data_dir  # noqa: E402
 
 _WORD_RE = re.compile(r"\b[A-Za-z][A-Za-z'\-]{3,}\b")
 _LEARNED_FILE = "learned_corrections.json"
@@ -118,7 +118,7 @@ def _load_dictation_edits() -> "Counter[tuple[str, str]]":
     """
     counts: "Counter[tuple[str, str]]" = Counter()
     try:
-        from src.features.file_manager import dictation_edits_path
+        from src.core.paths import dictation_edits_path
         path = dictation_edits_path()
     except Exception:
         return counts

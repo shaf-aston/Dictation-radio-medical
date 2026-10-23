@@ -27,7 +27,7 @@ from src.dictation.asr.types import (
     TranscribeContext,
     Word,
 )
-from src.features.file_manager import whisper_cache_dir
+from src.core.paths import whisper_cache_dir
 
 logger = logging.getLogger(__name__)
 

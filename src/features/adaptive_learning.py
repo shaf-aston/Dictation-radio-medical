@@ -99,7 +99,7 @@ class AdaptiveLearning:
     @staticmethod
     def _default_data_dir() -> Path:
         """Default storage directory (the data/ root) via the path authority."""
-        from src.features.file_manager import learned_corrections_path
+        from src.core.paths import learned_corrections_path
         return learned_corrections_path().parent
 
     # ------------------------------------------------------------------

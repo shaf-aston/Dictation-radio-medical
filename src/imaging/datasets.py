@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from src.core.json_store import read_json, write_json
-from src.features.file_manager import imaging_dir
+from src.core.paths import imaging_dir
 
 logger = logging.getLogger(__name__)
 

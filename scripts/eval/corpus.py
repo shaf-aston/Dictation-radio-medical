@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from src.core.json_store import append_jsonl, read_jsonl
-from src.features.file_manager import eval_manifest_path, eval_set_dir
+from src.core.paths import eval_manifest_path, eval_set_dir
 
 logger = logging.getLogger(__name__)
 

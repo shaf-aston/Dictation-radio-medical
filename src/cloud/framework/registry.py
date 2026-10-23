@@ -26,7 +26,7 @@ class ModelRegistry:
 
     def __init__(self, registry_path: Optional[Path] = None) -> None:
         if registry_path is None:
-            from src.features.file_manager import model_registry_path
+            from src.core.paths import model_registry_path
             registry_path = model_registry_path()
         self._path = Path(registry_path)
         self._lock = threading.Lock()

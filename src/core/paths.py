@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 def _project_root() -> Path:
     """Project root: the parent of src/.
 
-    This file lives at src/features/file_manager.py, so the root is three
-    levels up: file → features/ → src/ → project root.
+    This file lives at src/core/paths.py, so the root is three
+    levels up: file → core/ → src/ → project root.
     """
     return Path(__file__).resolve().parents[2]
 

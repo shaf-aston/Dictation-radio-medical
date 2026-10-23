@@ -29,7 +29,7 @@ from src.dictation.audio import Recorder
 from src.core.logging_setup import setup_logging
 from src.core.settings import Settings
 from src.core.patient_schema import normalize_patient_info
-from src.features.file_manager import report_filename
+from src.core.paths import report_filename
 from src.ui.collapsible import Section
 from src.ui.status import StatusTrack
 from src.ui.finding_marks import FindingGutter
@@ -43,7 +43,7 @@ from src.features.report_manager import (
 )
 from src.medical import macros
 from src.medical.macros import reload_macros
-from src.features.file_manager import startup_cleanup, autosave_dir, macros_file, templates_dir
+from src.core.paths import startup_cleanup, autosave_dir, macros_file, templates_dir
 from src.features.adaptive_learning import get_adaptive_learning, learn_from_edit
 from src.features import audit_log
 
@@ -349,22 +349,6 @@ class MainWindow(QMainWindow):
                 self._cloud_monitor_thread.start()
             except Exception as exc:
                 logger.warning("Could not start cloud monitor: %s", exc)
-
-        if self.settings.get("report_analysis_enabled", True):
-            try:
-                from PySide6.QtCore import QThreadPool, QRunnable
-
-                class _AnalysisTask(QRunnable):
-                    def run(self) -> None:
-                        try:
-                            from src.features.report_analyzer import ReportAnalyzer
-                            ReportAnalyzer().analyze_and_save()
-                        except Exception as exc:  # background, never fatal
-                            logger.debug("Report analysis failed: %s", exc)
-
-                QThreadPool.globalInstance().start(_AnalysisTask())
-            except Exception as exc:
-                logger.debug("Could not schedule report analysis: %s", exc)
 
     def _on_model_available(self, version: str) -> None:
         """A fine-tuned model finished training: offer to activate it."""

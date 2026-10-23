@@ -42,7 +42,7 @@ try:
 except ImportError:
     SYMSPELL_AVAILABLE = False
 
-from src.features.file_manager import (
+from src.core.paths import (
     medical_dict_cache_path,
     medical_wordlist_path,
     radiology_lexicon_path,
@@ -282,7 +282,7 @@ def get_symspell() -> Optional["SymSpell"]:
     length-scaled edit distance.
 
     Building this from ~98k terms takes a few seconds, so the result is cached
-    on disk (:func:`~src.features.file_manager.medical_dict_cache_path`) and
+    on disk (:func:`~src.core.paths.medical_dict_cache_path`) and
     rebuilt only when the term counts change (e.g. the bundled wordlist or
     lexicon is updated). Returns None if symspellpy is not installed: callers
     fall back to the slower rapidfuzz ratio path.
