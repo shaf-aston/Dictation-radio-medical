@@ -178,6 +178,9 @@ body {
 .status.is-busy .dot  { background: var(--glow); animation: breathe 1.4s var(--ease) infinite; }
 .status.is-rec .dot   { background: var(--rec); animation: breathe .9s var(--ease) infinite; }
 .status.is-ok .dot    { background: var(--ok); }
+/* A microphone problem: amber, never red. Red is recording and severity. */
+.status.is-warn       { color: var(--warn-text); }
+.status.is-warn .dot  { background: var(--warn); }
 .status.is-error      { background: color-mix(in srgb, var(--rec) 18%, transparent); color: var(--rec); }
 .status.is-error .dot { background: var(--rec); }
 
@@ -521,6 +524,10 @@ body {
    was faint enough that the first word of a dictation could be missed
    altogether. The token on its own is 5.3:1 and still clearly quieter. */
 .editor-marks .preview { color: var(--text-dim); }
+.live-preview {
+    margin: .4rem 0 0; color: var(--text-dim); font-style: italic;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 /* ---- the session timeline ------------------------------------------------
    Time is the dimension the old single status label threw away: it said what
@@ -675,7 +682,7 @@ kbd {
     color: var(--text-dim);
 }
 
-input[type="text"], select {
+input[type="text"], input[type="datetime-local"], select {
     width: 100%;
     padding: .42rem .55rem;
     border: 1px solid var(--edge);
@@ -684,7 +691,7 @@ input[type="text"], select {
     color: var(--text);
     font: inherit; font-size: .87rem;
 }
-input[type="text"]:focus, select:focus { outline: none; border-color: var(--glow); }
+input[type="text"]:focus, input[type="datetime-local"]:focus, select:focus { outline: none; border-color: var(--glow); }
 select:disabled, input:disabled { opacity: .5; }
 
 .check {
@@ -847,7 +854,10 @@ select:disabled, input:disabled { opacity: .5; }
 .dev-speech { display: flex; gap: .5rem; padding: .4rem .75rem; }
 .dev-speech input { flex: 1; min-width: 0; }
 
-.modal-foot { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1.1rem; }
+.modal-foot { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1.1rem; flex-wrap: wrap; }
+
+.comm-grid { margin-top: .9rem; }
+.comm-add { display: flex; align-items: center; gap: .45rem; margin-top: .8rem; font-size: .85rem; }
 
 /* --------------------------------------------------------------------------
    Developer console

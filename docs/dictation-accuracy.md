@@ -178,6 +178,71 @@ shorter clips giving the small model less room to drift, but six synthetic
 clips is not proof of that; the `own` set is still the instrument that would
 settle it.
 
+## Recognition at the source, and post-processing by evidence (2026-10-23)
+
+**New instrument.** The `tts` set needs the Windows speech engine; on Linux it
+falls back to espeak, whose voice is misheard for reasons a person's never is
+("oblique tear" -> "a leak tear"). `build_sets --set piper` reads the same 30
+reports with 5 offline neural voices (3 UK, 2 US): 150 clips, 54 minutes.
+Still synthetic, still vocabulary rather than acoustics.
+
+**The metric was marking correct numbers wrong.** References spell numbers out
+("twelve", "c five c six"); every engine that wrote digits ("12", "C5-C6")
+scored an error per number. `metrics.normalize_words` now canonicalises number
+words and spinal levels, as it already did units. All numbers below use it.
+
+| piper set, 54 min | raw term error | term error after pipeline | WER after pipeline | real-time factor |
+|---|---|---|---|---|
+| Parakeet TDT v3, greedy (old default) | 21.8 % | 12.6 % | 6.4 % | 0.11 |
+| **Parakeet TDT v2, greedy** | 17.0 % | 9.7 % | 5.3 % | 0.11 |
+| Whisper small.en (radiology prompt) | 13.8 % | 8.9 % | 6.0 % | 0.41 |
+| **Parakeet v2 + radiology hotwords (new default)** | 11.9 % | **7.7 %** | **4.5 %** | 0.15 |
+
+Hotwords cost about a third more decode time and still run 7x faster than
+real time; the pipeline had 154 words to fix after them against 201 without.
+
+**What changed because of it**
+
+1. **Default Parakeet v3 -> v2.** v3 adds 25 European languages and is worse at
+   English. Same speed, a quarter fewer term errors.
+2. **Hotwords at decode time** (`parakeet_hotword_engine.py`, sherpa-onnx beam
+   search, the 870-term lexicon, score 1.0). This is the vocabulary priming
+   Whisper always had and Parakeet never did. At score 2.0 it found more terms
+   but inserted them where they were not said, and WER rose, so 1.0.
+3. **Post-processing kept where it earns its place, and nowhere else.**
+   `scripts/eval/stage_attribution.py` scores each stage on its own. On
+   Parakeet, 3 of 14 stages change anything: the fuzzy medical dictionary
+   (152 fixed / 2 broken), terminology, and the compound re-joiner. Then:
+   * British spelling for ordinary words (`medical/spelling.py`): Parakeet
+     writes "characterize", "caliber" in all 5 voices.
+   * "venus" -> "venous", "computer tomography" -> "computed": never valid in
+     a report, seen 7 and 5 times.
+   * The terminology stage's only false corrections came from collapsing noun
+     and adjective ("echogenic foci" -> "echogenicity foci"); it now keeps the
+     spoken form.
+   * The fuzzy stage rewrote British spellings ("characterise" -> "characters")
+     because its English list is American; British forms now count as words.
+   Result on the same v3 decodes: 205 fixed / 9 broken -> 247 / 2.
+   Rules were admitted only as general facts (never-valid word, spelling
+   convention), not as fits to this set.
+4. **What remains is acoustic**: steatosis heard as "stenosis", hypodense as
+   "hyperdense", impression as "depression". A text rule cannot safely change
+   one real medical word into another; only a model that hears it correctly
+   can. That is what the hotwords and the fine-tune kit
+   (`scripts/finetune/`) are for, and the `own` set is still the only gate
+   that counts.
+
+**Audio pre-processing: by evidence, the right amount is almost none.**
+Denoising measurably hurts modern recognisers (worse semantic WER in all 40
+model/condition pairs on medical audio, Whisper and Parakeet included,
+arXiv 2512.17562); both models normalise level themselves (Parakeet per
+feature, Whisper relative to the clip's own peak); vendors ask for unprocessed
+audio. So the web app now asks the browser for raw audio (noise suppression,
+auto-gain and echo cancellation off: the page plays nothing), resamples once
+with a proper anti-aliasing filter when the browser cannot (Firefox), and
+*watches* the level instead of changing it: it warns on clipping and on a
+microphone too quiet to trust, the two things that cannot be fixed afterwards.
+
 ## What would move the needle next
 
 Ranked by expected value, given everything above:

@@ -5,8 +5,10 @@ shows a dialog, the web app answers 409. Neither owns the rules, so neither can
 drift from the other; this module has no Qt, no HTTP and no dialog vocabulary
 in it.
 
-1. **Unfilled template fields** (``unfilled_fields``): report quality. The
-   answer *can* cancel: "No" means the report does not leave. Not audited.
+1. **Report checks** (``report_warnings``): unfilled template fields, plus
+   the consistency checks in :mod:`src.features.report_checks` (side, sex,
+   impression). Asked together, once. The answer *can* cancel: "No" means the
+   report does not leave. Not audited.
 2. **Critical or urgent findings** (``check_release`` / ``record_release``):
    clinical safety. The report is **never withheld**: a radiologist must always
    be able to get their report out, so both answers proceed and only the audit
@@ -23,11 +25,11 @@ timer is exactly what trains people to click the real one away.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from datetime import datetime
+from typing import Optional, Sequence, Tuple
 
-from src.features import audit_log
+from src.features import audit_log, report_checks, template_fields
 from src.medical.critical_findings import (
     CriticalFinding,
     format_findings_for_dialog,
@@ -36,21 +38,38 @@ from src.medical.critical_findings import (
 
 logger = logging.getLogger(__name__)
 
-#: What a template leaves behind for the radiologist to fill in: a SHOUTED
-#: bracketed name (``[FINDINGS]``) or a moustache placeholder (``{{name}}``).
-#: Deliberately narrow: ``[5 mm]`` and ``[Findings]`` are ordinary text.
-_UNFILLED_FIELD_RE = re.compile(r"\[([A-Z][A-Z0-9 _/-]{1,40})\]|\{\{([^}]{1,40})\}\}")
-
-
 def unfilled_fields(text: str) -> Tuple[str, ...]:
-    """Return the placeholder names still in *text*, in first-appearance order.
+    """The template fields still in *text*, once each, in first-appearance order.
 
-    Each name appears once however often it was left in the report: the
-    question asked is "which fields are unfilled?", not "how many brackets are
-    there?". Empty when the report is clean.
+    What counts as a field is decided in :mod:`src.features.template_fields`,
+    the same definition field navigation uses. Empty when the report is clean.
     """
-    names = [m[0] or m[1] for m in _UNFILLED_FIELD_RE.findall(text)]
-    return tuple(dict.fromkeys(names))
+    return template_fields.unfilled_fields(text)
+
+
+@dataclass(frozen=True)
+class ReportWarnings:
+    """What the radiologist is asked about before release; may cancel."""
+
+    fields: Tuple[str, ...] = ()
+    issues: Tuple[str, ...] = ()
+
+    def __bool__(self) -> bool:
+        return bool(self.fields or self.issues)
+
+
+def report_warnings(text: str, sex: str = "") -> ReportWarnings:
+    """Unfilled fields and consistency issues in *text*, for one question.
+
+    Fails open, like the findings scan: a broken check must never stop a
+    report leaving, so a fault is logged and that check is skipped.
+    """
+    try:
+        issues = tuple(i.message for i in report_checks.check_report(text, sex))
+    except Exception as exc:  # a checker fault must not block a report
+        logger.warning("Report consistency check failed: %s", exc)
+        issues = ()
+    return ReportWarnings(unfilled_fields(text), issues)
 
 
 @dataclass(frozen=True)
@@ -115,10 +134,8 @@ class OutstandingFindings:
     acknowledgement given for one patient silently answers the identical
     finding for the next one.
 
-    Currently read by the desktop front-end only
-    (:mod:`src.ui.finding_marks`, :mod:`src.ui.main_window`); the web app
-    gates exports through :func:`check_release` per request and has no
-    equivalent of the always-visible count.
+    Read by both front-ends: the desktop gutter (:mod:`src.ui.finding_marks`)
+    and the web app's ``/api/report/findings``, which draws the same strip.
     """
 
     #: What the last :meth:`update` found. Empty until the first scan.
@@ -169,8 +186,61 @@ class OutstandingFindings:
         return "outstanding" if self.outstanding else "acknowledged"
 
 
+#: How a finding can be communicated; the first is the default offered.
+COMMUNICATION_METHODS: Tuple[str, ...] = (
+    "telephone", "in person", "secure message", "bleep",
+)
+
+
+@dataclass(frozen=True)
+class Communication:
+    """Who a finding was communicated to, how, when, and by whom.
+
+    The ACR practice parameter on communicating imaging findings asks for the
+    date, time, method and recipient to be documented, and for the record to
+    say it happened, not that it will ("will be notified" does not count).
+    """
+
+    recipient: str
+    method: str
+    at: datetime
+    radiologist: str = ""
+
+
+def _list_words(words: Sequence[str]) -> str:
+    if len(words) <= 1:
+        return "".join(words)
+    return ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def communication_statement(
+    findings: Sequence[CriticalFinding], comm: Communication
+) -> str:
+    """The sentence that goes into the report, in the past tense.
+
+    ``"Findings of tension pneumothorax were communicated to Dr Patel by
+    telephone at 14:20 on 23/10/2026 by Dr Shah."``
+    """
+    terms = list(dict.fromkeys(f.term.lower() for f in findings))
+    noun = "Finding" if len(terms) == 1 else "Findings"
+    verb = "was" if len(terms) == 1 else "were"
+    by = f" by {comm.radiologist}" if comm.radiologist else ""
+    return (
+        f"{noun} of {_list_words(terms)} {verb} communicated to {comm.recipient} "
+        f"by {comm.method} at {comm.at:%H:%M} on {comm.at:%d/%m/%Y}{by}."
+    )
+
+
+def add_communication_statement(text: str, statement: str) -> str:
+    """*text* with *statement* as its last paragraph; unchanged if already there."""
+    if statement in text:
+        return text
+    return f"{text.rstrip()}\n\n{statement}\n"
+
+
 def record_release(
-    findings: Tuple[CriticalFinding, ...], patient_id: str, acknowledged: bool
+    findings: Tuple[CriticalFinding, ...], patient_id: str, acknowledged: bool,
+    communication: Optional[Communication] = None,
 ) -> None:
     """Write the radiologist's answer to the audit log.
 
@@ -186,8 +256,15 @@ def record_release(
     if not findings:
         return
     if acknowledged:
+        comm = communication
         for f in findings:
-            audit_log.log_critical_finding_acknowledged(f.term, patient_id, f.level)
+            audit_log.log_critical_finding_acknowledged(
+                f.term, patient_id, f.level,
+                recipient=comm.recipient if comm else "",
+                method=comm.method if comm else "",
+                communicated_at=comm.at.isoformat(timespec="minutes") if comm else "",
+                radiologist=comm.radiologist if comm else "",
+            )
     else:
         audit_log.log_critical_finding_overridden(
             "; ".join(f.term for f in findings), patient_id

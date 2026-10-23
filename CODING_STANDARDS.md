@@ -67,17 +67,24 @@ module boundaries, and for `.claude/` agents/skills/workflows, see
 
 ## File I/O & state
 
-- Route filesystem paths through `features/file_manager.py` helpers rather
+- Route filesystem paths through `core/paths.py` helpers rather
   than hardcoding paths; this keeps `data/` layout in one place.
 - Persistent state is file-first and human-inspectable (JSON settings/registry,
   SQLite only where relational queries are needed, e.g. the staging DB).
 
 ## Checking a change
 
-- There is no automated test suite. A change is checked by running the app and
-  exercising the path it touched: `python -m src.ui` for the desktop,
-  `python -m src.ui.web_app` for the browser.
-- `ruff check src scripts` must be green before shipping a change.
+- A change is checked by running the app and exercising the path it touched:
+  `python -m src.ui` for the desktop, `python -m src.ui.web_app` for the
+  browser. Tests catch logic; only the running app catches the rest.
+- The clinical-safety modules have tests, written as tables of clinical
+  sentences and their expected answers, not as a coverage matrix: critical
+  findings, the release gate and its checks, template fields, de-identification
+  and the AI-cleanup gate, plus the live-dictation streaming rules. Change one
+  of those rules and its table changes in the same commit, test first.
+- `ruff check src tests scripts` and `python -m pytest -q` must be green; CI
+  (`.github/workflows/ci.yml`) runs both on every push. The ruff rule set is
+  pinned in `pyproject.toml`, because ruff's defaults change between versions.
 - Exercise the safety-critical paths by hand when you touch them: PHI
   de-identification, the cloud consent gate, untrusted-archive extraction, and
   the release gate on every exit (Copy, Save TXT, Export Word). These are the

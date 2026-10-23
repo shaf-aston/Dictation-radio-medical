@@ -88,7 +88,7 @@ def analyze_scan(
 
     overlay_path = None
     if confirmed:
-        from src.features.file_manager import imaging_overlay_dir
+        from src.core.paths import imaging_overlay_dir
         out = imaging_overlay_dir() / f"overlay_{uuid.uuid4().hex[:8]}.png"
         overlay_path = localization.render_overlay(image_path, confirmed, out)
 

@@ -29,6 +29,7 @@ import re
 from typing import List, Tuple
 
 from src.core import perf
+from src.dictation.postprocess.voice_commands import SCRATCH_PATTERN
 from src.dictation.postprocess.pipeline import (
     postprocess_transcript,
     postprocess_transcript_with_changes,
@@ -91,6 +92,10 @@ class IncrementalPostprocessor:
             cumulative list for the corrections banner.
         """
         split = _last_sentence_start(text, committed_len)
+        # "Scratch that" can remove the sentence before it, which may already
+        # sit in the cached prefix: only a whole-document pass can see both.
+        if SCRATCH_PATTERN.search(text):
+            split = 0
         if split <= 0:
             # Nothing safely frozen yet: process the whole document.
             self.reset()
@@ -142,7 +147,7 @@ class IncrementalPostprocessor:
             return ""
         with perf.stage("postprocess.incremental_piece"):
             return postprocess_transcript(
-                text, self.accent, self.cleanup_level, live=True
+                text, self.accent, self.cleanup_level
             )
 
     def _process_with_changes(self, text: str) -> Tuple[str, List[str]]:
@@ -150,5 +155,5 @@ class IncrementalPostprocessor:
             return "", []
         with perf.stage("postprocess.incremental_tail"):
             return postprocess_transcript_with_changes(
-                text, self.accent, self.cleanup_level, live=True
+                text, self.accent, self.cleanup_level
             )

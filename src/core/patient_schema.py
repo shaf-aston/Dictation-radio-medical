@@ -21,10 +21,19 @@ PATIENT_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("study_date", "Study Date"),
     ("referring", "Referring"),
     ("accession", "Accession #"),
+    # F, M, X or blank. Read by the sex-mismatch check (features/report_checks).
+    ("sex", "Sex"),
 )
 
 #: Field keys only, in order.
 PATIENT_KEYS: Tuple[str, ...] = tuple(key for key, _ in PATIENT_FIELDS)
+
+#: Fields whose value names one person, and so is scrubbed from any text that
+#: leaves the device (src/medical/deid.py). Sex is left out on purpose: as a
+#: one-letter code it is too short to scrub, and as a word ("female") scrubbing
+#: it would delete clinical wording, not an identifier. A new field is an
+#: identifier unless it is added to this exclusion with a reason.
+IDENTIFYING_KEYS: Tuple[str, ...] = tuple(key for key in PATIENT_KEYS if key != "sex")
 
 
 def empty_patient_info() -> Dict[str, str]:

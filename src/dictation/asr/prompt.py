@@ -7,7 +7,7 @@ from ``src.dictation.asr``.
 
 from __future__ import annotations
 
-from src.features.file_manager import radiology_prompt_path
+from src.core.paths import radiology_prompt_path
 
 
 def _load_radiology_prompt() -> str:

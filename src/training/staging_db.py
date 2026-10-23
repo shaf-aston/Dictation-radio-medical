@@ -77,7 +77,7 @@ class StagingDB:
 
     def __init__(self, db_path: Optional[Path] = None) -> None:
         if db_path is None:
-            from src.features.file_manager import staging_db_path
+            from src.core.paths import staging_db_path
             db_path = staging_db_path()
         self._path = Path(db_path)
         self._lock = threading.Lock()

@@ -1,7 +1,8 @@
 # CLAUDE.md: Architecture & Module Map
 
 Radio Dictate is an **offline medical dictation workstation** for radiologists.
-ASR (automatic speech recognition) runs locally via Parakeet (`onnx-asr`), with
+ASR (automatic speech recognition) runs locally via Parakeet TDT v2 (sherpa-onnx,
+biased toward the radiology lexicon with hotwords; `onnx-asr` for a fine-tune), with
 Whisper (`faster-whisper`) behind it; by default **no audio or text leaves the device**. Two front-ends share one
 dictation core: a PySide6 desktop GUI and a FastAPI web app.
 
@@ -11,7 +12,10 @@ Read this first. For conventions, see [CODING_STANDARDS.md](CODING_STANDARDS.md)
 
 ```
 src/
-├── core/        settings.py (JSON at project root) · logging_setup.py ·
+├── core/        settings.py (JSON at project root) · paths.py (every file path
+│                  the app uses: data/, cache/, templates; one place, so the
+│                  data layout and a future per-user data dir have one seam) ·
+│                  logging_setup.py ·
 │                  json_store.py (shared atomic JSON + JSONL read/write) ·
 │                  keychain.py (OS-keychain secret helpers, wraps keyring) ·
 │                  patient_schema.py (the patient-info fields, declared once) ·
@@ -47,14 +51,21 @@ src/
 │   │                       by a 30s circuit breaker) ·
 │   │                       engines/faster_whisper_engine.py (the CTranslate2
 │   │                       wrapper and its port adapter, one file) ·
-│   │                       engines/parakeet_engine.py (onnx-asr; no prompt,
+│   │                       engines/parakeet_hotword_engine.py (the default:
+│   │                       sherpa-onnx beam search boosted by the 870-term
+│   │                       radiology lexicon; measured 35% fewer term errors
+│   │                       than greedy, same speed) ·
+│   │                       engines/parakeet_engine.py (onnx-asr greedy; loads a
+│   │                       fine-tuned export from scripts/finetune/; no prompt,
 │   │                       one model shared process-wide) · prompt.py
 │   │                       (the radiology priming vocabulary, same for every
 │   │                       engine) · models.py (known model names + fallback)
 │   ├── stream/             chunk-once streaming, vad.py (Silero VAD, bundled
 │   │                       with faster-whisper, no new dep) · segmenter.py
 │   │                       (pure VAD-marks→chunk-cuts policy) · policy.py
-│   │                       (chunk sizes from the engine's cost) · live_session.py
+│   │                       (chunk sizes from the engine's cost; LiveKnobs, the
+│   │                        eight dictation settings both front-ends hand a
+│   │                        LiveSession, read in one place) · live_session.py
 │   │                       (the Qt-free live loop: a push-fed audio buffer
 │   │                        instead of the desktop's growing WAV, so the web
 │   │                        app streams over a WebSocket using these same
@@ -72,11 +83,21 @@ src/
 │   └── resources/        radiology_prompt.txt (Whisper priming prompt, ~200 terms)
 ├── ui/          main_window.py · views.py · recording_session.py · dialogs.py
 │   ├── postprocess_worker.py  runs the pipeline OFF the UI thread, latest-only
-│   ├── web_app.py        FastAPI single-page app (host/port from settings),
-│   │                       plus /developer, the local diagnostics table of
-│   │                       recorded runs (unlisted; no link from the report UI),
-│   │                       and GET /api/debug/events + /api/debug/perf, which
-│   │                       are what the in-page developer console reads
+│   ├── web_app.py        assembles the FastAPI app (start-up, routers);
+│   │                       `python -m src.ui.web_app` (host/port from settings)
+│   ├── web/              one router per job, all thin over features/:
+│   │                       state.py (the only between-request state: settings,
+│   │                       cached engines, the open report's findings; the
+│   │                       seam for per-user state later) · schemas.py ·
+│   │                       pages.py (page, assets, bootstrap payload) ·
+│   │                       preferences.py · report.py (release gate, exports) ·
+│   │                       terms.py (marks, suggestions, learning) ·
+│   │                       diagnostics.py (/api/runs, /api/debug/events +
+│   │                       /perf, which the developer console and the unlisted
+│   │                       /developer page read) · dictate.py (/ws/dictate)
+│   ├── field_navigation.py  Tab / Shift+Tab select the next / previous
+│   │                       template field (keys are settings, so a dictation
+│   │                       mic's buttons can send them); app.js does the same
 │   ├── term_popup.py · term_marks.py   highlight a word → suggestions; and the
 │   │                       marks saying which word to highlight. Both are view
 │   │                       overlays (ExtraSelection / an underlay div): never
@@ -113,9 +134,18 @@ src/
 │                           all import it downward without dictation touching
 │                           src.cloud.*
 ├── features/    accent_corrections.py · adaptive_learning.py · audit_log.py
+│   ├── template_fields.py  what a template field is ([Right / Left], [X]),
+│   │                       declared once: the release gate, Tab navigation and
+│   │                       pick-list answers ("left") all read it; the web page
+│   │                       gets the pattern in its bootstrap payload
+│   ├── report_release.py   the gate on every exit (Copy/Save/Word): report
+│   │                       checks first (can go back), then critical findings
+│   │                       (never withheld; records who was told, how, when)
+│   ├── report_checks.py    side / sex / missing-impression checks, scored on
+│   │                       scripts/eval/report_checks_corpus.py
 │   ├── run_log.py        one capped JSONL record per dictation (timings +
 │   │                       optional report text), the history behind /developer
-│   └── file_manager.py · report_manager.py · report_analyzer.py
+│   └── report_manager.py
 ├── imaging/     OPTIONAL local chest X-ray assistant (offline inference)
 │   ├── classifier.py     TorchXRayVision DenseNet121 wrapper (lazy torch)
 │   ├── abstention.py     calibrated rejection gate, the imaging safety gate
@@ -162,12 +192,24 @@ Other optional, off-by-default add-ons:
 
 ```
 desktop:  microphone → audio.py → growing WAV → worker.py (QThread adapter)
-web:      microphone → AudioWorklet → /ws/dictate (16-bit PCM @16k)
+web:      microphone (raw: browser noise suppression, auto-gain, echo
+          cancellation all off) → AudioWorklet (resampler.js only where the
+          browser cannot run at 16 kHz) → /ws/dictate (16-bit PCM @16k)
 both:     → stream/live_session.py (one loop: Deepgram's live socket when it
             streams, else chunk-once over an in-memory buffer)
           → asr/ (AsrEngine port → Parakeet, Whisper behind it) → postprocess/ (10 stages)
           → UI (views.py / web_app.py) → report_manager.py (.docx / .txt export)
 ```
+
+**Dictation goes in at the caret, not at the end.** The dictated region has
+two ends (desktop: two `QTextCursor`s, the start fixed on insert and the end
+growing; web: the text before and after the caret), and text after the region,
+the rest of a template, is never rewritten. A selected template field is
+replaced; if the dictation is exactly one of a pick-list's options it becomes
+that option (`template_fields.resolve_choice`, run by the desktop renderer and
+by the web server). Saying "next field" mid-recording is not built: it would
+split the region inside the live loop; Tab (or a mic button) does it between
+dictations.
 
 Both front-ends use two models: `live_model_size` (fast) decodes what appears
 while you speak, and `model_size` re-decodes the low-confidence chunks after
@@ -184,7 +226,7 @@ session exists (`recording_session._abandon_unfinished_session`), so a stale
 pass cannot reach the new document.
 
 Front-end files are cached in memory keyed on the file's modification time
-(`web_app._frontend_cache`), and every page and asset is served `no-store`. Both
+(`web/pages._frontend_cache`), and every page and asset is served `no-store`. Both
 halves matter: without the mtime key an edit to app.js needed a server restart,
 and without `no-store` the browser kept running the previous release's script
 against the current server: which is how the page went on using the old
@@ -315,7 +357,9 @@ when work touches that folder: the front-ends and their diagnostics
 (`src/dictation/postprocess/CLAUDE.md`), cloud fine-tuning (`src/cloud/CLAUDE.md`,
 opt-in), the scan assistant (`src/imaging/CLAUDE.md`, opt-in), and the
 accuracy-measuring harness (`scripts/eval/CLAUDE.md`). Any change to transcription or
-post-processing is judged by that harness's numbers, not by reading a sample:
+post-processing is judged by that harness's numbers, not by reading a sample
+(`stage_attribution.py` scores each post-processing stage on its own;
+`rescore.py` re-runs the pipeline on stored decodes in seconds):
 read `scripts/eval/CLAUDE.md` and [docs/dictation-accuracy.md](docs/dictation-accuracy.md)
 before proposing an accuracy change; several obvious ones are already refuted
 there.
@@ -347,12 +391,17 @@ there.
   reaches the radiologist only if its label was trained AND its probability ≥
   the calibrated threshold AND Grad-CAM produced a region. Always an assistive
   suggestion with a non-diagnostic disclaimer: never a diagnosis.
-- **AI cleanup is off by default, scrubbed, and lossless on failure**: Groq
-  cleanup runs only when enabled + consented, de-identifies before sending,
-  edits only language (never clinical content), and returns the input
-  unchanged on any error.
+- **AI cleanup is off by default, scrubbed, reviewed, and lossless on
+  failure**: Groq cleanup runs only when enabled + consented, de-identifies
+  before sending (with the patient's own name and ID), edits only language
+  (never clinical content), returns the input unchanged on any error, and is
+  applied only after the radiologist accepts it (`ui/dialogs.offer_ai_cleanup`,
+  the one path, from the menu or the 'hard' level). The pipeline never calls it.
+- **No rule swaps one diagnosis for another.** A rule may fix a mishearing
+  ("menescus" → "meniscus") or a spelling convention, never a word the
+  radiologist chose ("tendinitis" stays "tendinitis").
 - **Settings file is `dictation_settings.json` at the project root.**
-- **File I/O goes through `features/file_manager.py`** path helpers
+- **File I/O goes through `core/paths.py`** path helpers
   (`autosave_dir`, `staging_db_path`, `model_registry_path`, `fine_tuned_dir`,
   `imaging_thresholds_path`, `imaging_overlay_dir`, …).
 - **Every rebuildable cache lives under `data/cache/`** (`cache_dir()`:
@@ -366,7 +415,8 @@ there.
 ```bash
 python -m src.ui            # desktop GUI
 python -m src.ui.web_app    # web app on 127.0.0.1:8005
-ruff check src tests
+ruff check src tests scripts
+python -m pytest -q          # safety tables + streaming rules; CI runs both
 npx pyright src              # type check (optional-dep import warnings expected)
 
 # Accuracy + speed measurement: see scripts/eval/CLAUDE.md

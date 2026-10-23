@@ -18,7 +18,7 @@ from src.dictation.asr.models import SUPPORTED_MODELS, resolve_model
 from src.dictation.postprocess import CLEANUP_LEVEL_LABELS
 from src.features.accent_corrections import ACCENT_LABELS
 from src.medical import macros
-from src.features.file_manager import templates_dir
+from src.core.paths import templates_dir
 from src.ui.collapsible import Section
 from src.ui.finding_marks import FindingGutter
 from src.ui.styles import set_findings_state, set_level_state, set_status_state
@@ -127,6 +127,11 @@ def build_patient_panel(window: MainWindow) -> QFrame:
     window.patient_study_date = make_field("Study date", 100)
     window.patient_referrer = make_field("Referring clinician", 180)
     window.patient_accession = make_field("Accession #", 130)
+    # Optional. Only F and M are checked against the report (report_checks):
+    # anything else, or blank, and the sex check is skipped, never guessed.
+    window.patient_sex = QComboBox()
+    window.patient_sex.addItems(["", "F", "M", "X"])
+    window.patient_sex.setToolTip("Sex: used to check for organs of the other sex")
 
     row1.addWidget(QLabel("Name:"))
     row1.addWidget(window.patient_name)
@@ -142,6 +147,8 @@ def build_patient_panel(window: MainWindow) -> QFrame:
     row2.addWidget(window.patient_referrer)
     row2.addWidget(QLabel("Acc #:"))
     row2.addWidget(window.patient_accession)
+    row2.addWidget(QLabel("Sex:"))
+    row2.addWidget(window.patient_sex)
     row2.addStretch()
 
     layout.addLayout(row1)
@@ -296,10 +303,11 @@ def build_editor_panel(window: MainWindow) -> QWidget:
     # Main editor
     window.editor = QTextEdit()
     window.editor.setPlaceholderText(
-        "Dictated text appears here.\n\n"
-        "F5 = Start recording   F6 = Stop\n"
-        "Load a template, then dictate into each section.\n"
-        "Use quick phrases on the left for common findings."
+        "Dictated text appears here, at the cursor.\n\n"
+        "F5 = Start recording   F6 = Stop   F2 = Start / stop\n"
+        "Load a template, press Tab to select the next field, then dictate.\n"
+        "Say \"scratch that\" to remove the last sentence, or\n"
+        "\"insert\" and a quick phrase's name to write the phrase."
     )
     font = QFont("Consolas", window.settings.get("font_size", 13))
     window.editor.setFont(font)

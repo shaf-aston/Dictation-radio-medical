@@ -5,11 +5,29 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import QDateTime
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDateTimeEdit,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from src.features import clinical_disclaimer
 from src.features.adaptive_learning import get_adaptive_learning
-from src.features.report_release import unfilled_fields
+from src.features.report_release import (
+    COMMUNICATION_METHODS,
+    Communication,
+    ReleaseCheck,
+    report_warnings,
+)
 
 if TYPE_CHECKING:
     from src.ui.main_window import MainWindow
@@ -242,28 +260,48 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
 
 
 def on_run_ai_cleanup(window: MainWindow) -> None:
-    """Run Groq cleanup on the current report and apply the result in-editor."""
+    """Tools → AI Cleanup: polish the current report, applied only if accepted."""
+    offer_ai_cleanup(window, automatic=False)
+
+
+def offer_ai_cleanup(window: MainWindow, *, automatic: bool) -> None:
+    """Ask Groq for a polished report and apply it only if the radiologist accepts.
+
+    The one path AI cleanup takes, from the menu or from the 'hard' cleanup
+    level after Stop. It never replaces the report unseen, and it always
+    passes the patient's details, so the de-identifier scrubs the known name
+    and ID rather than guessing at them. ``automatic`` (after Stop) stays
+    quiet when there is nothing to do: no pop-up for a disabled feature.
+    """
     from src.dictation.postprocess.llm_cleanup import clean_with_llm, is_enabled
 
-    text = window.editor.toPlainText().strip()
-    if not text:
-        window._show_status("Nothing to clean up", 2000)
+    text = window.editor.toPlainText()
+    if not text.strip():
+        if not automatic:
+            window._show_status("Nothing to clean up", 2000)
         return
     if not is_enabled():
-        QMessageBox.information(
-            window, "AI Cleanup Disabled",
-            "Enable AI cleanup first in Settings → AI Cleanup (Groq).")
+        if not automatic:
+            QMessageBox.information(
+                window, "AI Cleanup Disabled",
+                "Enable AI cleanup first in Settings → AI Cleanup (Groq).")
         return
 
     window._show_status("Running AI cleanup…", 0)
     try:
         cleaned, changes = clean_with_llm(text, window._get_patient_info())
     except Exception as exc:   # clean_with_llm is already best-effort; belt & braces
-        QMessageBox.warning(window, "AI Cleanup Failed", f"Could not clean up: {exc}")
+        if not automatic:
+            QMessageBox.warning(window, "AI Cleanup Failed", f"Could not clean up: {exc}")
         return
 
     if cleaned == text:
         window._show_status("AI cleanup made no changes", 3000)
+        return
+    if window.editor.toPlainText() != text:
+        # Edited while the request was out: the suggestion is for a report
+        # that no longer exists, and applying it would undo the edit.
+        window._show_status("AI cleanup dropped: the report was edited", 3000)
         return
 
     summary = "\n".join(f"  • {c}" for c in changes[:10]) or "  • (formatting only)"
@@ -271,11 +309,13 @@ def on_run_ai_cleanup(window: MainWindow) -> None:
         window, "Apply AI Cleanup?",
         f"The AI suggested {len(changes)} change(s):\n\n{summary}\n\n"
         "Apply them to the report? Review carefully before signing off.",
-        _Yes | _No, _Yes,
+        _Yes | _No, _No,
     )
     if reply == _Yes:
         window.editor.setPlainText(cleaned)
         window._show_status("AI cleanup applied", 3000)
+    else:
+        window._show_status("AI cleanup not applied", 2000)
 
 
 def show_scan_assistant_dialog(window: MainWindow) -> None:
@@ -453,28 +493,102 @@ def show_disclaimer_if_needed(window: MainWindow) -> None:
     clinical_disclaimer.mark_shown(window.settings)
 
 
-def confirm_unfilled_fields(window: MainWindow) -> bool:
-    """Ask before releasing a report that still has template fields in it.
+def confirm_report_checks(window: MainWindow) -> bool:
+    """Ask before releasing a report with unfilled fields or a consistency issue.
 
-    The desktop shape of ``report_release.unfilled_fields``: what counts as
-    unfilled lives there, alongside the web app's 409. This function owns only
-    the message box, including how many names fit in it. Returns True to
-    proceed; False means the radiologist cancelled and the report stays put.
+    The desktop shape of ``report_release.report_warnings``: the rules live
+    there, alongside the web app's 409. This function owns only the message
+    box, including how much fits in it. Returns True to proceed; False means
+    the radiologist went back to fix it and the report stays put.
     """
-    fields = unfilled_fields(window.editor.toPlainText())
-    if not fields:
+    found = report_warnings(
+        window.editor.toPlainText(), window._get_patient_info().get("sex", "")
+    )
+    if not found:
         return True
+
+    def short(line: str) -> str:
+        return line if len(line) <= 90 else line[:89] + "…"
+
+    parts = []
+    if found.issues:
+        parts.append("Worth a second look:\n" + "\n".join(f"  • {short(i)}" for i in found.issues[:8]))
+    if found.fields:
+        parts.append(
+            f"{len(found.fields)} unfilled template field(s):\n"
+            + "\n".join(f"  • {short(f)}" for f in found.fields[:10])
+            + ("\n  …" if len(found.fields) > 10 else "")
+        )
     reply = QMessageBox.warning(
         window,
-        "Unfilled Template Fields",
-        f"The report contains {len(fields)} unfilled field(s):\n\n"
-        + "\n".join(f"  • {f}" for f in fields[:10])
-        + ("\n  …" if len(fields) > 10 else "")
-        + "\n\nDo you want to proceed anyway?",
+        "Check the report",
+        "\n\n".join(parts) + "\n\nRelease the report anyway?",
         _Yes | _No,
         _No,
     )
     return reply == _Yes
+
+
+class CommunicationDialog(QDialog):
+    """Ask whether a critical finding was communicated, and to whom, how, when.
+
+    The desktop shape of the web app's #commModal. Never withholds the report:
+    both buttons release it and only the audit entry differs. "Communicated"
+    needs a recipient, because the record it writes says someone was told.
+    """
+
+    def __init__(self, parent: QWidget, check: ReleaseCheck, radiologist: str) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(
+            "Life-threatening finding" if check.worst_level == 1 else "Urgent finding"
+        )
+        layout = QVBoxLayout(self)
+        summary = QLabel(
+            check.summary + "\n\nConfirm it was communicated to the referring clinician."
+        )
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+
+        form = QFormLayout()
+        self.recipient = QLineEdit()
+        self.recipient.setPlaceholderText("Dr Patel, ED registrar")
+        self.method = QComboBox()
+        self.method.addItems([m[0].upper() + m[1:] for m in COMMUNICATION_METHODS])
+        self.at = QDateTimeEdit(QDateTime.currentDateTime())
+        self.at.setDisplayFormat("dd/MM/yyyy HH:mm")
+        self.radiologist = QLineEdit(radiologist)
+        form.addRow("Told to:", self.recipient)
+        form.addRow("How:", self.method)
+        form.addRow("When:", self.at)
+        form.addRow("Your name:", self.radiologist)
+        layout.addLayout(form)
+        self.add_to_report = QCheckBox("Add this to the report")
+        self.add_to_report.setChecked(True)
+        layout.addWidget(self.add_to_report)
+
+        buttons = QDialogButtonBox()
+        self.btn_communicated = buttons.addButton(
+            "Communicated", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        buttons.addButton(
+            "Not communicated: release anyway", QDialogButtonBox.ButtonRole.RejectRole
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.btn_communicated.setEnabled(False)
+        self.recipient.textChanged.connect(
+            lambda text: self.btn_communicated.setEnabled(bool(text.strip()))
+        )
+        self.recipient.setFocus()
+
+    def communication(self) -> Communication:
+        return Communication(
+            self.recipient.text().strip(),
+            COMMUNICATION_METHODS[self.method.currentIndex()],
+            self.at.dateTime().toPython(),  # type: ignore[arg-type]
+            self.radiologist.text().strip(),
+        )
 
 
 def on_show_learning_stats(window: MainWindow) -> None:
@@ -625,144 +739,4 @@ def show_correction_rules_dialog(window: MainWindow) -> None:
             QMessageBox.warning(dialog, "Error", f"Could not save rules: {exc}")
 
     save_btn.clicked.connect(_save)
-    dialog.exec()
-
-
-def show_image_label_dialog(window: MainWindow) -> None:
-    """Dialog for manually labeling a chest X-ray image.
-
-    User selects an image file (PNG/JPG), assigns confidence labels to each
-    pathology, and consents to upload de-identified data for training.
-    Emits 'image_label_ready' signal on OK with the ImageLabelRecord.
-    """
-    from datetime import datetime, timezone
-    from pathlib import Path
-    from PySide6.QtWidgets import (
-        QCheckBox, QDialog, QFileDialog, QLabel,
-        QPushButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
-    )
-    from PySide6.QtCore import Qt
-    from src.training.schemas import ImageLabelRecord
-    from src.training.collector import CorrectionCollector
-
-    dialog = QDialog(window)
-    dialog.setWindowTitle("Label Chest X-Ray Image")
-    dialog.setMinimumSize(560, 600)
-    layout = QVBoxLayout(dialog)
-
-    # File picker
-    file_layout = QVBoxLayout()
-    file_label = QLabel("No image selected")
-    file_label.setWordWrap(True)
-    file_layout.addWidget(QLabel("Image file:"))
-    file_layout.addWidget(file_label)
-
-    def pick_file():
-        path, _ = QFileDialog.getOpenFileName(
-            dialog, "Select X-Ray Image", "",
-            "Images (*.png *.jpg *.jpeg *.bmp);;All Files (*)"
-        )
-        if path:
-            file_label.setText(Path(path).name)
-            dialog._image_path = path  # type: ignore
-
-    pick_btn = QPushButton("Browse...")
-    pick_btn.clicked.connect(pick_file)
-    file_layout.addWidget(pick_btn)
-    layout.addLayout(file_layout)
-
-    # Pathology labels with sliders
-    layout.addWidget(QLabel("Pathology confidence (0–100%):"))
-    scroll = QScrollArea()
-    scroll.setWidgetResizable(True)
-    scroll_widget = QWidget()
-    scroll_layout = QVBoxLayout(scroll_widget)
-
-    _PATHOLOGIES = [
-        "Atelectasis", "Cardiomegaly", "Consolidation", "Edema",
-        "Effusion", "Emphysema", "Enlarged Cardiomediastinum", "Fibrosis",
-        "Fracture", "Hernia", "Infiltration", "Lung Lesion", "Lung Opacity",
-        "Mass", "Nodule", "Pleural Thickening", "Pneumonia", "Pneumothorax",
-    ]
-
-    dialog._sliders = {}  # type: ignore
-    dialog._checkboxes = {}  # type: ignore
-
-    for path in _PATHOLOGIES:
-        hbox = QVBoxLayout()
-        cb = QCheckBox(path)
-        slider = QSlider(Qt.Orientation.Horizontal)
-        slider.setMinimum(0)
-        slider.setMaximum(100)
-        slider.setValue(0)
-        slider.setEnabled(False)
-        cb.stateChanged.connect(lambda checked, s=slider: s.setEnabled(checked))
-        slider.valueChanged.connect(lambda: None)  # updates live
-        hbox.addWidget(cb)
-        hbox.addWidget(slider)
-        scroll_layout.addLayout(hbox)
-        dialog._checkboxes[path] = cb  # type: ignore
-        dialog._sliders[path] = slider  # type: ignore
-
-    scroll.setWidget(scroll_widget)
-    layout.addWidget(scroll)
-
-    # Consent checkbox
-    consent_cb = QCheckBox(
-        "I consent to upload de-identified images for model training"
-    )
-    consent_cb.setChecked(False)
-    layout.addWidget(consent_cb)
-
-    # Buttons
-    ok_btn = QPushButton("OK")
-    ok_btn.setEnabled(False)
-    cancel_btn = QPushButton("Cancel")
-
-    def update_ok_button():
-        has_image = hasattr(dialog, "_image_path") and dialog._image_path  # type: ignore
-        has_labels = any(cb.isChecked() for cb in dialog._checkboxes.values())  # type: ignore
-        has_consent = consent_cb.isChecked()
-        ok_btn.setEnabled(has_image and has_labels and has_consent)
-
-    for cb in dialog._checkboxes.values():  # type: ignore
-        cb.stateChanged.connect(update_ok_button)
-    consent_cb.stateChanged.connect(update_ok_button)
-
-    def _on_ok():
-        if not hasattr(dialog, "_image_path"):
-            return
-        labels = {
-            path: float(dialog._sliders[path].value()) / 100.0  # type: ignore
-            for path in _PATHOLOGIES if dialog._checkboxes[path].isChecked()  # type: ignore
-        }
-        record = ImageLabelRecord(
-            image_path=dialog._image_path,  # type: ignore
-            labels=labels,
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            consent_flags={"image_labeling_consent": True},
-        )
-        try:
-            collector = CorrectionCollector()
-            success, msg = collector.capture_image_label(record)
-            if success:
-                window._show_status(msg, 3000)
-                dialog.accept()
-            else:
-                from PySide6.QtWidgets import QMessageBox
-                QMessageBox.warning(dialog, "Error", msg)
-        except Exception as exc:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(dialog, "Error", f"Failed to save: {exc}")
-
-    ok_btn.clicked.connect(_on_ok)
-    cancel_btn.clicked.connect(dialog.reject)
-
-    btn_layout = QVBoxLayout()
-    btn_layout.addStretch(1)
-    btn_layout.addWidget(ok_btn)
-    btn_layout.addWidget(cancel_btn)
-    layout.addLayout(btn_layout)
-
-    dialog._image_path = None  # type: ignore
     dialog.exec()

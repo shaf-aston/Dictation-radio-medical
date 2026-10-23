@@ -1,0 +1,76 @@
+"""Which Parakeet runs, and the files the hotword engine derives for itself.
+
+No model is loaded here: the factory's choice and the two derived files are
+the parts that can be wrong without anything failing loudly (a wrong
+``bpe.vocab`` splits hotwords into the wrong pieces and the boost silently
+does nothing).
+"""
+
+import importlib.util
+
+from src.dictation.asr import factory
+from src.dictation.asr.engines.parakeet_engine import ParakeetEngine
+from src.dictation.asr.engines.parakeet_hotword_engine import (
+    ParakeetHotwordEngine,
+    write_bpe_vocab,
+    write_hotwords,
+)
+
+
+def test_bpe_vocab_scores_are_the_pieces_ranks(tmp_path):
+    tokens = tmp_path / "tokens.txt"
+    tokens.write_text("<unk> 0\n▁t 1\n▁th 2\nin 3\n<blk> 4\n", encoding="utf-8")
+    write_bpe_vocab(tokens, tmp_path / "bpe.vocab")
+    assert (tmp_path / "bpe.vocab").read_text(encoding="utf-8").splitlines() == [
+        "<unk>\t0", "▁t\t-0", "▁th\t-1", "in\t-2",
+    ]
+
+
+def test_hotwords_are_lower_case_and_unique(tmp_path):
+    n = write_hotwords(["Pneumothorax", "pneumothorax", "Bone  marrow oedema", ""], tmp_path / "h.txt")
+    assert n == 2
+    assert (tmp_path / "h.txt").read_text().splitlines() == ["bone marrow oedema", "pneumothorax"]
+
+
+class _Settings(dict):
+    def get(self, key, default=None):
+        return super().get(key, default)
+
+
+def _tier(monkeypatch, installed, **settings):
+    real = importlib.util.find_spec
+    monkeypatch.setattr(
+        factory.importlib.util, "find_spec",
+        lambda name: object() if name in installed else (None if name in ("onnx_asr", "sherpa_onnx") else real(name)),
+    )
+    return factory._parakeet_tier(_Settings({"asr_hotwords": True, "hotword_score": 1.0, **settings}))
+
+
+def test_hotwords_engine_when_sherpa_is_installed(monkeypatch):
+    name, engine = _tier(monkeypatch, {"onnx_asr", "sherpa_onnx"})
+    assert (name, type(engine)) == ("parakeet-hotwords", ParakeetHotwordEngine)
+
+
+def test_greedy_engine_when_hotwords_are_off_or_unavailable(monkeypatch):
+    assert _tier(monkeypatch, {"onnx_asr", "sherpa_onnx"}, asr_hotwords=False)[0] == "parakeet"
+    assert _tier(monkeypatch, {"onnx_asr"})[0] == "parakeet"
+
+
+def test_a_fine_tuned_export_wins(monkeypatch, tmp_path):
+    name, engine = _tier(monkeypatch, {"onnx_asr", "sherpa_onnx"}, parakeet_model_dir=str(tmp_path))
+    assert name == "parakeet" and isinstance(engine, ParakeetEngine) and engine.model_dir == tmp_path
+
+
+def test_no_parakeet_without_either_runtime(monkeypatch):
+    assert _tier(monkeypatch, set()) is None
+
+
+def test_engine_label_names_what_actually_answers(monkeypatch, tmp_path):
+    real = importlib.util.find_spec
+    monkeypatch.setattr(factory.importlib.util, "find_spec",
+                        lambda name: object() if name in ("onnx_asr", "sherpa_onnx") else real(name))
+    base = {"asr_engine": "local", "asr_hotwords": True, "hotword_score": 1.0, "model_size": "base.en"}
+    assert factory.describe_engine(_Settings(base)) == "Parakeet + radiology terms"
+    assert factory.describe_engine(_Settings({**base, "asr_hotwords": False})) == "Parakeet"
+    assert factory.describe_engine(_Settings({**base, "parakeet_model_dir": str(tmp_path)})) == "Parakeet (your fine-tune)"
+    assert factory.describe_engine(_Settings({**base, "asr_engine": "deepgram"})) == "Deepgram (cloud)"

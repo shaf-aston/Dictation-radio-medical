@@ -26,7 +26,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from src.core.patient_schema import PATIENT_KEYS
+from src.core.patient_schema import IDENTIFYING_KEYS
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ _ID_PATTERN = re.compile(r"\b[A-Z]{0,3}\d{6,10}\b")
 # Fields of patient_info that are treated as direct identifiers. Derived from
 # the shared schema so a new patient field is scrubbed by default, rather than
 # silently sailing through to an upload because this list wasn't updated.
-_PHI_FIELDS = PATIENT_KEYS
+_PHI_FIELDS = IDENTIFYING_KEYS
 
 
 class DeIdentifier:

@@ -36,7 +36,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 from src.dictation.postprocess import context_model
-from src.features.file_manager import confusion_sets_path
+from src.core.paths import confusion_sets_path
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +298,10 @@ def _rejoin_split_compounds(text: str) -> str:
                 and len(al) >= 3
                 and len(bl) >= 3
                 and joined in terms
+                # Where the prefix's last vowel meets the same vowel, British
+                # usage hyphenates ("extra-axial", "intra-arterial"): welding
+                # them gives a form the radiologist would not write.
+                and not (al[-1] in "aeiou" and bl[0] == al[-1])
                 # Justify the weld: either the first token is a medical combining
                 # form ("retro", "hydro": a compound was clearly split), or at
                 # least one piece isn't an ordinary English word. This blocks

@@ -16,6 +16,7 @@ from src.dictation.asr.engines.deepgram_engine import DeepgramEngine
 from src.dictation.asr.engines.fallback_engine import ChainEngine
 from src.dictation.asr.engines.faster_whisper_engine import FasterWhisperEngine
 from src.dictation.asr.engines.parakeet_engine import ParakeetEngine
+from src.dictation.asr.engines.parakeet_hotword_engine import ParakeetHotwordEngine
 from src.dictation.asr.port import AsrEngine
 from src.core.settings import Settings, get_default
 
@@ -38,12 +39,52 @@ def _local_tiers(**kwargs: Any) -> List[Tuple[str, Any]]:
     tiers: List[Tuple[str, Any]] = []
     if kwargs.get("model_path"):
         logger.info("Fine-tuned voice model active; ASR chain skips the Parakeet tier")
-    elif importlib.util.find_spec("onnx_asr") is not None:
-        tiers.append(("parakeet", ParakeetEngine()))
     else:
-        logger.info("onnx-asr not installed; ASR chain skips the Parakeet tier")
+        parakeet = _parakeet_tier(Settings())
+        if parakeet is not None:
+            tiers.append(parakeet)
+        else:
+            logger.info("Neither sherpa-onnx nor onnx-asr installed; ASR chain skips Parakeet")
     tiers.append(("faster-whisper", FasterWhisperEngine(**kwargs)))
     return tiers
+
+
+def _parakeet_tier(settings: Settings) -> Any:
+    """The best Parakeet this install can run, as a (name, engine) tier, or None.
+
+    1. A fine-tuned export (``parakeet_model_dir``): onnx-asr layout, so the
+       onnx-asr engine, without hotwords (its training already targets them).
+    2. sherpa-onnx with radiology hotwords (``asr_hotwords``, default on):
+       measured 35% fewer medical-term errors than greedy at the same speed.
+    3. onnx-asr, greedy: the stock model.
+    """
+    local = str(settings.get("parakeet_model_dir") or "")
+    have_onnx_asr = importlib.util.find_spec("onnx_asr") is not None
+    if local and have_onnx_asr:
+        return ("parakeet", ParakeetEngine(local))
+    if settings.get("asr_hotwords") and importlib.util.find_spec("sherpa_onnx") is not None:
+        return ("parakeet-hotwords", ParakeetHotwordEngine(float(settings.get("hotword_score"))))
+    if have_onnx_asr:
+        return ("parakeet", ParakeetEngine())
+    return None
+
+
+def describe_engine(settings: Settings) -> str:
+    """What the radiologist should be told is transcribing, in a few words.
+
+    Answers without loading a model: the same choice ``_local_tiers`` makes.
+    The Whisper model setting alone is misleading here, because on the
+    default engine it only names the fallback.
+    """
+    if settings.get("asr_engine") == "deepgram":
+        return "Deepgram (cloud)"
+    tier = _parakeet_tier(settings)
+    if tier is None:
+        return f"Whisper {settings.get('model_size')}"
+    name, engine = tier
+    if name == "parakeet-hotwords":
+        return "Parakeet + radiology terms"
+    return "Parakeet (your fine-tune)" if engine.model_dir else "Parakeet"
 
 
 def _make_local_chain(**kwargs: Any) -> AsrEngine:
@@ -59,6 +100,7 @@ def _make_deepgram_chain(**kwargs: Any) -> AsrEngine:
 _ENGINES = {
     "faster-whisper": FasterWhisperEngine,
     "parakeet": ParakeetEngine,
+    "parakeet-hotwords": ParakeetHotwordEngine,
     "deepgram": _make_deepgram_chain,
     "local": _make_local_chain,
 }

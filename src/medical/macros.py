@@ -9,7 +9,7 @@ import logging
 from typing import Dict, List, Tuple
 
 from src.core.json_store import read_json
-from src.features.file_manager import macros_file
+from src.core.paths import macros_file
 
 logger = logging.getLogger(__name__)
 

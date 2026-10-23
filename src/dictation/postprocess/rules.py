@@ -136,7 +136,7 @@ def _load_all() -> List[CompiledRule]:
     """
     rules: List[CompiledRule] = []
     try:
-        from src.features.file_manager import user_corrections_path
+        from src.core.paths import user_corrections_path
         rules += _load_file(user_corrections_path())
     except Exception as exc:  # never let user-file issues break the pipeline
         logger.debug("No user correction rules loaded: %s", exc)
@@ -175,7 +175,7 @@ def apply_data_rules(text: str) -> str:
 
 def load_user_rules() -> List[dict]:
     """Return the raw user rule dicts from ``user_corrections.yaml`` (or ``[]``)."""
-    from src.features.file_manager import user_corrections_path
+    from src.core.paths import user_corrections_path
     path = user_corrections_path()
     if not path.exists():
         return []
@@ -196,7 +196,7 @@ def save_user_rules(rules: List[dict]) -> None:
     file cannot be written.
     """
     import yaml
-    from src.features.file_manager import user_corrections_path
+    from src.core.paths import user_corrections_path
 
     clean: List[dict] = []
     for r in rules:

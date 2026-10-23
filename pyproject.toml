@@ -10,6 +10,9 @@ requires-python = ">=3.12"
 dependencies = [
     "PySide6>=6.6",                # desktop GUI
     "faster-whisper>=0.10.0",      # offline Whisper via CTranslate2 (also bundles Silero VAD)
+    "av<19",                       # PyAV 19 dropped an argument faster-whisper 1.2.1's
+                                   #   decode_audio passes: every file decode raises
+                                   #   TypeError. Lift when faster-whisper catches up.
     "sounddevice>=0.4.7",          # microphone capture
     "soundfile>=0.12.1",
     "numpy>=1.23.0",
@@ -24,7 +27,6 @@ dependencies = [
     "fastapi>=0.100.0",            # web app
     "uvicorn>=0.23.0",
     "websockets>=12.0",            # bare uvicorn answers /ws/dictate with 404 without it
-    "python-multipart>=0.0.6",
     "jinja2>=3.1.2",
     "httpx>=0.24.0",               # Deepgram engine + Lightning REST transport
     "keyring>=24.0",               # every secret lives in the OS keychain
@@ -32,7 +34,10 @@ dependencies = [
 
 [project.optional-dependencies]
 # Each extra is lazy-imported; the app runs without any of them.
-parakeet = ["onnx-asr>=0.12.0"]                       # the Parakeet ASR engine (local)
+parakeet = [                                         # the Parakeet ASR engine (local)
+    "onnx-asr>=0.12.0",                              #   greedy; also loads fine-tuned exports
+    "sherpa-onnx>=1.12",                             #   beam search with radiology hotwords
+]
 imaging = [                                          # the chest X-ray assistant (local)
     "torch>=2.2", "torchvision>=0.17", "torchxrayvision>=1.2",
     "scikit-image>=0.22", "matplotlib>=3.8", "scikit-learn>=1.4", "pydicom>=2.4",
@@ -50,6 +55,16 @@ include = ["src*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.txt", "*.json", "*.yaml", "*.qss", "*.html", "*.css", "*.js"]
+
+[tool.ruff]
+# Pinned, because ruff's default rule set has changed between versions: the
+# same "ruff check" passed on 0.5 and reports 1,158 issues on 0.17. These are
+# the classic defaults the code base is written to (pyflakes + the E4/E7/E9
+# pycodestyle subset). Widening the set is a decision, not an upgrade.
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
 
 [tool.pytest.ini_options]
 addopts = "-p no:randomly"

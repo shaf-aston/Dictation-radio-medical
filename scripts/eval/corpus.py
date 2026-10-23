@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from src.core.json_store import append_jsonl, read_jsonl
-from src.features.file_manager import eval_manifest_path, eval_set_dir
+from src.core.paths import eval_manifest_path, eval_set_dir
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ UNREVIEWED_MARKER = "[UNREVIEWED]"
 KNOWN_SETS: Dict[str, str] = {
     "own": "user's own dictations, real acoustics, real accent",
     "tts": "synthesised radiology reports, medical vocabulary, clean audio",
+    "piper": "the same reports read by neural voices (UK + US), clean audio",
     "libri": "public-domain read speech, general-English regression + RTF",
     "bench": "existing data/bench_audio clips, hand-corrected",
 }

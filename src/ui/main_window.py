@@ -29,7 +29,7 @@ from src.dictation.audio import Recorder
 from src.core.logging_setup import setup_logging
 from src.core.settings import Settings
 from src.core.patient_schema import normalize_patient_info
-from src.features.file_manager import report_filename
+from src.core.paths import report_filename
 from src.ui.collapsible import Section
 from src.ui.status import StatusTrack
 from src.ui.finding_marks import FindingGutter
@@ -43,7 +43,7 @@ from src.features.report_manager import (
 )
 from src.medical import macros
 from src.medical.macros import reload_macros
-from src.features.file_manager import startup_cleanup, autosave_dir, macros_file, templates_dir
+from src.core.paths import startup_cleanup, autosave_dir, macros_file, templates_dir
 from src.features.adaptive_learning import get_adaptive_learning, learn_from_edit
 from src.features import audit_log
 
@@ -53,6 +53,7 @@ from src.ui.views import (
 )
 
 # Recording control
+from src.ui.field_navigation import FieldKeys
 from src.ui.recording_session import (
     confirm_release, on_partial_text, on_processed_text, on_start_recording,
     on_stop_recording, on_transcription_finished, setup_level_timer,
@@ -117,6 +118,7 @@ class MainWindow(QMainWindow):
     patient_study_date: QLineEdit
     patient_referrer: QLineEdit
     patient_accession: QLineEdit
+    patient_sex: QComboBox
     splitter: QSplitter
     macros_panel: QFrame
     macro_region_combo: QComboBox
@@ -175,6 +177,13 @@ class MainWindow(QMainWindow):
         # or typing into a form field mid-recording can no longer leave the
         # boundary pointing into the middle of someone else's text.
         self._dictation_start: Optional[QTextCursor] = None
+        # Where it ends: dictation goes in at the caret, so text after the
+        # region (the rest of a template) must be left alone. Moves with text
+        # written at it, unlike the start (recording_session._open_dictation_region).
+        self._dictation_end: Optional[QTextCursor] = None
+        # The template field the dictation replaced, if it replaced one: saying
+        # one of a pick-list's options answers it in the template's spelling.
+        self._dictation_field: Optional[str] = None
         self._last_editor_text: str = ""
         self._corrections_pending: list = []
         self._corrections_seen: set = set()
@@ -262,6 +271,24 @@ class MainWindow(QMainWindow):
     def _setup_shortcuts(self) -> None:
         QShortcut(QKeySequence("F5"), self, partial(on_start_recording, self))
         QShortcut(QKeySequence("F6"), self, partial(on_stop_recording, self))
+        # One key that starts and stops: what a dictation mic's record button
+        # sends in keyboard mode. Configurable, like the field keys below.
+        QShortcut(
+            QKeySequence(self.settings.get("key_record_toggle")), self,
+            self._toggle_recording,
+        )
+        self._field_keys = FieldKeys(
+            self.editor,
+            self.settings.get("key_next_field"),
+            self.settings.get("key_previous_field"),
+            enabled=lambda: not self.dictation_active(),
+        )
+
+    def _toggle_recording(self) -> None:
+        if self.recorder.is_recording:
+            on_stop_recording(self)
+        elif self.btn_record.isEnabled():
+            on_start_recording(self)
 
     # ------------------------------------------------------------------
     # Background services (cloud training + report analysis)
@@ -322,22 +349,6 @@ class MainWindow(QMainWindow):
                 self._cloud_monitor_thread.start()
             except Exception as exc:
                 logger.warning("Could not start cloud monitor: %s", exc)
-
-        if self.settings.get("report_analysis_enabled", True):
-            try:
-                from PySide6.QtCore import QThreadPool, QRunnable
-
-                class _AnalysisTask(QRunnable):
-                    def run(self) -> None:
-                        try:
-                            from src.features.report_analyzer import ReportAnalyzer
-                            ReportAnalyzer().analyze_and_save()
-                        except Exception as exc:  # background, never fatal
-                            logger.debug("Report analysis failed: %s", exc)
-
-                QThreadPool.globalInstance().start(_AnalysisTask())
-            except Exception as exc:
-                logger.debug("Could not schedule report analysis: %s", exc)
 
     def _on_model_available(self, version: str) -> None:
         """A fine-tuned model finished training: offer to activate it."""
@@ -615,6 +626,7 @@ class MainWindow(QMainWindow):
         self.patient_study_date.clear()
         self.patient_referrer.clear()
         self.patient_accession.clear()
+        self.patient_sex.setCurrentIndex(0)
         self._show_status("New report started.")
 
     def _load_report_from_path(self, path: str) -> None:
@@ -650,7 +662,9 @@ class MainWindow(QMainWindow):
         # The clipboard leaves the app just as surely as a file does.
         if not confirm_release(self):
             return
-        QApplication.clipboard().setText(self.editor.toPlainText())
+        text = self.editor.toPlainText()
+        QApplication.clipboard().setText(text)
+        audit_log.log_report_copied(self._get_patient_info().get("id", ""), len(text.split()))
         self._show_status("Copied to clipboard.", 1500, state="ok")
 
     def _post_save(self, path: str, verb: str, log_fn) -> None:  # type: ignore[type-arg]
@@ -769,9 +783,9 @@ class MainWindow(QMainWindow):
             "referring": self.patient_referrer,
             "accession": self.patient_accession,
         }
-        return normalize_patient_info(
-            {key: widget.text() for key, widget in fields.items()}
-        )
+        info: dict[str, object] = {key: widget.text() for key, widget in fields.items()}
+        info["sex"] = self.patient_sex.currentText()
+        return normalize_patient_info(info)
 
     def _default_filename(self, ext: str) -> str:
         return report_filename(self._get_patient_info(), ext)

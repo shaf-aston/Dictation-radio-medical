@@ -8,18 +8,23 @@ import time
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThread, QTimer
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QDialog, QMessageBox
 
 from src.core import perf
-from src.dictation.stream.policy import MANUAL, plan_from_settings
+from src.dictation.stream.policy import MANUAL, LiveKnobs, plan_from_settings
 from src.dictation.asr.models import resolve_model
 from src.dictation.worker import LiveTranscribeWorker
-from src.features.file_manager import create_temp_wav
+from src.core.paths import create_temp_wav
 from src.features import run_log
 from src.ui.postprocess_worker import PostprocessWorker, build_changes
 from src.features.accent_corrections import ACCENT_LABELS, suggest_accent
-from src.features.report_release import record_release
-from src.ui.dialogs import confirm_unfilled_fields
+from src.features.report_release import (
+    add_communication_statement,
+    communication_statement,
+    record_release,
+)
+from src.features.template_fields import find_fields, resolve_choice
+from src.ui.dialogs import CommunicationDialog, confirm_report_checks, offer_ai_cleanup
 from src.ui.styles import set_level_state
 
 if TYPE_CHECKING:
@@ -165,6 +170,60 @@ def _abandon_unfinished_session(window: MainWindow) -> None:
     window.live_worker = None
 
 
+def _open_dictation_region(window: MainWindow) -> None:
+    """Mark where this recording's text goes: at the caret, or over a selection.
+
+    The region has two ends, both ``QTextCursor``s, because Qt moves a cursor
+    along when text is inserted before it, so a template loaded or a field
+    typed elsewhere mid-recording never leaves a boundary cutting into text
+    that isn't dictation. The start stays put when text is written AT it:
+    without that, the first live update (which starts exactly there) pushed
+    the anchor past its own words and every later cycle appended instead of
+    replacing ("The lungs areThe lungs are clear..."). The end does move with
+    text written at it, which is how the region grows.
+
+    A selected template field is replaced, and remembered so that saying one
+    of its options ("left" into ``[Right / Left]``) answers it in the
+    template's own spelling (``template_fields.resolve_choice``).
+    """
+    editor = window.editor
+    cursor = editor.textCursor()
+    selected = cursor.selectedText() if cursor.hasSelection() else ""
+    fields = find_fields(selected)
+    window._dictation_field = (
+        selected if len(fields) == 1 and fields[0].text == selected else None
+    )
+    cursor.beginEditBlock()
+    if cursor.hasSelection():
+        cursor.removeSelectedText()
+    text = editor.toPlainText()
+    pos = cursor.position()
+    # Dictation must not weld onto the words either side of it.
+    if pos < len(text) and not text[pos].isspace() and text[pos] not in ".,;:)":
+        cursor.insertText(" ")
+        cursor.setPosition(pos)
+    if pos > 0 and not text[pos - 1].isspace():
+        cursor.insertText(" ")
+        pos += 1
+    cursor.endEditBlock()
+
+    start = editor.textCursor()
+    start.setPosition(pos)
+    start.setKeepPositionOnInsert(True)
+    end = editor.textCursor()
+    end.setPosition(pos)
+    window._dictation_start = start
+    window._dictation_end = end
+    editor.setTextCursor(end)
+
+
+def _close_dictation_region(window: MainWindow) -> None:
+    """The dictated region no longer exists; nothing may write into it again."""
+    window._dictation_start = None
+    window._dictation_end = None
+    window._dictation_field = None
+
+
 def on_start_recording(window: MainWindow) -> None:
     """Start a new recording session."""
     if window.recorder.is_recording:
@@ -192,28 +251,11 @@ def on_start_recording(window: MainWindow) -> None:
     window._status.last_progress = ("Recording...", "rec")
     window._show_status("Recording...", state="rec")
 
-    # Remember where dictation text starts so we can replace it each cycle.
-    # A cursor, not an integer: Qt shifts it when text is inserted before it,
-    # so a template loaded or a form field typed mid-recording no longer leaves
-    # the boundary cutting into text that isn't dictation.
-    anchor = window.editor.textCursor()
-    anchor.movePosition(anchor.MoveOperation.End)
-    current_text = window.editor.toPlainText()
-    if current_text and not current_text.endswith(("\n", " ")):
-        anchor.insertText(" ")
-    # Text written AT the anchor must not push it along. Without this, the very
-    # first live update -- which starts exactly at the anchor -- left the anchor
-    # sitting after those words, so every later cycle rewrote the region from
-    # there and the opening fragment was stranded: reports began "The lungs
-    # areThe lungs are clear...". Insertions *before* the anchor still move it,
-    # which is what a template load or a form-field edit relies on.
-    anchor.setKeepPositionOnInsert(True)
-    window._dictation_start = anchor
+    _open_dictation_region(window)
 
     model_size = window.model_combo.currentText()
     language = window.language_input.text().strip() or "en"
     vad_enabled = window.vad_checkbox.isChecked()
-    pause_threshold = float(window.settings.get("pause_threshold", 2.5))
     window._active_accent = window.accent_combo.currentData() or "neutral"
     window._active_cleanup_level = window.cleanup_combo.currentData() or "medium"
 
@@ -259,7 +301,8 @@ def on_start_recording(window: MainWindow) -> None:
 
     window.live_thread = QThread()
     window.live_worker = LiveTranscribeWorker(
-        path, model_size, language, vad_enabled, pause_threshold,
+        path, model_size, language, vad_enabled,
+        knobs=LiveKnobs.from_settings(window.settings.get),
         live_model_size=resolve_model(window.settings.get("live_model_size")),
         model_path=active_model_path,
         # None = "auto": the worker sizes chunks from its live engine's cost
@@ -269,12 +312,6 @@ def on_start_recording(window: MainWindow) -> None:
             if window.settings.get("chunk_policy") == MANUAL else None
         ),
         trailing_silence_sec=float(window.settings.get("chunk_trailing_silence_sec")),
-        streaming=bool(window.settings.get("asr_streaming")),
-        background_polish=bool(window.settings.get("background_polish")),
-        live_beam_size=int(window.settings.get("live_beam_size")),
-        final_beam_size=int(window.settings.get("final_beam_size")),
-        polish_confidence_ceiling=float(window.settings.get("polish_confidence_ceiling")),
-        preview_max_lag_sec=float(window.settings.get("preview_max_lag_sec")),
     )
     window.live_worker.moveToThread(window.live_thread)
     window.live_thread.started.connect(window.live_worker.run)
@@ -426,43 +463,54 @@ def on_processed_text(
 def dictation_start_offset(window: MainWindow, doc_len: int) -> int:
     """Where the dictated region begins, clamped inside the document.
 
-    The anchor is a ``QTextCursor`` that Qt moves along whenever text is
-    inserted before it, so it survives a template load or a form edit made
-    while recording. The clamp is the last line of defence: a document
-    replaced wholesale (Open, New, Clear) leaves an anchor Qt has already
-    reset, and appending after the end of the text is not a valid edit.
+    The clamp is the last line of defence: a document replaced wholesale
+    (Open, New, Clear) leaves an anchor Qt has already reset, and writing
+    after the end of the text is not a valid edit.
     """
     anchor = getattr(window, "_dictation_start", None)
     position = anchor.position() if anchor is not None else 0
     return max(0, min(position, doc_len))
 
 
+def dictation_end_offset(window: MainWindow, doc_len: int) -> int:
+    """Where the dictated region ends; the end of the document if unbounded."""
+    anchor = getattr(window, "_dictation_end", None)
+    position = anchor.position() if anchor is not None else doc_len
+    return max(dictation_start_offset(window, doc_len), min(position, doc_len))
+
+
 def _replace_dictation_region(window: MainWindow, processed: str) -> None:
-    """Rewrite only the changed suffix of the dictated region.
+    """Rewrite only the changed tail of the dictated region.
 
     ``setPlainText`` rebuilt the entire document on every cycle, which gets
-    expensive as the report grows and forces a full re-layout. Nearly all of the
-    text is identical between cycles, so only the differing tail is replaced,
-    via a cursor selection.
+    expensive as the report grows and forces a full re-layout. Nearly all of
+    the text is identical between cycles, so only the part of the region that
+    differs is replaced, via a cursor selection. Text after the region (the
+    rest of the template, when dictating into the middle of it) is never
+    touched.
     """
+    field = getattr(window, "_dictation_field", None)
+    if field:
+        processed = resolve_choice(field, processed) or processed
     current = window.editor.toPlainText()
     start = dictation_start_offset(window, len(current))
-    new_text = current[:start] + processed
-    if new_text == current:
+    end = dictation_end_offset(window, len(current))
+    region = current[start:end]
+    if region == processed:
         return
 
     # First index where old and new differ; everything before it is untouched.
-    common = start
-    limit = min(len(current), len(new_text))
-    while common < limit and current[common] == new_text[common]:
-        common += 1
+    same = 0
+    limit = min(len(region), len(processed))
+    while same < limit and region[same] == processed[same]:
+        same += 1
 
     cursor = window.editor.textCursor()
     window.editor.blockSignals(True)
     cursor.beginEditBlock()
-    cursor.setPosition(common)
-    cursor.setPosition(len(current), cursor.MoveMode.KeepAnchor)
-    cursor.insertText(new_text[common:])
+    cursor.setPosition(start + same)
+    cursor.setPosition(end, cursor.MoveMode.KeepAnchor)
+    cursor.insertText(processed[same:])
     cursor.endEditBlock()
     window.editor.setTextCursor(cursor)
     window.editor.blockSignals(False)
@@ -470,34 +518,13 @@ def _replace_dictation_region(window: MainWindow, processed: str) -> None:
 
 
 def _apply_finished_ai_cleanup(window: MainWindow) -> None:
-    """Run the optional 'hard' AI cleanup once on the finished report.
+    """The 'hard' cleanup level: offer the AI polish once, on the finished report.
 
-    This is the *only* place the network-backed AI polish runs (never per live
-    chunk). No-op unless the user selected the 'hard' cleanup level. The
-    underlying ``clean_with_llm`` de-identifies first, is consent-gated, and
-    returns the text unchanged on any error or when disabled: so when the
-    feature is off (the default) this neither blocks nor alters the report.
+    Never per live chunk (CLAUDE.md invariant), and never applied unseen: it
+    goes through the same review dialog as Tools → AI Cleanup.
     """
-    if getattr(window, "_active_cleanup_level", "medium") != "hard":
-        return
-    text = window.editor.toPlainText()
-    if not text.strip():
-        return
-    try:
-        from src.dictation.postprocess.llm_cleanup import clean_with_llm
-        window._show_status("AI cleanup...", state="busy")
-        cleaned, _ = clean_with_llm(text)
-    except Exception as exc:
-        logger.debug("Finished AI cleanup skipped: %s", exc)
-        return
-    if cleaned and cleaned != text:
-        window.editor.blockSignals(True)
-        window.editor.setPlainText(cleaned)
-        cursor = window.editor.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        window.editor.setTextCursor(cursor)
-        window.editor.blockSignals(False)
-        window._on_text_changed()
+    if getattr(window, "_active_cleanup_level", "medium") == "hard":
+        offer_ai_cleanup(window, automatic=True)
 
 
 def on_transcription_finished(window: MainWindow) -> None:
@@ -566,7 +593,7 @@ def _complete_finish(window: MainWindow) -> None:
     window._post_dictation_snapshot = window.editor.toPlainText()
     # The dictated region no longer exists: a template loaded from here on
     # replaces the document again, as it does outside a recording.
-    window._dictation_start = None
+    _close_dictation_region(window)
     # De-identify the session audio while the WAV still exists; the collector
     # session stays open so spelling fixes made during review are captured too.
     _prepare_training_audio()
@@ -663,7 +690,7 @@ def confirm_release(window: MainWindow) -> bool:
     The dialog itself still appears at every exit, answered or not: asking
     twice costs a click, and not asking could cost a phone call.
     """
-    if not confirm_unfilled_fields(window):
+    if not confirm_report_checks(window):
         return False
 
     window.findings.update(window.editor.toPlainText())
@@ -677,25 +704,31 @@ def confirm_release(window: MainWindow) -> bool:
         window.finding_gutter.show_state()
         return True
 
-    msg = QMessageBox(window)
-    msg.setWindowTitle("Critical / Urgent Finding Detected")
-    msg.setIcon(
-        QMessageBox.Icon.Critical if check.worst_level == 1 else QMessageBox.Icon.Warning
-    )
-    msg.setText(
-        "The following critical or urgent finding(s) were detected in this report.\n\n"
-        "Please confirm verbal communication with the referring clinician before saving."
-    )
-    msg.setDetailedText(check.summary)
-    btn_ack = msg.addButton("I have communicated this finding", QMessageBox.ButtonRole.AcceptRole)
-    msg.addButton("Proceed without acknowledging", QMessageBox.ButtonRole.RejectRole)
-    msg.setDefaultButton(btn_ack)
-    msg.exec()
-
-    acknowledged = msg.clickedButton() == btn_ack
+    dialog = CommunicationDialog(window, check, str(window.settings.get("radiologist_name") or ""))
+    acknowledged = dialog.exec() == QDialog.DialogCode.Accepted
+    comm = dialog.communication() if acknowledged else None
+    if comm is not None:
+        if comm.radiologist:
+            window.settings.set("radiologist_name", comm.radiologist)
+        if dialog.add_to_report.isChecked():
+            # Before the caller reads the text, so the sentence leaves with it.
+            # One undoable edit at the end of the report.
+            text = window.editor.toPlainText()
+            updated = add_communication_statement(
+                text, communication_statement(check.findings, comm)
+            )
+            if updated != text:
+                cursor = window.editor.textCursor()
+                cursor.beginEditBlock()
+                cursor.movePosition(cursor.MoveOperation.End)
+                cursor.movePosition(cursor.MoveOperation.Start, cursor.MoveMode.KeepAnchor)
+                cursor.insertText(updated)
+                cursor.endEditBlock()
     # Only what was still outstanding is audited: re-exporting a report whose
     # findings were already communicated must not log a second phone call.
-    record_release(outstanding, window._get_patient_info().get("id", ""), acknowledged)
+    record_release(
+        outstanding, window._get_patient_info().get("id", ""), acknowledged, comm
+    )
     if acknowledged:
         window.findings.acknowledge(check)
     window.finding_gutter.show_state()

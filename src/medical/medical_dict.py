@@ -42,7 +42,7 @@ try:
 except ImportError:
     SYMSPELL_AVAILABLE = False
 
-from src.features.file_manager import (
+from src.core.paths import (
     medical_dict_cache_path,
     medical_wordlist_path,
     radiology_lexicon_path,
@@ -207,7 +207,13 @@ def is_english_word(word: str) -> Optional[bool]:
                 "(e.g. 'atelactasis'->'atelectasis', 'vertabra'->'vertebra') will "
                 "NOT be corrected. Install it: pip install pyspellchecker"
             )
-    return None if _ENGLISH is False else bool(_ENGLISH.known([word]))
+    if _ENGLISH is False:
+        return None
+    if _ENGLISH.known([word]):
+        return True
+    # The list is American: a British spelling is real English too.
+    from src.medical.spelling import us_variants  # noqa: PLC0415 - small, avoids a load-order tie
+    return bool(any(_ENGLISH.known([v]) for v in us_variants(word)))
 
 
 def get_correction_targets() -> List[str]:
@@ -276,7 +282,7 @@ def get_symspell() -> Optional["SymSpell"]:
     length-scaled edit distance.
 
     Building this from ~98k terms takes a few seconds, so the result is cached
-    on disk (:func:`~src.features.file_manager.medical_dict_cache_path`) and
+    on disk (:func:`~src.core.paths.medical_dict_cache_path`) and
     rebuilt only when the term counts change (e.g. the bundled wordlist or
     lexicon is updated). Returns None if symspellpy is not installed: callers
     fall back to the slower rapidfuzz ratio path.

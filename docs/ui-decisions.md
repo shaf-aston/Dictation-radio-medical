@@ -9,6 +9,39 @@ is the picture; this file is the record.
 
 ---
 
+## 2026-10-23: Dictating into templates, checks at release, the communication record (built)
+
+**Requirements:** https://claude.ai/artifact/AfxwyS8MycYDHW5WsfkhSv ·
+**Plan:** [plan-2026-10-reporting.md](plan-2026-10-reporting.md)
+
+**Chosen: dictation goes in at the caret.** It always went to the end, so the
+25 templates could not be dictated into. A selected field is replaced, and
+saying one of a pick-list's options answers it in the template's spelling.
+Mid-report the live preview is a caption under the editor: the underlay can only
+paint after the last character, where it would sit on top of the template.
+
+**Chosen: a field is any bracketed span on one line.** Replaces "SHOUTED names
+only", which saw 1 of the 148 fields the templates contain. `[5 mm]` stays text.
+
+**Chosen: one question for fields and consistency, asked before findings.** Side,
+sex and missing impression are listed with the unfilled fields, and the answer
+can be "go back". Two cancellable questions in a row would train the click-away.
+
+**Chosen: the findings dialog collects who, how and when.** "Communicated" needs a
+recipient, because the record says someone was told. The sentence it adds is
+past tense. Both buttons still release the report.
+
+**Rejected: voice "next field" during a recording.** It would split the dictated
+region mid-session inside the live loop. Tab, or a mic button bound to it, does
+the same between dictations.
+
+**Rejected: one precision number for the side check.** It would only reflect how
+many of each kind of clean report the corpus holds. Results are reported per
+kind of clean report instead, including the known false alarm (a side word in
+passing).
+
+---
+
 ## 2026-09-01: The developer console, and the four things the rail got wrong (built)
 
 **Chosen: a drawer under the app, not a second page.** `Ctrl`+`Shift`+`D` (or the
@@ -123,7 +156,9 @@ the Option A change below, and it wrote to the clipboard with no critical-findin
 and no audit entry: while Save TXT and Word both had one. A report naming a
 pneumothorax could be pasted into the RIS with no warning ever shown. Every path that
 lets text leave the web app now runs the same gate (`/api/report/check`), and a test
-asserts the whole set of exits so a new route cannot quietly skip it.
+asserts the whole set of exits so a new route cannot quietly skip it
+(`tests/test_web_release.py::test_every_exit_is_audited`, restored 2026-10-23
+after the suite was removed in August).
 
 **Still open, and it is why the Red Dot is worth building first.** In the desktop app
 the check fires from `on_transcription_finished`, when you stop talking, before the

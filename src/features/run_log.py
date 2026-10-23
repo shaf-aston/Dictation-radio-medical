@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Optional
 
 from src.core import perf
 from src.core.json_store import append_jsonl, read_jsonl
-from src.features.file_manager import run_log_path
+from src.core.paths import run_log_path
 
 logger = logging.getLogger(__name__)
 

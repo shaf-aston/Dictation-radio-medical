@@ -74,5 +74,62 @@ def test_dictation_into_an_empty_report(qt_app):
     assert w.editor.toPlainText() == PARTIALS[-1]
 
 
+# -- dictating at the caret (R1) ---------------------------------------------
+
+TEMPLATE = "EXAMINATION: MRI [Right / Left] Knee\nMedial meniscus: \nLateral meniscus: Intact.\n"
+
+
+def _open_at(qt_app, text: str, start: int, end: int = -1):
+    """A window whose editor holds *text* with the caret (or a selection) set."""
+    editor = QtWidgets.QTextEdit()
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(start)
+    if end >= 0:
+        cursor.setPosition(end, cursor.MoveMode.KeepAnchor)
+    editor.setTextCursor(cursor)
+    w = SimpleNamespace(editor=editor, _on_text_changed=lambda: None)
+    rs._open_dictation_region(w)
+    return w
+
+
+def test_dictation_goes_in_at_the_caret_and_leaves_the_rest_alone(qt_app):
+    caret = TEMPLATE.index("Medial meniscus: ") + len("Medial meniscus: ")
+    w = _open_at(qt_app, TEMPLATE, caret)
+    for partial in ["Oblique", "Oblique tear of the posterior horn."]:
+        rs._replace_dictation_region(w, partial)
+    assert w.editor.toPlainText() == TEMPLATE.replace(
+        "Medial meniscus: ", "Medial meniscus: Oblique tear of the posterior horn."
+    )
+
+
+def test_a_shorter_revision_does_not_eat_the_text_after_it(qt_app):
+    caret = TEMPLATE.index("Medial meniscus: ") + len("Medial meniscus: ")
+    w = _open_at(qt_app, TEMPLATE, caret)
+    rs._replace_dictation_region(w, "Oblique tear of the posterior horn.")
+    rs._replace_dictation_region(w, "Oblique tear.")
+    assert "Medial meniscus: Oblique tear.\nLateral meniscus: Intact." in w.editor.toPlainText()
+
+
+def test_a_selected_pick_list_is_answered_by_saying_an_option(qt_app):
+    start = TEMPLATE.index("[Right / Left]")
+    w = _open_at(qt_app, TEMPLATE, start, start + len("[Right / Left]"))
+    rs._replace_dictation_region(w, "Left.")
+    assert w.editor.toPlainText().startswith("EXAMINATION: MRI Left Knee\n")
+
+
+def test_a_selected_field_takes_free_dictation_as_spoken(qt_app):
+    start = TEMPLATE.index("[Right / Left]")
+    w = _open_at(qt_app, TEMPLATE, start, start + len("[Right / Left]"))
+    rs._replace_dictation_region(w, "Left sided")
+    assert w.editor.toPlainText().startswith("EXAMINATION: MRI Left sided Knee\n")
+
+
+def test_dictation_mid_word_gets_a_space_on_both_sides(qt_app):
+    w = _open_at(qt_app, "alphaomega", 5)
+    rs._replace_dictation_region(w, "beta")
+    assert w.editor.toPlainText() == "alpha beta omega"
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

@@ -2,7 +2,7 @@
 
 Offline speech-to-text workstation for radiologists. Dictate a report, get clean, correctly spelled medical text.
 
-Transcription runs locally with Whisper (`faster-whisper`), so audio and text stay on the machine by default.
+Transcription runs locally with Parakeet (`onnx-asr`), with Whisper (`faster-whisper`) behind it, so audio and text stay on the machine by default.
 
 ## Highlights
 
@@ -11,7 +11,9 @@ Transcription runs locally with Whisper (`faster-whisper`), so audio and text st
 - **Correction pipeline**: removes hallucinations, applies voice commands, punctuation, measurements, terminology, accent fixes, fuzzy matching and learned corrections
 - **Medical dictionary**: fuzzy matching that protects real terms from over-correction
 - **Learns from you**: picks up your edits and applies them next time
-- **Critical findings**: negation-aware detection flags urgent results
+- **Dictate into templates**: text goes in at the cursor; Tab jumps to the next field like `[Right / Left]`, and saying "left" answers it
+- **Checks before release**: unfilled fields, wrong side, wrong-sex organs and a missing impression are flagged before the report leaves
+- **Critical findings**: negation-aware detection flags urgent results, and records who was told, how and when
 - **Templates and macros**: chest, neuro, abdominal, MSK, ultrasound; quick phrases by region
 - **Word export**: formatted `.docx` with a patient details table
 - **Safe by design**: auto-save backups and an append-only audit log
@@ -43,6 +45,8 @@ Python, faster-whisper, PySide6, FastAPI with WebSockets, rapidfuzz, SymSpell, p
 | Shortcut | Action |
 |---|---|
 | F5 / F6 | Start / stop recording |
+| F2 | Start or stop recording (desktop and web; a dictation mic's button can send it) |
+| Tab / Shift+Tab | Next / previous template field |
 | Ctrl+S | Save as text |
 | Ctrl+Shift+W | Export to Word |
 | Ctrl+T | Load template |
@@ -55,6 +59,10 @@ Python, faster-whisper, PySide6, FastAPI with WebSockets, rapidfuzz, SymSpell, p
 
 - Punctuation: "full stop", "comma", "colon", "hyphen", "new line", "new paragraph"
 - Fix a word: "correct word X" replaces the previous word with X
+- Undo: "scratch that" removes the sentence you are saying, or the one you just finished
+- Quick phrase: "insert" and a phrase's name writes the phrase ("insert ACL intact")
+
+Keys are settings (`key_record_toggle`, `key_next_field`, `key_previous_field` in `dictation_settings.json`), so a SpeechMike or PowerMic in keyboard mode can be set to send them.
 
 ## Customise
 

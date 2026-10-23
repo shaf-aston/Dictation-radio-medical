@@ -25,6 +25,10 @@ const tlLiveMsg = document.getElementById('tlLiveMsg');
 const tlLiveSub = document.getElementById('tlLiveSub');
 const tlTrail = document.getElementById('tlTrail');
 const editor = document.getElementById('editor');
+const livePreview = document.getElementById('livePreview');
+// What a template field is: the server's own pattern (template_fields.py).
+const FIELD_RE = new RegExp(BOOTSTRAP.field_pattern, 'g');
+const NOT_A_FIELD_RE = new RegExp(BOOTSTRAP.not_a_field_pattern, 'i');
 const newReportBtn = document.getElementById('newReportBtn');
 const saveTxtBtn = document.getElementById('saveTxtBtn');
 const exportWordBtn = document.getElementById('exportWordBtn');
@@ -37,6 +41,7 @@ const patientDob = document.getElementById('patientDob');
 const patientStudyDate = document.getElementById('patientStudyDate');
 const patientReferrer = document.getElementById('patientReferrer');
 const patientAccession = document.getElementById('patientAccession');
+const patientSex = document.getElementById('patientSex');
 const modelSelect = document.getElementById('modelSelect');
 const languageInput = document.getElementById('languageInput');
 const accentSelect = document.getElementById('accentSelect');
@@ -90,7 +95,7 @@ function setThemeSavingState(isSaving) {
 // .is-ok / .is-error) so it comes from tokens.json like every other colour:
 // this used to set colours inline here, which both hardcoded them and named
 // classes app.css no longer has, so the dot never changed at all.
-const STATUS_STATES = ['is-rec', 'is-busy', 'is-ok', 'is-error'];
+const STATUS_STATES = ['is-rec', 'is-busy', 'is-ok', 'is-warn', 'is-error'];
 let statusGeneration = 0;
 
 function showStatus(message, state = '', timeout = 0) {
@@ -189,6 +194,7 @@ function collectPatientInfo() {
         study_date: patientStudyDate.value.trim(),
         referring: patientReferrer.value.trim(),
         accession: patientAccession.value.trim(),
+        sex: patientSex.value,
     };
 }
 
@@ -200,6 +206,7 @@ function applyPatientInfo(info) {
     patientStudyDate.value = data.study_date || '';
     patientReferrer.value = data.referring || '';
     patientAccession.value = data.accession || '';
+    patientSex.value = data.sex || '';
 }
 
 function populateModelOptions() {
@@ -388,7 +395,9 @@ function loadReportSettingsFromServer() {
 function updateSettingsBadge() {
     const badge = document.getElementById('settingsBadge');
     if (!badge) return;
-    const m = modelSelect.value || 'base';
+    // The engine that answers, when it is not the Whisper model picked here.
+    const m = BOOTSTRAP.engine_label && !BOOTSTRAP.engine_label.startsWith('Whisper')
+        ? BOOTSTRAP.engine_label : (modelSelect.value || 'base');
     const l = languageInput.value.trim() || 'en';
     const a = accentSelect.options[accentSelect.selectedIndex]?.text || 'Neutral';
     const v = vadCheckbox.checked ? 'VAD' : '';
@@ -539,7 +548,8 @@ function postReport(url, answers) {
             text: editor.value,
             patient: collectPatientInfo(),
             acknowledged: answers.acknowledged,
-            proceed_unfilled: answers.proceed_unfilled,
+            proceed_with_warnings: answers.proceed_with_warnings,
+            communication: answers.communication || null,
         }),
     });
 }
@@ -553,37 +563,99 @@ async function readReleaseGate(response) {
     try {
         const body = await response.clone().json();
         const detail = body && body.detail;
-        const known = detail && (detail.reason === 'unfilled_fields' || detail.reason === 'critical_findings');
+        const known = detail && (detail.reason === 'report_checks' || detail.reason === 'critical_findings');
         return known ? detail : null;
     } catch (err) {
         return null;
     }
 }
 
-// Cancellable: No means the report does not leave. Field names come from the
-// server, so the browser holds no copy of what counts as unfilled.
-function confirmUnfilledFields(fields) {
-    const names = fields || [];
-    return window.confirm(
-        `The report contains ${names.length} unfilled field(s):\n\n`
-        + names.slice(0, 10).map((name) => `  • ${name}`).join('\n')
-        + (names.length > 10 ? '\n  …' : '')
-        + '\n\nDo you want to proceed anyway?'
-    );
+// Cancellable: No means the report does not leave. What is listed comes from
+// the server, so the browser holds no copy of the rules (report_release.py).
+function confirmReportChecks(gate) {
+    const short = (line) => (line.length > 90 ? line.slice(0, 89) + '…' : line);
+    const issues = gate.issues || [];
+    const fields = gate.fields || [];
+    const parts = [];
+    if (issues.length) {
+        parts.push('Worth a second look:\n' + issues.slice(0, 8).map((i) => `  • ${short(i)}`).join('\n'));
+    }
+    if (fields.length) {
+        parts.push(`${fields.length} unfilled template field(s):\n`
+            + fields.slice(0, 10).map((f) => `  • ${short(f)}`).join('\n')
+            + (fields.length > 10 ? '\n  …' : ''));
+    }
+    return window.confirm(parts.join('\n\n') + '\n\nRelease the report anyway?');
 }
 
 // Never cancellable: the report is not withheld, only the audit entry differs.
-function confirmCriticalFindings(info) {
-    return window.confirm(
-        (info.worst_level === 1
-            ? 'LIFE-THREATENING FINDING DETECTED\n\n'
-            : 'URGENT FINDING DETECTED\n\n')
-        + info.summary
-        + '\nConfirm verbal communication with the referring clinician '
-        + 'before releasing this report.\n\n'
-        + 'OK = I have communicated this finding\n'
-        + 'Cancel = proceed without acknowledging (recorded in the audit log)'
-    );
+// "Communicated" records who was told, how and when, and can add that sentence
+// to the report first, so the text that leaves is the text on screen.
+const commModal = document.getElementById('commModal');
+const commForm = document.getElementById('commForm');
+const commMethod = document.getElementById('commMethod');
+const commRadiologist = document.getElementById('commRadiologist');
+(BOOTSTRAP.communication?.methods || ['telephone']).forEach((method) => {
+    const option = document.createElement('option');
+    option.value = method;
+    option.textContent = method[0].toUpperCase() + method.slice(1);
+    commMethod.append(option);
+});
+commRadiologist.value = BOOTSTRAP.communication?.radiologist || '';
+
+function localMinute(date) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+        + `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function askCommunication(gate) {
+    document.getElementById('commTitle').textContent =
+        gate.worst_level === 1 ? 'Life-threatening finding' : 'Urgent finding';
+    document.getElementById('commSummary').textContent = gate.summary
+        + '\n\nConfirm it was communicated to the referring clinician.';
+    document.getElementById('commAt').value = localMinute(new Date());
+    commModal.hidden = false;
+    document.getElementById('commRecipient').focus();
+    return new Promise((resolve) => {
+        const done = (answer) => {
+            commModal.hidden = true;
+            commForm.onsubmit = null;
+            document.getElementById('commSkip').onclick = null;
+            resolve(answer);
+        };
+        document.getElementById('commSkip').onclick = () => done({ acknowledged: false });
+        commForm.onsubmit = async (event) => {
+            event.preventDefault();
+            const communication = {
+                recipient: document.getElementById('commRecipient').value.trim(),
+                method: commMethod.value,
+                at: document.getElementById('commAt').value,
+                radiologist: commRadiologist.value.trim(),
+            };
+            try {
+                if (document.getElementById('commAdd').checked) {
+                    const response = await fetch('/api/report/communication', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: editor.value, communication }),
+                    });
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    const { text } = await response.json();
+                    if (text !== editor.value) {
+                        editor.value = text;
+                        pushUndoState();
+                        announceReportChanged();
+                    }
+                }
+            } catch (err) {
+                // The acknowledgement still stands and is audited; only the
+                // sentence is missing, and the radiologist is told so.
+                showError('Could not add the communication sentence: ' + err.message);
+            }
+            done({ acknowledged: true, communication });
+        };
+    });
 }
 
 // Sends the report and clears the release gate on the way. Both answers start
@@ -593,7 +665,7 @@ function confirmCriticalFindings(info) {
 // app goes through here, clipboard included: a gate one button can skip is not a
 // gate. Returns null when the radiologist cancelled: not an error, just a stop.
 async function postGatedReport(endpoint) {
-    const answers = { acknowledged: null, proceed_unfilled: false };
+    const answers = { acknowledged: null, proceed_with_warnings: false, communication: null };
     let response = await postReport(endpoint, answers);
 
     for (let rule = 0; rule < 2; rule++) {
@@ -601,13 +673,15 @@ async function postGatedReport(endpoint) {
         if (!gate) {
             break;
         }
-        if (gate.reason === 'unfilled_fields') {
-            if (!confirmUnfilledFields(gate.fields)) {
+        if (gate.reason === 'report_checks') {
+            if (!confirmReportChecks(gate)) {
                 return null;
             }
-            answers.proceed_unfilled = true;
+            answers.proceed_with_warnings = true;
         } else {
-            answers.acknowledged = confirmCriticalFindings(gate);
+            const answer = await askCommunication(gate);
+            answers.acknowledged = answer.acknowledged;
+            answers.communication = answer.communication || null;
         }
         response = await postReport(endpoint, answers);
     }
@@ -713,7 +787,7 @@ async function loadSelectedTemplate() {
 // Track text changes for undo and persist patient fields locally.
 editor.addEventListener('input', pushUndoState);
 editor.addEventListener('input', updateWordCount);
-[patientName, patientId, patientDob, patientStudyDate, patientReferrer, patientAccession].forEach((field) => {
+[patientName, patientId, patientDob, patientStudyDate, patientReferrer, patientAccession, patientSex].forEach((field) => {
     field.addEventListener('input', () => {
         savePatientDraft();
     });
@@ -804,8 +878,89 @@ templateSelect.addEventListener('change', syncTemplateButton);
 loadTemplateBtn.addEventListener('click', loadSelectedTemplate);
 themeBtn.addEventListener('click', toggleTheme);
 
+// -- template fields and bound keys -------------------------------------------
+// What a field is comes from the server (template_fields.py); the keys are the
+// same settings the desktop binds, so a dictation mic's buttons work in both.
+
+const KEYS = BOOTSTRAP.keys || {};
+
+// "Shift+Tab", "Ctrl+Alt+K", "F2": the spelling the settings use (Qt's).
+function canonicalKeys(spec) {
+    const parts = String(spec || '').split('+').map((p) => p.trim()).filter(Boolean);
+    const key = parts.pop() || '';
+    const mods = ['Ctrl', 'Alt', 'Shift', 'Meta'].filter((m) => parts.includes(m));
+    return [...mods, key.length === 1 ? key.toUpperCase() : key].join('+');
+}
+
+function pressedKeys(e) {
+    const mods = [];
+    if (e.ctrlKey) mods.push('Ctrl');
+    if (e.altKey) mods.push('Alt');
+    if (e.shiftKey) mods.push('Shift');
+    if (e.metaKey) mods.push('Meta');
+    const key = e.key === ' ' ? 'Space' : e.key;
+    return [...mods, key.length === 1 ? key.toUpperCase() : key].join('+');
+}
+
+function keyMatches(e, name) {
+    return Boolean(KEYS[name]) && pressedKeys(e) === canonicalKeys(KEYS[name]);
+}
+
+function templateFields(text) {
+    return [...text.matchAll(FIELD_RE)]
+        .filter((m) => !NOT_A_FIELD_RE.test(m[0]))
+        .map((m) => ({ start: m.index, end: m.index + m[0].length }));
+}
+
+// Select the next (or previous) field. False when there is none that way, so
+// the key keeps its ordinary meaning in a report with no template.
+function selectField(forward) {
+    const fields = templateFields(editor.value);
+    const field = forward
+        ? fields.find((f) => f.start >= editor.selectionEnd)
+        : fields.filter((f) => f.end <= editor.selectionStart).pop();
+    if (!field) return false;
+    editor.setSelectionRange(field.start, field.end);
+    // Re-focusing is what makes a textarea scroll its selection into view.
+    editor.blur();
+    editor.focus();
+    return true;
+}
+
+editor.addEventListener('keydown', (e) => {
+    if (isRecording) return;
+    const forward = keyMatches(e, 'next_field');
+    if ((forward || keyMatches(e, 'previous_field')) && selectField(forward)) {
+        e.preventDefault();
+    }
+});
+
+(function showKeyHint() {
+    const hint = document.getElementById('keyHint');
+    if (!hint || !KEYS.record_toggle) return;
+    const parts = [];
+    const add = (spec, label) => {
+        canonicalKeys(spec).split('+').forEach((key, i) => {
+            if (i) parts.push('+');
+            const el = document.createElement('kbd');
+            el.textContent = key;
+            parts.push(el);
+        });
+        parts.push(label);
+    };
+    add(KEYS.record_toggle, ' to record · ');
+    add(KEYS.next_field, ' next field · ');
+    add('Ctrl+Z', ' to undo');
+    hint.replaceChildren(...parts);
+})();
+
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
+    if (keyMatches(e, 'record_toggle')) {
+        e.preventDefault();
+        dictateBtn.click();
+        return;
+    }
     if (e.ctrlKey || e.metaKey) {
         if (e.key === 'z' && !isRecording) { e.preventDefault(); undo(); }
         if (e.key === 'y' && !isRecording) { e.preventDefault(); redo(); }
@@ -863,7 +1018,14 @@ let micStream = null;
 let micNode = null;
 let committedText = '';       // what the server has frozen this session
 let previewText = '';         // the provisional tail, dimmed on screen
-let baseText = '';            // whatever was in the editor before recording
+// Dictation goes in at the caret. The editor is rebuilt every update as
+// the text before the caret + the dictation + the text after it, so the rest of
+// a template below the caret is never rewritten. A selected field is replaced.
+let baseBefore = '';
+let baseAfter = '';
+let baseOriginal = '';        // the editor exactly as it was, for Discard
+let gapBefore = '';
+let gapAfter = '';
 let recordStartedAt = 0;
 let timerHandle = null;
 let handedOverText = null;  // what Stop handed back, to detect edits since
@@ -902,8 +1064,12 @@ const FRAME_SAMPLES = Math.max(128, Math.round(LIVE_SAMPLE_RATE * FRAME_SECONDS)
 const PCM_WORKLET = [
     `const FRAME_SAMPLES = ${FRAME_SAMPLES};`,
     'class PcmTap extends AudioWorkletProcessor {',
-    '    constructor() {',
+    '    constructor(options) {',
     '        super();',
+    '        const o = (options && options.processorOptions) || {};',
+    '        // Only when the context could not run at 16 kHz (resampler.js).',
+    '        this._resampler = o.inRate && o.inRate !== o.outRate',
+    '            ? new StreamResampler(o.inRate, o.outRate) : null;',
     '        this._buf = new Float32Array(FRAME_SAMPLES);',
     '        this._len = 0;',
     '        this.port.onmessage = (event) => {',
@@ -914,7 +1080,13 @@ const PCM_WORKLET = [
     '        };',
     '    }',
     '    process(inputs) {',
-    '        const ch = inputs[0] && inputs[0][0];',
+    '        const input = inputs[0] || [];',
+    '        let ch = input[0];',
+    '        if (ch && input.length > 1) {',
+    '            // Mono was asked for; some browsers return stereo anyway.',
+    '            ch = ch.map((v, i) => input.reduce((s, c) => s + c[i], 0) / input.length);',
+    '        }',
+    '        if (ch && this._resampler) ch = this._resampler.process(ch);',
     '        if (ch) {',
     '            let offset = 0;',
     '            while (offset < ch.length) {',
@@ -934,6 +1106,23 @@ const PCM_WORKLET = [
     '}',
     'registerProcessor("pcm-tap", PcmTap);',
 ].join('\n');
+
+// An audio context with the tap worklet loaded, and the resampler too when the
+// context does not run at the decoder's rate (asked for and refused, or a
+// browser that ignores the request).
+async function prepareAudioContext(options) {
+    const ctx = new AudioContext(options);
+    if (ctx.sampleRate !== LIVE_SAMPLE_RATE) {
+        await ctx.audioWorklet.addModule('/static/resampler.js');
+    }
+    const url = URL.createObjectURL(new Blob([PCM_WORKLET], { type: 'application/javascript' }));
+    try {
+        await ctx.audioWorklet.addModule(url);
+    } finally {
+        URL.revokeObjectURL(url);
+    }
+    return ctx;
+}
 
 function floatToPcm16(frame) {
     const out = new Int16Array(frame.length);
@@ -955,9 +1144,36 @@ function peakLevel(frame) {
 
 // Shared by the worklet's normal frames and its stop-time flush, so a
 // flushed tail is metered and sent exactly like any other frame.
+// The microphone level is watched, never changed: both recognisers normalise
+// level themselves, and software gain raises the noise between words as much
+// as the speech. What cannot be fixed afterwards is clipping (lost waveform)
+// and a level so low it sits in the microphone's own hiss, so those are said.
+const CLIP_PEAK = 0.99;
+const QUIET_PEAK = 0.03;          // about -30 dBFS
+const QUIET_AFTER_SEC = 4;
+const mic = { loudest: 0, samples: 0, clipped: 0, warned: false };
+
+function watchLevel(frame, peak) {
+    mic.samples += frame.length;
+    mic.loudest = Math.max(mic.loudest, peak);
+    if (peak >= CLIP_PEAK) mic.clipped++;
+    if (mic.warned) return;
+    if (mic.clipped >= 3) {
+        mic.warned = true;
+        showStatus('Microphone is clipping: lower its input level', 'is-warn', 6000);
+        devMark('browser', 'microphone clipping', {}, { level: 'warn' });
+    } else if (mic.samples > QUIET_AFTER_SEC * LIVE_SAMPLE_RATE && mic.loudest < QUIET_PEAK) {
+        mic.warned = true;
+        showStatus('Microphone is very quiet: check it is the right one, and its level', 'is-warn', 6000);
+        devMark('browser', 'microphone very quiet', { peak: mic.loudest.toFixed(3) }, { level: 'warn' });
+    }
+}
+
 function handleTapFrame(frame) {
     if (!frame || !frame.length) return;
-    setLevel(peakLevel(frame));
+    const peak = peakLevel(frame);
+    setLevel(peak);
+    watchLevel(frame, peak);
     const pcm = floatToPcm16(frame).buffer;
     if (pendingPcm) {
         pendingPcm.push(pcm);
@@ -977,12 +1193,40 @@ function sendPcm(pcm) {
 
 // -- what the radiologist sees ---------------------------------------------
 
+function openDictationRegion() {
+    const value = editor.value;
+    const start = editor.selectionStart ?? value.length;
+    const end = editor.selectionEnd ?? start;
+    baseOriginal = value;
+    baseBefore = value.slice(0, start);
+    baseAfter = value.slice(end);
+    // Dictation must not weld onto the words either side of it.
+    gapBefore = baseBefore && !/\s$/.test(baseBefore) ? ' ' : '';
+    gapAfter = baseAfter && !/^[\s.,;:)]/.test(baseAfter) ? ' ' : '';
+    // A selected field travels to the server, which answers a pick-list
+    // ("left" into [Right / Left]) by the one rule in template_fields.py.
+    const selected = value.slice(start, end);
+    const fields = selected.match(FIELD_RE) || [];
+    return fields.length === 1 && fields[0] === selected ? selected : null;
+}
+
 function renderLiveText() {
-    const gap = baseText && !baseText.endsWith('\n') ? ' ' : '';
-    const settled = baseText + (committedText ? gap + committedText : '');
-    editor.value = settled;
-    editor.scrollTop = editor.scrollHeight;
-    paintPreview(settled);
+    const head = baseBefore + (committedText ? gapBefore + committedText + gapAfter : '');
+    const keepScroll = editor.scrollTop;
+    editor.value = head + baseAfter;
+    editor.setSelectionRange(head.length, head.length);
+    if (baseAfter) {
+        // Mid-report: stay where the radiologist is looking, and show the
+        // words still being decoded under the editor (see #livePreview).
+        editor.scrollTop = keepScroll;
+        paintPreview('');
+        livePreview.textContent = previewText;
+        livePreview.hidden = !previewText;
+    } else {
+        editor.scrollTop = editor.scrollHeight;
+        livePreview.hidden = true;
+        paintPreview(head);
+    }
     // The count is the only thing on screen saying the report is growing while
     // you speak. It is one split of the text, unlike the marks and findings
     // scans, which is why it runs every cycle and they do not.
@@ -1332,6 +1576,7 @@ function finishSession(okMessage) {
     setRecordingUi(false);
     previewText = '';
     paintPreview('');
+    livePreview.hidden = true;
     pushUndoState();
     announceReportChanged();
     syncReportButtons();
@@ -1405,10 +1650,7 @@ async function startRecording() {
     try {
         // Asking the context for 16 kHz makes the browser resample for us, so
         // there is no hand-written downsampler to get wrong.
-        audioContext = new AudioContext({ sampleRate: LIVE_SAMPLE_RATE });
-        const workletUrl = URL.createObjectURL(new Blob([PCM_WORKLET], { type: 'application/javascript' }));
-        await audioContext.audioWorklet.addModule(workletUrl);
-        URL.revokeObjectURL(workletUrl);
+        audioContext = await prepareAudioContext({ sampleRate: LIVE_SAMPLE_RATE });
     } catch (err) {
         console.error('Could not start live dictation:', err);
         await teardownMic();
@@ -1417,8 +1659,19 @@ async function startRecording() {
     }
     const micAskedAt = performance.now();
     try {
+        // The browser's own voice-call processing is switched off. Noise
+        // suppression and automatic gain both alter speech in ways recognisers
+        // were not trained on (Google's and Deepgram's guidance for
+        // transcription: send unaltered audio), and gain control also drifts
+        // the microphone level during a session. Echo cancellation has nothing
+        // to cancel: this page plays no sound.
         micStream = speechTestStream || await navigator.mediaDevices.getUserMedia({
-            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+            audio: {
+                channelCount: 1,
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+            },
         });
         speechTestStream = null;
     } catch (err) {
@@ -1431,7 +1684,12 @@ async function startRecording() {
         return;
     }
 
-    devMark('browser', 'microphone granted', {}, { ms: performance.now() - micAskedAt });
+    const applied = micStream.getAudioTracks()[0]?.getSettings?.() || {};
+    devMark('browser', 'microphone granted', {
+        rate: applied.sampleRate, ns: applied.noiseSuppression,
+        agc: applied.autoGainControl, ec: applied.echoCancellation,
+    }, { ms: performance.now() - micAskedAt });
+    Object.assign(mic, { loudest: 0, samples: 0, clipped: 0, warned: false });
     tlStep('Microphone ready', (performance.now() - micAskedAt) / 1000);
 
     try {
@@ -1439,15 +1697,31 @@ async function startRecording() {
         // socket is still opening, and they are held, not thrown away.
         pendingPcm = [];
         pendingSamples = 0;
-        micNode = new AudioWorkletNode(audioContext, 'pcm-tap');
+        let source;
+        try {
+            source = audioContext.createMediaStreamSource(micStream);
+        } catch (err) {
+            // Firefox: a microphone can only feed a context at its own rate.
+            // Run at that rate and resample in the worklet instead.
+            devMark('browser', 'resampling in the page', { reason: err.name });
+            await audioContext.close();
+            audioContext = await prepareAudioContext({});
+            source = audioContext.createMediaStreamSource(micStream);
+        }
+        micNode = new AudioWorkletNode(audioContext, 'pcm-tap', {
+            processorOptions: { inRate: audioContext.sampleRate, outRate: LIVE_SAMPLE_RATE },
+        });
         micNode.port.onmessage = (event) => handleTapFrame(event.data);
-        audioContext.createMediaStreamSource(micStream).connect(micNode);
+        source.connect(micNode);
 
         const socketAskedAt = performance.now();
         liveSocket = null;  // the previous recording's socket stops being heard from here
         liveSocket = await connectDictationSocket();
         devMark('browser', 'dictation socket open', {}, { ms: performance.now() - socketAskedAt });
         tlStep('Connected', (performance.now() - socketAskedAt) / 1000);
+
+        const field = openDictationRegion();
+        if (field) liveSocket.send(JSON.stringify({ command: 'field', text: field }));
 
         const held = pendingPcm;
         pendingPcm = null;
@@ -1460,7 +1734,6 @@ async function startRecording() {
     }
 
     flushLearning();
-    baseText = editor.value.trim();
     committedText = '';
     previewText = '';
     // The doubts belong to the dictation that raised them. A new session will
@@ -1545,8 +1818,9 @@ async function cancelRecording() {
     await teardownMic();
     committedText = '';
     previewText = '';
-    editor.value = baseText;
+    editor.value = baseOriginal;
     paintPreview('');
+    livePreview.hidden = true;
     stopTimer();
     setRecordingUi(false);
     // Discard means discard: the session it described is gone, so its timeline

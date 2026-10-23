@@ -127,9 +127,14 @@ def clean_with_llm(
         return text, []
 
     # PHI never leaves the device: scrub before sending.
-    from src.medical.deid import DeIdentifier
+    from src.medical.deid import DeIdentifier, PrivacyError
     deid = DeIdentifier(patient_info or {})
     safe_text = deid.deidentify_text(text)
+    try:
+        deid.validate_clean(safe_text)
+    except PrivacyError as exc:
+        logger.warning("Groq cleanup skipped, identifier survived scrubbing: %s", exc)
+        return text, []
 
     try:
         from src.core.settings import Settings

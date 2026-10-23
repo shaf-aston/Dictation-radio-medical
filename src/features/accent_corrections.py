@@ -109,7 +109,6 @@ _SOUTH_ASIAN: _PatternList = [
     (re.compile(r"\bkalsifications\b", re.IGNORECASE), "calcifications"),
 
     # ── Dropped syllables / slurred endings ──
-    (re.compile(r"\btendonitis\b", re.IGNORECASE), "tendinopathy"),
     (re.compile(r"\bmenesci\b", re.IGNORECASE), "menisci"),
     (re.compile(r"\bmenescus\b", re.IGNORECASE), "meniscus"),
     (re.compile(r"\bmenescal\b", re.IGNORECASE), "meniscal"),

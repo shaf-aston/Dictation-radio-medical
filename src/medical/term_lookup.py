@@ -37,7 +37,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-from src.features.file_manager import related_terms_path
+from src.core.paths import related_terms_path
 from src.medical.medical_dict import (
     get_correction_targets,
     get_medical_terms,

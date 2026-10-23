@@ -223,7 +223,7 @@ class CorrectionCollector:
 
     @staticmethod
     def _deidentify_audio(patient_info, wav_path, segments, session_id):
-        from src.features.file_manager import training_audio_dir
+        from src.core.paths import training_audio_dir
         from src.medical.deid import DeIdentifier
         return DeIdentifier(patient_info).deidentify_audio(
             wav_path, segments, training_audio_dir(), session_id,
@@ -346,7 +346,7 @@ class CorrectionCollector:
         """
         try:
             from pathlib import Path
-            from src.features.file_manager import imaging_training_dir
+            from src.core.paths import imaging_training_dir
             dest = imaging_training_dir() / Path(image_path).name
             dest.write_bytes(Path(image_path).read_bytes())
             return str(dest)

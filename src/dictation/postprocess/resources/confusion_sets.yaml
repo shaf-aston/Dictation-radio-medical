@@ -60,6 +60,13 @@ compound_prefixes:
   - thoraco
   - lumbo
   - sacro
+  # Measured 2026-10-23 (piper set, Parakeet): "ultra sound", "extra luminal",
+  # "multi level" across 3-5 voices each. The concatenation must still be a
+  # known term, so "extra" + an ordinary word is never welded.
+  - ultra
+  - extra
+  - intra
+  - multi
 
 # CUE DISCIPLINE (read before adding a cue): a cue must be EXCLUSIVE: a word
 # that sits next to ONE member and essentially never the other. Generic words

@@ -27,7 +27,7 @@ _log_path: Optional[Path] = None
 def _get_log_path() -> Path:
     global _log_path
     if _log_path is None:
-        from src.features.file_manager import audit_log_path
+        from src.core.paths import audit_log_path
         _log_path = audit_log_path()
     return _log_path
 
@@ -74,11 +74,25 @@ def log_template_loaded(template_name: str) -> None:
     _write("template_loaded", {"template": template_name})
 
 
-def log_critical_finding_acknowledged(term: str, patient_id: str, level: int) -> None:
+def log_report_copied(patient_id: str, word_count: int) -> None:
+    """Logged when the report is put on the clipboard: it leaves the app too."""
+    _write("report_copied", {"patient_id": patient_id, "word_count": word_count})
+
+
+def log_critical_finding_acknowledged(
+    term: str, patient_id: str, level: int,
+    recipient: str = "", method: str = "", communicated_at: str = "",
+    radiologist: str = "",
+) -> None:
+    """Who was told about a finding, how, when, and by whom (ACR practice parameter)."""
     _write("critical_finding_acknowledged", {
         "term": term,
         "patient_id": patient_id,
         "level": level,
+        "recipient": recipient,
+        "method": method,
+        "communicated_at": communicated_at,
+        "radiologist": radiologist,
     })
 
 

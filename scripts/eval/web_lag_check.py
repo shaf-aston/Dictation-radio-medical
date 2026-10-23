@@ -47,6 +47,7 @@ def _install_fakes(mode: str) -> None:
     from src.dictation.asr.engines import deepgram_engine
     from src.dictation.stream import live_session, polish
     from src.ui import web_app
+    from src.ui.web import state as web_state
 
     live_session.detect_speech = sim.energy_vad
     polish.detect_speech = sim.energy_vad
@@ -58,8 +59,8 @@ def _install_fakes(mode: str) -> None:
     path = pathlib.Path(tempfile.mkdtemp()) / "settings.json"
     path.write_text(json.dumps(MODES[mode]))
     core_settings.settings_file = lambda: path
-    web_app.settings_file = lambda: path
-    web_app._warm_up_singletons = lambda: None
+    web_state.settings_file = lambda: path
+    web_app.warm_up_singletons = lambda: None
 
 
 def run(mode: str, seconds: float, latency: float, port: int) -> Dict[str, object]:

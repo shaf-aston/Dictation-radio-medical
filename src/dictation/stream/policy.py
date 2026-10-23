@@ -15,7 +15,7 @@ judged by ``scripts/eval/replay.py`` against the medical-term error veto.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Callable, Optional
 
 from src.dictation.asr.types import EngineCaps
@@ -101,3 +101,41 @@ def plan_from_settings(get: Callable[[str], Any], caps: Optional[EngineCaps]) ->
             row="manual",
         )
     return plan_for(caps, trailing)
+
+
+@dataclass(frozen=True)
+class LiveKnobs:
+    """The dictation settings both front-ends hand to a LiveSession, read once.
+
+    The desktop and the web app each used to read these eight keys on their
+    own, and drifted: the desktop never passed ``uncertain_word_confidence``.
+    Field names match :class:`~src.dictation.stream.live_session.LiveSession`'s
+    keyword arguments, so ``LiveSession(..., **knobs.as_kwargs())`` is the
+    whole hand-over.
+    """
+
+    pause_threshold: float = 2.5
+    live_beam_size: int = 2
+    final_beam_size: int = 5
+    preview_max_lag_sec: float = 3.0
+    polish_confidence_ceiling: float = 0.75
+    uncertain_word_confidence: float = 0.6
+    streaming: bool = True
+    background_polish: bool = True
+
+    @classmethod
+    def from_settings(cls, get: Callable[[str], Any]) -> "LiveKnobs":
+        """*get* is ``Settings.get``, which falls back to the shipped defaults."""
+        return cls(
+            pause_threshold=float(get("pause_threshold")),
+            live_beam_size=max(1, int(get("live_beam_size"))),
+            final_beam_size=max(1, int(get("final_beam_size"))),
+            preview_max_lag_sec=float(get("preview_max_lag_sec")),
+            polish_confidence_ceiling=float(get("polish_confidence_ceiling")),
+            uncertain_word_confidence=float(get("uncertain_word_confidence")),
+            streaming=bool(get("asr_streaming")),
+            background_polish=bool(get("background_polish")),
+        )
+
+    def as_kwargs(self) -> dict:
+        return asdict(self)
