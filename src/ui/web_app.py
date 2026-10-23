@@ -26,6 +26,7 @@ from src.dictation.postprocess.pipeline import (
     CLEANUP_LEVELS,
 )
 from src.dictation.asr import AsrEngine, create_engine
+from src.dictation.asr.factory import describe_engine
 from src.dictation.stream.live_session import LiveSession
 from src.dictation.stream.rules import build_context_prompt
 from src.dictation.stream.policy import plan_from_settings
@@ -323,6 +324,9 @@ def _bootstrap_payload() -> dict:
         # The browser must capture at exactly the rate the decoder expects, so
         # the page is told the number rather than hardcoding its own copy of it.
         "live_sample_rate": LIVE_SAMPLE_RATE,
+        # Which recogniser actually answers: the model picker only names
+        # Whisper, which on the default engine is the fallback.
+        "engine_label": describe_engine(_settings()),
         # What a template field is, as a pattern valid in JS too: the page
         # finds fields with the server's own definition, not a copy of it.
         # The communication dialog's choices and the name it last signed with.

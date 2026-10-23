@@ -395,7 +395,9 @@ function loadReportSettingsFromServer() {
 function updateSettingsBadge() {
     const badge = document.getElementById('settingsBadge');
     if (!badge) return;
-    const m = modelSelect.value || 'base';
+    // The engine that answers, when it is not the Whisper model picked here.
+    const m = BOOTSTRAP.engine_label && !BOOTSTRAP.engine_label.startsWith('Whisper')
+        ? BOOTSTRAP.engine_label : (modelSelect.value || 'base');
     const l = languageInput.value.trim() || 'en';
     const a = accentSelect.options[accentSelect.selectedIndex]?.text || 'Neutral';
     const v = vadCheckbox.checked ? 'VAD' : '';

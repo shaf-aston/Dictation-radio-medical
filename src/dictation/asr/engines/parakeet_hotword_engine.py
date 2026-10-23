@@ -7,9 +7,9 @@ during beam search. The list is the curated radiology lexicon, so the model
 leans toward "steatosis" when it is unsure between that and "stenosis",
 instead of a text rule guessing afterwards.
 
-Measured 2026-10-23, 30 clips of the piper set, raw decode, same speed:
-medical-term error 16.9% greedy -> 10.9% with hotwords (score 1.0); through the
-post-processing pipeline 10.9% -> 7.1%, WER 5.7% -> 4.5%. A higher score (2.0)
+Measured 2026-10-23 on the whole piper set (54 min), against the same model
+greedy: medical-term error 17.0% -> 11.9% raw, 9.7% -> 7.7% after the
+post-processing pipeline, WER 5.3% -> 4.5%; decode time 0.11 -> 0.15 x real time. A higher score (2.0)
 found more terms but inserted them where they were not said (WER rose), which
 is why ``hotword_score`` defaults to 1.0.
 

@@ -63,3 +63,14 @@ def test_a_fine_tuned_export_wins(monkeypatch, tmp_path):
 
 def test_no_parakeet_without_either_runtime(monkeypatch):
     assert _tier(monkeypatch, set()) is None
+
+
+def test_engine_label_names_what_actually_answers(monkeypatch, tmp_path):
+    real = importlib.util.find_spec
+    monkeypatch.setattr(factory.importlib.util, "find_spec",
+                        lambda name: object() if name in ("onnx_asr", "sherpa_onnx") else real(name))
+    base = {"asr_engine": "local", "asr_hotwords": True, "hotword_score": 1.0, "model_size": "base.en"}
+    assert factory.describe_engine(_Settings(base)) == "Parakeet + radiology terms"
+    assert factory.describe_engine(_Settings({**base, "asr_hotwords": False})) == "Parakeet"
+    assert factory.describe_engine(_Settings({**base, "parakeet_model_dir": str(tmp_path)})) == "Parakeet (your fine-tune)"
+    assert factory.describe_engine(_Settings({**base, "asr_engine": "deepgram"})) == "Deepgram (cloud)"

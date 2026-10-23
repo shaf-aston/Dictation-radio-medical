@@ -69,6 +69,24 @@ def _parakeet_tier(settings: Settings) -> Any:
     return None
 
 
+def describe_engine(settings: Settings) -> str:
+    """What the radiologist should be told is transcribing, in a few words.
+
+    Answers without loading a model: the same choice ``_local_tiers`` makes.
+    The Whisper model setting alone is misleading here, because on the
+    default engine it only names the fallback.
+    """
+    if settings.get("asr_engine") == "deepgram":
+        return "Deepgram (cloud)"
+    tier = _parakeet_tier(settings)
+    if tier is None:
+        return f"Whisper {settings.get('model_size')}"
+    name, engine = tier
+    if name == "parakeet-hotwords":
+        return "Parakeet + radiology terms"
+    return "Parakeet (your fine-tune)" if engine.model_dir else "Parakeet"
+
+
 def _make_local_chain(**kwargs: Any) -> AsrEngine:
     """Everything on this machine: nothing leaves the device."""
     return ChainEngine(_local_tiers(**kwargs))

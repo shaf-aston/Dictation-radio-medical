@@ -196,10 +196,10 @@ words and spinal levels, as it already did units. All numbers below use it.
 | Parakeet TDT v3, greedy (old default) | 21.8 % | 12.6 % | 6.4 % | 0.11 |
 | **Parakeet TDT v2, greedy** | 17.0 % | 9.7 % | 5.3 % | 0.11 |
 | Whisper small.en (radiology prompt) | 13.8 % | 8.9 % | 6.0 % | 0.41 |
-| Parakeet v2 + radiology hotwords, 30-clip subset | 10.9 % | 7.1 % | 4.5 % | ~0.13 |
+| **Parakeet v2 + radiology hotwords (new default)** | 11.9 % | **7.7 %** | **4.5 %** | 0.15 |
 
-(The hotword row is a 30-clip subset, one per report across all voices; the
-greedy v2 on the same subset was 16.9 % raw, 10.9 % after the pipeline.)
+Hotwords cost about a third more decode time and still run 7x faster than
+real time; the pipeline had 154 words to fix after them against 201 without.
 
 **What changed because of it**
 
