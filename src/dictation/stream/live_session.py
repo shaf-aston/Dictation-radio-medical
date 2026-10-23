@@ -26,6 +26,7 @@ import numpy as np
 from src.core import event_log
 from src.dictation.asr import AsrEngine, TranscribeContext
 from src.dictation.asr.port import AsrStream, StreamingAsrEngine, engine_identity
+from src.dictation.conditioning.chain import Chain
 from src.dictation.asr.types import AsrResult, StreamError, StreamFinal, StreamInterim
 from src.dictation.postprocess.incremental import IncrementalPostprocessor
 from src.dictation.stream.ledger import ChunkLedger, close_sentence
@@ -96,7 +97,13 @@ class LiveSession:
         on_decoded: Optional[Callable[[AsrResult, int], None]] = None,
         streaming: bool = True,
         background_polish: bool = True,
+        conditioner: Optional[Chain] = None,
     ) -> None:
+        # Cleans each block before it is stored, so every listener (VAD, decode,
+        # polish, live socket) hears the same audio. One per session: it learns
+        # this room. Flushed once, at close_open_tail_fast.
+        self._conditioner = conditioner
+        self._conditioner_flushed = False
         self.live_engine = live_engine
         self.final_engine = final_engine
         self.language = language
@@ -193,15 +200,21 @@ class LiveSession:
         if block.dtype != np.float32:
             block = block.astype(np.float32)
         with self._push_lock:
-            needed = self._len + len(block)
-            if needed > len(self._buf):
-                grown = np.zeros(max(needed, len(self._buf) * 2), dtype=np.float32)
-                grown[: self._len] = self._buf[: self._len]
-                self._buf = grown
-            self._buf[self._len : needed] = block
-            self._len = needed
-            if self._stream is not None:
-                self._push_unsent()
+            if self._conditioner is not None:
+                block = self._conditioner.process(block)
+            self._append(block)
+
+    def _append(self, block: np.ndarray) -> None:
+        """Store *block* at the end of the buffer. Hold _push_lock."""
+        needed = self._len + len(block)
+        if needed > len(self._buf):
+            grown = np.zeros(max(needed, len(self._buf) * 2), dtype=np.float32)
+            grown[: self._len] = self._buf[: self._len]
+            self._buf = grown
+        self._buf[self._len : needed] = block
+        self._len = needed
+        if self._stream is not None:
+            self._push_unsent()
 
     def _push_unsent(self) -> None:
         """Send the stream every sample it has not had yet. Hold _push_lock."""
@@ -606,6 +619,10 @@ class LiveSession:
         regardless of confidence -- speed was the reason it was decoded by the
         fast model, so it has not earned the benefit of the doubt.
         """
+        with self._push_lock:
+            if self._conditioner is not None and not self._conditioner_flushed:
+                self._conditioner_flushed = True
+                self._append(self._conditioner.flush())
         if self._stream is not None:
             # Ask the socket to settle everything it has been sent. Measured in
             # a few hundred milliseconds when it is healthy; if it is not, the

@@ -159,6 +159,9 @@ _DEFAULTS: dict = {
     "learning_enabled": True,          # capture edits for adaptive learning
     "learning_consent_shown": False,   # has user seen the learning consent dialog
     "disclaimer_shown": False,         # has user seen the clinical disclaimer
+    # Mic cleaning before anything listens (src/dictation/conditioning). Each
+    # later step adds its own section here, all off until measured to help.
+    "audio_conditioning": {"window_samples": 512},
 }
 
 

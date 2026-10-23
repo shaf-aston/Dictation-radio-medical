@@ -42,6 +42,8 @@ import numpy as np
 from scripts.eval import corpus
 from scripts.eval.metrics import term_error_rate, word_error_rate
 from src.core.settings import Settings
+from src.dictation.conditioning.chain import Chain
+from src.dictation.conditioning.factory import build_chain
 from src.dictation.asr.factory import DEFAULT_ENGINE, create_engine, model_kwargs
 from src.dictation.stream.live_session import LiveSession
 from src.dictation.stream.rules import build_context_prompt
@@ -132,6 +134,7 @@ def replay(
     polish_ceiling: Optional[float] = None,
     realtime: bool = False,
     policy: Optional[ChunkPolicy] = None,
+    conditioner: Optional[Chain] = None,
 ) -> ReplayResult:
     """Drive one recording through the live loop exactly as the socket does."""
     sr = SAMPLE_RATE
@@ -158,6 +161,7 @@ def replay(
         uncertain_word_confidence=float(settings.get("uncertain_word_confidence")),
         initial_prompt=build_context_prompt(),
         sr=sr,
+        conditioner=conditioner,
     )
 
     result = ReplayResult(name=name, audio_sec=len(audio) / sr, chunks=0, final_text="")
@@ -266,6 +270,8 @@ def main() -> None:
     ap.add_argument("--trailing-silence", type=float,
                     help="override chunk_trailing_silence_sec; a huge value "
                          "effectively turns the trailing-pause cut off")
+    ap.add_argument("--condition", default="",
+                    help="comma list of audio_conditioning steps to switch on")
     args = ap.parse_args()
 
     settings = Settings()
@@ -297,13 +303,22 @@ def main() -> None:
         from src.medical.medical_dict import get_correction_targets
         lexicon = list(get_correction_targets())
 
+    steps = [n.strip() for n in args.condition.split(",") if n.strip()]
+    if steps:
+        print(f"conditioning: {', '.join(steps)}")
+
     results = []
     for clip in _clips(args):
+        # One chain per clip: it learns the room, so none is shared.
+        conditioner = (
+            build_chain({n: {"on": True} for n in steps}, SAMPLE_RATE) if steps else None
+        )
         res = replay(
             load_audio(clip), clip.stem, settings,
             engine_name=args.engine, live_model=live_model,
             final_model=final_model, final_engine_name=final_engine,
             polish_ceiling=ceiling, realtime=args.realtime, policy=policy,
+            conditioner=conditioner,
         )
         results.append(res)
         s = res.summary()
