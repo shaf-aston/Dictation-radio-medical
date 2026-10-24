@@ -10,8 +10,9 @@ _RE_HSPACE = re.compile(r"[^\S\n]+")
 #: word (a query: "Indication: ?PE") and a "." that leads a digit (".5 cm").
 _RE_PREPUNCT = re.compile(r"[ \t]+([,;:!)]|\.(?!\d)|\?(?!\w))")
 #: A sentence ends at terminal punctuation, or at a line break: what follows
-#: "new line" / "new paragraph" (or a heading's colon) starts a sentence.
-_RE_SENT = re.compile(r"([.!?]+\s+|\n+)")
+#: "new line" / "new paragraph" (or a heading's colon) starts a sentence. The
+#: last stop of a dotted abbreviation ("e.g.", "i.e.") does not end one.
+_RE_SENT = re.compile(r"((?<![A-Za-z]\.[A-Za-z])[.!?]+\s+|\n+)")
 #: Spaces the spoken-punctuation stage leaves inside a line break or a bracket.
 _RE_SPACE_AT_BREAK = re.compile(r"[ \t]*\n[ \t]*")
 _RE_SPACE_IN_BRACKET = re.compile(r"\([ \t]+")

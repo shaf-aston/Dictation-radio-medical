@@ -62,6 +62,25 @@ def test_every_terminology_output_is_left_alone():
     ("Bone marrow oedema in the medial femoral condyle.",
      "Bone marrow oedema in the medial femoral condyle."),
     ("marrow oedema in the condyle", "Bone marrow oedema in the condyle"),
+    # A rule keeps the part of speech dictated; "an echoic" is not "anechoic".
+    ("An echoic structure.", "An echoic structure."),
+    ("Hypo echoic nodule.", "Hypoechoic nodule."),
+    ("Fat saturation was inhomogeneous.", "Fat saturation was inhomogeneous."),
+    ("Comminution of the fragments.", "Comminution of the fragments."),
+    ("Signal in the substance of the tendon.", "Signal in the substance of the tendon."),
+    # A derived form of a term is spelled as meant.
+    ("Enhancing craniocaudally.", "Enhancing craniocaudally."),
+    ("Osteonecrotic focus.", "Osteonecrotic focus."),
+    ("Isoattenuating mass.", "Isoattenuating mass."),
+    ("Multisequence MRI.", "Multisequence MRI."),
+    ("Splenomaly is present.", "Splenomegaly is present."),       # a typo: still fixed
+    # Capitals survive a fix; an acronym's expansion is written as spelled.
+    ("SUBCHONDRAL BONE OEDEMA.", "SUBCHONDRAL BONE OEDEMA."),
+    ("BMO in the femur.", "Bone marrow oedema in the femur."),
+    # A unit after a number, "size" with a prefix, a dotted abbreviation.
+    ("Treated with 50 Gray.", "Treated with 50 Gray."),
+    ("Oversized cyst.", "Oversized cyst."),
+    ("Small lesions, e.g. the cyst.", "Small lesions, e.g. the cyst."),
 ])
 def test_meaning_is_kept(said, written):
     assert postprocess_transcript(said) == written
@@ -69,3 +88,14 @@ def test_meaning_is_kept(said, written):
 
 def test_correct_the_word_keeps_a_decimal_whole():
     assert postprocess_transcript("measures 2.5 correct word 3.5 cm") == "Measures 3.5 cm"
+
+
+def test_every_accent_rule_can_fire():
+    # The gate in front of the rules is built from them, so none is unreachable.
+    from src.features.accent_corrections import ACCENT_PROFILES, apply_accent_corrections
+    assert apply_accent_corrections("Severe artritis.", "middle_eastern") == "Severe arthritis."
+    for accent, rules in ACCENT_PROFILES.items():
+        for pattern, _ in rules:
+            sample = pattern.pattern.replace("\\b", "")
+            if sample.isalpha():  # a plain word: it must be rewritten
+                assert apply_accent_corrections(sample, accent) != sample, (accent, sample)

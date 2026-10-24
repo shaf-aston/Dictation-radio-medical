@@ -55,6 +55,10 @@ _WORDS: Dict[str, str] = {
 #: Short ones (size, seize, prize, baize) never match: the rule needs three
 #: letters before the "i".
 _NOT_A_SUFFIX = {"capsize", "capsizes", "capsized", "capsizing"}
+#: "size" with a prefix is still the word size: "oversized", "undersized".
+_SIZE_COMPOUND = re.compile(r"^(?:over|under|up|down|re|out|super|mid|full)siz", re.IGNORECASE)
+#: A number before it makes a word a unit: "50 Gray" is a radiation dose.
+_AFTER_NUMBER = re.compile(r"\d[^\S\n]*$")
 
 #: British -> US patterns, for recognising a British spelling as a real word.
 _UK_TO_US = (
@@ -105,11 +109,16 @@ def apply_uk_spelling(text: str, locale: Optional[str] = None) -> str:
     """*text* with US spellings of the listed words made British; en-US: unchanged."""
     if (locale or _configured_locale()) != "en-GB":
         return text
-    text = _WORD_RE.sub(lambda m: _keep_case(m.group(0), _WORDS[m.group(0).lower()]), text)
+    def word(m: re.Match) -> str:
+        if _AFTER_NUMBER.search(m.string, 0, m.start()):
+            return m.group(0)
+        return _keep_case(m.group(0), _WORDS[m.group(0).lower()])
+
+    text = _WORD_RE.sub(word, text)
 
     def ize(m: re.Match) -> str:
         word = m.group(0)
-        if word.lower() in _NOT_A_SUFFIX:
+        if word.lower() in _NOT_A_SUFFIX or _SIZE_COMPOUND.match(word):
             return word
         return f"{m.group(1)}{'S' if word.isupper() else 's'}{m.group(2)}"
 

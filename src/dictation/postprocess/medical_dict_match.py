@@ -116,6 +116,14 @@ _english_known = is_english_word
 # "resolve"). The bundled wordlist stores singular/base forms, so without
 # this guard every plural or past-tense word gets demoted to its base.
 _INFLECTIONS = ("es", "ed", "ing", "s", "d")
+#: Derived forms written from a base: (ending, the base's ending). An adverb,
+#: adjective or verb form of a known term is spelled as meant, and snapping it
+#: to the base changed the word dictated ("craniocaudally" -> "craniocaudal",
+#: "osteonecrotic" -> "osteonecrosis", "isoattenuating" -> "isoattenuation").
+_DERIVATIONS = (
+    ("ally", "al"), ("otic", "osis"), ("itic", "itis"),
+    ("ating", "ation"), ("ated", "ation"), ("i", "us"),
+)
 _MIN_STEM = 4
 
 # Acronyms preserved verbatim regardless of case.
@@ -221,6 +229,11 @@ def _stems(word: str) -> Set[str]:
     }
     if word.endswith("ies") and len(word) >= _MIN_STEM + 2:
         stems.add(f"{word[:-3]}y")
+    stems.update(
+        word[: -len(end)] + base
+        for end, base in _DERIVATIONS
+        if word.endswith(end) and len(word) - len(end) >= _MIN_STEM
+    )
     return stems
 
 
@@ -244,6 +257,10 @@ def _only_inflection_differs(a: str, b: str) -> bool:
     """
     stems_a = _stems(a)
     stems_b = _stems(b)
+    # One is the other with a suffix: "multisequence" is not a typo of
+    # "multisequenced".
+    if a in stems_b or b in stems_a:
+        return True
     shared = stems_a & stems_b
     if not shared:
         return False

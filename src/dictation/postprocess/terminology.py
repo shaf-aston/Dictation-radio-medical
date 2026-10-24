@@ -50,12 +50,16 @@ _RULES: List[_Rule] = [
     # ------------------------------------------------------------------
     # Signal intensity / echogenicity compound terms.
     # ------------------------------------------------------------------
-    # These join a split word and keep the form that was spoken: "an area of
-    # hyperintensity" stays a noun. They used to collapse noun and adjective
-    # into one ("echogenic foci" -> "echogenicity foci"), measured 2026-10-23
-    # as the terminology stage's only false corrections on the piper set.
+    # A rule here may join a split word or re-spell one, and keeps the form
+    # that was spoken: "an area of hyperintensity" stays a noun. Rules that
+    # collapsed noun and adjective ("echogenic foci" -> "echogenicity foci",
+    # "fat saturation was" -> "fat-saturated was", "comminution" ->
+    # "comminuted") wrote reports nobody dictated.
     (_ci(r"\b(hyper|hypo|iso)[- ]?intens(e|ity)\b"), r"\1intens\2"),
-    (_ci(r"\b(hyper|hypo|iso|an)[- ]?echo(ic|genicity)\b"), r"\1echo\2"),
+    (_ci(r"\b(hyper|hypo|iso)[- ]?echo(ic|genicity)\b"), r"\1echo\2"),
+    # "an" is also the article, so it joins only when written joined:
+    # "an echoic structure" and "anechoic structure" are opposites.
+    (_ci(r"\ban-echo(ic|genicity)\b"), r"anecho\1"),
     (_ci(r"\becho[- ]?texture\b"), "echotexture"),
     (_ci(r"\becho[- ]?genic(ity)?\b"), r"echogenic\1"),
     (_ci(r"\bhomo[- ]?geneous\b"), "homogeneous"),
@@ -68,7 +72,8 @@ _RULES: List[_Rule] = [
     (_ci(r"\bsub[- ]?chondral\b"), "subchondral"),
     (_ci(r"\bsub[- ]?articular\b"), "subarticular"),
     (_ci(r"\bsub[- ]?acute\b"), "subacute"),
-    (_ci(r"\bfat[- ]?sat(?:urated|uration)?\b"), "fat-saturated"),
+    (_ci(r"\bfat[- ]?sat(?:urated)?\b"), "fat-saturated"),
+    (_ci(r"\bfat-saturation\b"), "fat saturation"),
     (_ci(r"\bfat\s+suppressed\b"), "fat-suppressed"),
     (_ci(r"\bpost[- ]?contrast\b"), "post-contrast"),
     (_ci(r"\bpre[- ]?contrast\b"), "pre-contrast"),
@@ -103,7 +108,6 @@ _RULES: List[_Rule] = [
     (_ci(r"\bachilles\b"), "Achilles"),
     (_ci(r"\blab\s*rum\b"), "labrum"),
     (_ci(r"\blabram\b"), "labrum"),
-    (_ci(r"\bin\s+the\s+substance\b"), "intrasubstance"),
     (_ci(r"\binter[- ]?substance\b"), "intrasubstance"),
     (_ci(r"\bintra[- ]?substance\b"), "intrasubstance"),
     (_ci(r"\ben(?:d\s+of|tho|theso)\s*(?:sopathy|pathy)\b"), "enthesopathy"),
@@ -155,7 +159,6 @@ _RULES: List[_Rule] = [
     (_ci(r"\bpara[- ]?central\b"), "paracentral"),
 
     # Fracture descriptors.
-    (_ci(r"\bcommin(?:uted|ution)\b"), "comminuted"),
     (_ci(r"\bnon[- ]?displaced\b"), "non-displaced"),
 
     # UK spelling preferences (apply before fuzzy dictionary).
@@ -232,5 +235,30 @@ def apply_terminology(text: str) -> str:
     fixes apply without code changes.
     """
     for pattern, repl in _RULES:
-        text = pattern.sub(repl, text)  # type: ignore[arg-type]
+        text = pattern.sub(_keeping_case(repl), text)
     return apply_data_rules(text)
+
+
+#: An all-capitals word this long is a heading or emphasis, not an acronym.
+_SHOUTED_MIN_LETTERS = 5
+
+
+def _keeping_case(repl: Union[str, Callable[[re.Match], str]]) -> Callable[[re.Match], str]:
+    """*repl*, with the matched text's capitals carried onto what it writes.
+
+    A rule writes its fix in lower case, so "SUBCHONDRAL BONE" became
+    "subchondral BONE" and a heading lost its capitals word by word. A word
+    written in capitals stays in capitals and a capitalised one stays
+    capitalised; a short all-capitals word is an acronym (BMO, CXR), so its
+    expansion is written as the rule spells it.
+    """
+    def apply(m: re.Match) -> str:
+        out = m.expand(repl) if isinstance(repl, str) else repl(m)
+        said = m[0]
+        letters = sum(c.isalpha() for c in said)
+        if said.isupper() and letters >= _SHOUTED_MIN_LETTERS:
+            return out.upper()
+        if said[:1].isupper() and not said.isupper():
+            return out[:1].upper() + out[1:]
+        return out
+    return apply
