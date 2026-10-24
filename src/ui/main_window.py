@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 from PySide6.QtWidgets import (
     QMainWindow, QApplication, QFileDialog, QMessageBox,
-    QTextEdit, QPushButton, QComboBox, QLabel, QLineEdit,
+    QPushButton, QComboBox, QLabel, QLineEdit,
     QCheckBox, QFrame, QSplitter, QProgressBar, QMenu, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt, QTimer, Slot
@@ -33,6 +33,7 @@ from src.core.paths import report_filename
 from src.ui.collapsible import Section
 from src.ui.status import StatusTrack
 from src.ui.finding_marks import FindingGutter
+from src.ui.report_editor import ReportEditor
 from src.ui.term_marks import TermMarks
 from src.ui.term_popup import TermPopup
 from src.ui.styles import DARK, LIGHT, set_findings_state, set_status_state
@@ -55,8 +56,9 @@ from src.ui.views import (
 # Recording control
 from src.ui.field_navigation import FieldKeys
 from src.ui.recording_session import (
-    confirm_release, on_partial_text, on_processed_text, on_start_recording,
-    on_stop_recording, on_transcription_finished, setup_level_timer,
+    _abandon_unfinished_session, confirm_release, insert_before_dictation, on_partial_text,
+    on_processed_text, on_start_recording, on_stop_recording, on_transcription_finished,
+    setup_level_timer,
 )
 
 # Dialog handling
@@ -125,7 +127,7 @@ class MainWindow(QMainWindow):
     _macro_container: QWidget
     _macro_layout: QVBoxLayout
     template_combo: QComboBox
-    editor: QTextEdit
+    editor: ReportEditor
     finding_gutter: FindingGutter
     _findings_pill: QLabel
     _info_words: QLabel
@@ -173,10 +175,15 @@ class MainWindow(QMainWindow):
         # Sequence number of the pass that hands the live text straight back at
         # Stop, ahead of the polish. Applying it is what re-enables Record.
         self._handback_seq: Optional[int] = None
-        # The report exactly as it was handed back at Stop. If the editor no
-        # longer matches it when the polish lands, the radiologist has edited
-        # it and the polished version is dropped rather than overwriting them.
-        self._handed_over_text: Optional[str] = None
+        # The editor's text right after the session's last write, and whether
+        # the radiologist has taken the report back (recording_session.
+        # session_may_write): from Stop on, the session writes only into a
+        # report nobody has touched since its own last write.
+        self._session_last_written: Optional[str] = None
+        self._session_yielded: bool = False
+        # Threads of sessions retired before they finished (see
+        # recording_session._abandon_unfinished_session); waited for on close.
+        self._retiring_threads: list = []
         # Where the dictated region starts. A QTextCursor, not an integer: Qt
         # moves it along when text is inserted before it, so loading a template
         # or typing into a form field mid-recording can no longer leave the
@@ -230,6 +237,7 @@ class MainWindow(QMainWindow):
         self.term_popup.applied.connect(self._on_lookup_used)
         build_menu(self)
         self._setup_shortcuts()
+        self.editor.set_release_gate(self._release_selection)
         self._setup_autosave_timer()
         setup_level_timer(self)
         self._apply_theme(self.settings.get("theme", "dark"))
@@ -286,7 +294,9 @@ class MainWindow(QMainWindow):
             self.editor,
             self.settings.get("key_next_field"),
             self.settings.get("key_previous_field"),
-            enabled=lambda: not self.dictation_active(),
+            # Off only while recording: after Stop the report is the
+            # radiologist's, and Tab must move between fields, not type a tab.
+            enabled=lambda: not self.recorder.is_recording,
         )
 
     def _toggle_recording(self) -> None:
@@ -526,10 +536,6 @@ class MainWindow(QMainWindow):
         """
         return self.recorder.is_recording or self.pp_worker is not None
 
-    def _dictation_start_position(self) -> int:
-        """Character offset where the dictated region begins."""
-        return self._dictation_start.position() if self._dictation_start else 0
-
     def on_insert_template(self) -> None:
         name = self.template_combo.currentText()
         if not name:
@@ -538,18 +544,16 @@ class MainWindow(QMainWindow):
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 content = fh.read()
-            if self.dictation_active():
+            if self.recorder.is_recording:
                 # Replacing the document mid-recording would destroy the
                 # dictation the radiologist is in the middle of. Put the
-                # template above it instead; the cursor anchor shifts with it,
-                # so dictation keeps appending underneath.
-                cursor = self.editor.textCursor()
-                cursor.setPosition(0)
-                cursor.insertText(content if content.endswith("\n") else content + "\n")
+                # template above it instead.
+                insert_before_dictation(self, content if content.endswith("\n") else content + "\n")
                 self._show_status(f"Template inserted above dictation: {name}", 2000, state="ok")
             else:
-                self.editor.setPlainText(content)
-                self._show_status(f"Template loaded: {name}", 2000, state="ok")
+                self.replace_report(content)
+                self._start_new_report_findings()
+                self._show_status(f"Template loaded: {name}  (Ctrl+Z to undo)", 3000, state="ok")
             self.settings.set("last_template", name)
             audit_log.log_template_loaded(name)
         except Exception as exc:
@@ -560,12 +564,10 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _insert_macro(self, text: str) -> None:
-        if self.dictation_active():
+        if self.recorder.is_recording:
             # Anything dropped inside the dictated region is overwritten by the
             # next live cycle, so a macro goes in immediately before it.
-            cursor = self.editor.textCursor()
-            cursor.setPosition(self._dictation_start_position())
-            cursor.insertText(f"{text}\n")
+            insert_before_dictation(self, f"{text}\n")
             self._show_status("Macro inserted above dictation", 2000, state="ok")
         else:
             current = self.editor.toPlainText()
@@ -612,7 +614,29 @@ class MainWindow(QMainWindow):
     # Report actions
     # ------------------------------------------------------------------
 
+    def replace_report(self, text: str) -> None:
+        """Replace the whole report as one undoable edit.
+
+        ``setPlainText`` and ``clear`` throw the undo history away, so a
+        template loaded or Clear pressed over a finished report lost it for
+        good. While a polish is still running this is an edit like any other:
+        the session sees the report changed and stops writing.
+        """
+        cursor = QTextCursor(self.editor.document())
+        cursor.beginEditBlock()
+        cursor.select(QTextCursor.SelectionType.Document)
+        cursor.insertText(text)
+        cursor.endEditBlock()
+
+    def _refuse_while_recording(self, what: str) -> bool:
+        if self.recorder.is_recording:
+            self._show_status(f"Stop recording before {what}", 3000, state="warn")
+            return True
+        return False
+
     def on_new_report(self) -> None:
+        if self._refuse_while_recording("starting a new report"):
+            return
         if self.editor.toPlainText().strip():
             _Yes = QMessageBox.StandardButton.Yes
             reply = QMessageBox.question(
@@ -623,7 +647,7 @@ class MainWindow(QMainWindow):
             if reply != _Yes:
                 return
         self.flush_dictation_edits()
-        self.editor.clear()
+        self.replace_report("")
         self._start_new_report_findings()
         self.patient_name.clear()
         self.patient_id.clear()
@@ -635,8 +659,10 @@ class MainWindow(QMainWindow):
         self._show_status("New report started.")
 
     def _load_report_from_path(self, path: str) -> None:
+        if self._refuse_while_recording("opening a report"):
+            return
         with open(path, "r", encoding="utf-8") as fh:
-            self.editor.setPlainText(fh.read())
+            self.replace_report(fh.read())
         self._start_new_report_findings()
         self._show_status(f"Opened: {os.path.basename(path)}", 2000, state="ok")
 
@@ -671,6 +697,13 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().setText(text)
         audit_log.log_report_copied(self._get_patient_info().get("id", ""), len(text.split()))
         self._show_status("Copied to clipboard.", 1500, state="ok")
+
+    def _release_selection(self, text: str) -> bool:
+        """Copy/cut/drag of a selection the gate would ask about (ReportEditor)."""
+        if not confirm_release(self):
+            return False
+        audit_log.log_report_copied(self._get_patient_info().get("id", ""), len(text.split()))
+        return True
 
     def _post_save(self, path: str, verb: str, log_fn) -> None:  # type: ignore[type-arg]
         self.settings.add_recent_report(path)
@@ -727,10 +760,13 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export Error", str(exc))
 
     def on_clear(self) -> None:
+        if self._refuse_while_recording("clearing the report"):
+            return
         if self.editor.toPlainText().strip():
             audit_log.log_report_cleared(self._get_patient_info().get("id", ""))
-        self.editor.clear()
+        self.replace_report("")
         self._start_new_report_findings()
+        self._show_status("Cleared  (Ctrl+Z to undo)", 3000, state="ok")
 
     # ------------------------------------------------------------------
     # Recent reports menu
@@ -830,7 +866,7 @@ class MainWindow(QMainWindow):
         if revert is not None:
             self._show_status(revert[0], state=revert[1])
 
-    def _on_text_changed(self) -> None:
+    def _on_text_changed(self, by_dictation: bool = False) -> None:
         text = self.editor.toPlainText()
         word_count = len(text.split()) if text.strip() else 0
         line_count = text.count("\n") + 1 if text else 0
@@ -846,7 +882,10 @@ class MainWindow(QMainWindow):
 
         # Passive learning: track user edits (debounced: fires 500 ms after
         # the last keystroke rather than on every character).
-        if (not self.recorder.is_recording
+        # A dictation write (the hand-back, the polish) is the machine's text,
+        # not the radiologist's edit: learning from it taught the learner the
+        # polish's own corrections.
+        if (not by_dictation and not self.recorder.is_recording
                         and self._last_editor_text
                         and self.settings.get("learning_enabled", True)) and text != self._last_editor_text:
             self._learn_prev_text = self._last_editor_text
@@ -881,19 +920,32 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event) -> None:
-        self.settings.batch_set({
-            "window_width": self.width(),
-            "window_height": self.height(),
-            "splitter_sizes": self.splitter.sizes(),
-        })
+        """Shut down in steps that cannot skip each other.
 
-        # Make sure any active recording session is finalized before exit.
-        if self.recorder.is_recording:
-            on_stop_recording(self)
-        elif self.live_worker is not None:
-            self.live_worker.finalize()
-        if self.live_thread is not None:
-            self.live_thread.quit()
+        A dictation still running owns two threads; destroying the window while
+        either runs aborts the process (and used to, losing everything since
+        the last autosave). So the report is autosaved first, the session is
+        retired the same way a new recording retires it, and its threads are
+        given a few seconds to stop. Each step is its own ``suppress``: one
+        failing must never cost the learning data or the training capture.
+        """
+        with contextlib.suppress(Exception):
+            self.settings.batch_set({
+                "window_width": self.width(),
+                "window_height": self.height(),
+                "splitter_sizes": self.splitter.sizes(),
+            })
+        with contextlib.suppress(Exception):
+            self._do_autosave()
+        with contextlib.suppress(Exception):
+            if self.recorder.is_recording:
+                self.recorder.stop()
+            _abandon_unfinished_session(self)
+        for thread in (*self._retiring_threads, self.live_thread, self.pp_thread):
+            with contextlib.suppress(RuntimeError):  # already finished and deleted
+                if thread is not None and thread.isRunning():
+                    thread.quit()
+                    thread.wait(5000)
 
         # Stop the cloud job monitor thread if running.
         if self._cloud_monitor is not None:
@@ -907,7 +959,6 @@ class MainWindow(QMainWindow):
         with contextlib.suppress(Exception):
             from src.ui.recording_session import finalize_training_capture
             finalize_training_capture()
-        # Save adaptive learning data on exit
         with contextlib.suppress(Exception):
             get_adaptive_learning().force_save()
         super().closeEvent(event)

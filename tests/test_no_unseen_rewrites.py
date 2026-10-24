@@ -55,7 +55,9 @@ def window(qt_app, monkeypatch):
     monkeypatch.setattr(llm_cleanup, "is_enabled", lambda: True)
     monkeypatch.setattr(llm_cleanup, "clean_with_llm", fake_clean)
     return SimpleNamespace(editor=editor, sent=sent, _show_status=lambda *a, **k: None,
-                           _get_patient_info=lambda: PATIENT)
+                           _get_patient_info=lambda: PATIENT,
+                           recorder=SimpleNamespace(is_recording=False),
+                           replace_report=editor.setPlainText)
 
 
 def _answer(monkeypatch, button):

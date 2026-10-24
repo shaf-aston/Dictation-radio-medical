@@ -34,7 +34,8 @@ def _window(qt_app, existing: str):
     anchor.movePosition(anchor.MoveOperation.End)
     anchor.setKeepPositionOnInsert(True)     # what on_start_recording sets
     return SimpleNamespace(editor=editor, _dictation_start=anchor,
-                           _on_text_changed=lambda: None)
+                           _on_text_changed=lambda **_: None,
+                           recorder=SimpleNamespace(is_recording=True))
 
 
 def test_each_update_replaces_the_dictation_instead_of_appending(qt_app):
@@ -88,7 +89,8 @@ def _open_at(qt_app, text: str, start: int, end: int = -1):
     if end >= 0:
         cursor.setPosition(end, cursor.MoveMode.KeepAnchor)
     editor.setTextCursor(cursor)
-    w = SimpleNamespace(editor=editor, _on_text_changed=lambda: None)
+    w = SimpleNamespace(editor=editor, _on_text_changed=lambda **_: None,
+                        recorder=SimpleNamespace(is_recording=True))
     rs._open_dictation_region(w)
     return w
 

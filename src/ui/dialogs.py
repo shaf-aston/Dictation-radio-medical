@@ -275,6 +275,9 @@ def offer_ai_cleanup(window: MainWindow, *, automatic: bool) -> None:
     """
     from src.dictation.postprocess.llm_cleanup import clean_with_llm, is_enabled
 
+    if window.recorder.is_recording:
+        window._show_status("Stop recording before AI cleanup", 3000, state="warn")
+        return
     text = window.editor.toPlainText()
     if not text.strip():
         if not automatic:
@@ -312,8 +315,8 @@ def offer_ai_cleanup(window: MainWindow, *, automatic: bool) -> None:
         _Yes | _No, _No,
     )
     if reply == _Yes:
-        window.editor.setPlainText(cleaned)
-        window._show_status("AI cleanup applied", 3000)
+        window.replace_report(cleaned)
+        window._show_status("AI cleanup applied  (Ctrl+Z to undo)", 3000)
     else:
         window._show_status("AI cleanup not applied", 2000)
 

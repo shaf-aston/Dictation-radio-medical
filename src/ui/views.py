@@ -7,7 +7,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
-    QWidget, QTextEdit, QPushButton, QVBoxLayout, QHBoxLayout, QComboBox,
+    QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QComboBox,
     QLabel, QLineEdit, QCheckBox, QFrame, QScrollArea, QSplitter,
     QSizePolicy, QMenu, QProgressBar,
 )
@@ -20,6 +20,7 @@ from src.features.accent_corrections import ACCENT_LABELS
 from src.medical import macros
 from src.core.paths import templates_dir
 from src.ui.collapsible import Section
+from src.ui.report_editor import ReportEditor
 from src.ui.finding_marks import FindingGutter
 from src.ui.styles import set_findings_state, set_level_state, set_status_state
 from src.features.report_manager import DOCX_AVAILABLE
@@ -301,7 +302,7 @@ def build_editor_panel(window: MainWindow) -> QWidget:
     layout.setSpacing(4)
 
     # Main editor
-    window.editor = QTextEdit()
+    window.editor = ReportEditor()
     window.editor.setPlaceholderText(
         "Dictated text appears here, at the cursor.\n\n"
         "F5 = Start recording   F6 = Stop   F2 = Start / stop\n"
@@ -503,7 +504,7 @@ def build_menu(window: MainWindow) -> None:
 
 def _add_action(menu: QMenu, label: str, slot, shortcut: str = "") -> QAction:
     """Add an action to a menu."""
-    action = QAction(label)
+    action = QAction(label, menu)  # owned by the menu: unowned, Python frees it at once
     if shortcut:
         action.setShortcut(QKeySequence(shortcut))
     action.triggered.connect(slot)
