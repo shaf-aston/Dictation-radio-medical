@@ -24,3 +24,6 @@ dictation_settings.json
 ruff_*.txt
 ux_screenshots/
 *.egg-info/
+
+# Secrets: keys stay on this machine
+.env*

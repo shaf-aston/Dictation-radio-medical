@@ -29,7 +29,6 @@ def load_pcm16(path: str) -> bytes:
     with wave.open(path, "rb") as w:
         raw = w.readframes(w.getnframes())
         sr = w.getframerate()
-        sampwidth = w.getsampwidth()
         channels = w.getnchannels()
 
     audio = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0

@@ -11,7 +11,7 @@ marks below on the degraded set.
 - On each kept kind: medical-term error falls by at least a quarter and at least 2 points; overall WER does not rise.
 - Clean audio: no more than 0.3 points worse.
 - Speed: `audio.condition` p95 under 0.5 ms per 20 ms browser block, under 3 ms per desktop chunk.
-- Latency: words appear no more than 0.05 s later (the design costs 0.016 s).
+- Latency: words appear no more than 0.05 s later (the chain holds back one hop to one window, 0.016 to 0.032 s; measured 16 to 28 ms with 20 ms browser blocks).
 - Determinism: bit-identical output however the audio is split into blocks.
 
 ## Files (level 3)
@@ -51,12 +51,21 @@ class Chain:
         window. No steps: returns block unchanged, no transform."""
     def flush(self) -> np.ndarray
         """Stop: returns everything still held. After it, total out == total in."""
+    spent: bool   # True after flush, or after a step raised part-way
+
+# Bounds: a NaN/inf sample in becomes 0 (or full scale), so it cannot poison a
+# step's state; output is clipped to [-1, 1]. A step that raises spends the
+# chain (process/flush then raise RuntimeError): a half-run frame cannot be undone.
+# window_samples: an even integer, at most 4096, checked here and only here.
 
 # factory.py
 def build_chain(cfg: dict, sr: int) -> Chain
     """cfg is settings["audio_conditioning"]; each step's section is merged over
-    get_default's, so an old settings file still gets every knob. Unknown step
-    name, or a zero/negative value where one must be positive -> ValueError."""
+    get_default's, so an old settings file still gets every knob. ValueError on:
+    an unknown section or knob, `on` not true/false, any other knob not a finite
+    number, sr not a positive integer. Ranges are checked on steps that are on:
+    cutoff_hz in (0, sr/2), min_gain_db < 0, smoothing in [0, 1),
+    target_dbfs in [-60, 0), the rest positive."""
 ```
 
 Fixed order, set in `factory.py`, not a setting: **highpass -> denoise -> expander -> agc**.
@@ -64,10 +73,10 @@ Gating before gain, so the volume step never turns up the gaps between words.
 
 | Step | What it does | Knobs |
 |---|---|---|
-| highpass | gain 0 below `cutoff_hz`, smooth ramp up to it; stateless | `cutoff_hz` 80 |
-| denoise | tracks each bin's noise floor (falls at once, rises `noise_rise_db_per_sec`); spectral subtraction, never below `min_gain_db` (the floor is the "blend some original back" fix from the research) | `strength` 2.0, `min_gain_db` -20, `noise_rise_db_per_sec` 3, `smoothing` 0.9 |
+| highpass | gain 0 below `cutoff_hz`, smooth ramp up to it (ramp width follows the cutoff, not a knob); stateless | `cutoff_hz` 80 |
+| denoise | tracks each bin's noise floor (falls at once, rises `noise_rise_db_per_sec`, never below 1e-10 so a muted stretch cannot switch it off); stays out until the first non-silent frame; spectral subtraction, never below `min_gain_db` (the floor is the "blend some original back" fix from the research) | `strength` 2.0, `min_gain_db` -20, `noise_rise_db_per_sec` 3, `smoothing` 0.9 |
 | expander | follows the main voice's level (`PeakFollower`); frames more than `below_voice_db` under it are turned down, at most `max_cut_db` | `below_voice_db` 6, `max_cut_db` 15, `voice_release_db_per_sec` 6 |
-| agc | moves the voice toward `target_dbfs`, at most `slew_db_per_sec`, never above `max_gain_db`; adapts only on frames within 10 dB of the voice level | `target_dbfs` -20, `max_gain_db` 24, `slew_db_per_sec` 20 |
+| agc | moves the voice toward `target_dbfs`: turns down at once, up at most `slew_db_per_sec`, never above `max_gain_db`; adapts only on frames within `adapt_within_db` of the voice level, which falls `voice_release_db_per_sec` in a pause, so gaps are never turned up | `target_dbfs` -20, `max_gain_db` 24, `slew_db_per_sec` 20, `voice_release_db_per_sec` 6, `adapt_within_db` 10 |
 
 Settings (`src/core/settings.py` `_DEFAULTS`):
 
@@ -77,19 +86,24 @@ Settings (`src/core/settings.py` `_DEFAULTS`):
     "highpass": {"on": False, "cutoff_hz": 80.0},
     "denoise":  {"on": False, "strength": 2.0, "min_gain_db": -20.0, "noise_rise_db_per_sec": 3.0, "smoothing": 0.9},
     "expander": {"on": False, "below_voice_db": 6.0, "max_cut_db": 15.0, "voice_release_db_per_sec": 6.0},
-    "agc":      {"on": False, "target_dbfs": -20.0, "max_gain_db": 24.0, "slew_db_per_sec": 20.0},
+    "agc":      {"on": False, "target_dbfs": -20.0, "max_gain_db": 24.0, "slew_db_per_sec": 20.0,
+                 "voice_release_db_per_sec": 6.0, "adapt_within_db": 10.0},
 },
 ```
 
 **LiveSession** gets `conditioner: Optional[Chain] = None`. `feed` appends
-`conditioner.process(block)` instead of `block`; `close_open_tail_fast` first
-appends `conditioner.flush()` (every caller runs it before `finalize`). The append
+`conditioner.process(block)` instead of `block`; whichever of
+`close_open_tail_fast` and `finalize` runs first appends `conditioner.flush()`
+(`_flush_conditioner`, guarded by `chain.spent`, so it happens once). The append
 itself stays one private method, so the raw and cleaned paths cannot differ.
 One Chain per session, built at session construction: it learns the room, and a
 shared one would carry one dictation's noise into the next.
 
-Callers: `worker.py:247` and `web_app.py:1038` pass `build_chain(settings.get(...), SAMPLE_RATE)`;
-`replay.py` passes one when `--condition` names steps; `simulate_lag.py` passes nothing.
+Callers today: `replay.py` passes one when `--condition` names steps, with the
+knobs from settings (only which steps are on comes from the flag);
+`simulate_lag.py` passes nothing. Slice 3 adds `worker.py` and `web_app.py`.
+Before `web_app.py` feeds a socket message to the chain, it must cap the
+message size: the chain trusts its caller on block length.
 Alignment matters: the desktop's training collector cuts the raw WAV at the sample
 positions the session reports, so cleaned sample n must be raw sample n.
 

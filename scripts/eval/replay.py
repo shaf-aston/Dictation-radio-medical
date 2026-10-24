@@ -43,7 +43,7 @@ from scripts.eval import corpus
 from scripts.eval.metrics import term_error_rate, word_error_rate
 from src.core.settings import Settings
 from src.dictation.conditioning.chain import Chain
-from src.dictation.conditioning.factory import build_chain
+from src.dictation.conditioning.factory import ORDER, build_chain
 from src.dictation.asr.factory import DEFAULT_ENGINE, create_engine, model_kwargs
 from src.dictation.stream.live_session import LiveSession
 from src.dictation.stream.rules import build_context_prompt
@@ -307,11 +307,14 @@ def main() -> None:
     if steps:
         print(f"conditioning: {', '.join(steps)}")
 
+    cond_cfg = settings.get("audio_conditioning") or {}
     results = []
     for clip in _clips(args):
         # One chain per clip: it learns the room, so none is shared.
+        # The knobs the app would run with; only which steps are on comes from --condition.
         conditioner = (
-            build_chain({n: {"on": True} for n in steps}, SAMPLE_RATE) if steps else None
+            build_chain({**cond_cfg, **{n: {**cond_cfg.get(n, {}), "on": n in steps} for n in ORDER}},
+                        SAMPLE_RATE) if steps else None
         )
         res = replay(
             load_audio(clip), clip.stem, settings,

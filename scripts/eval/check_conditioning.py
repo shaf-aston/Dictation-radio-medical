@@ -106,8 +106,31 @@ def main() -> None:
           and len(empty.flush()) == 0, "empty chain returns the input unchanged")
 
     for cfg in ({"window_samples": 0}, {"window_samples": -2},
-                {"window_samples": 511}, {"nonsense": {"on": True}}):
+                {"window_samples": 511}, {"window_samples": 8192},
+                {"window_samples": True}, {"nonsense": {"on": True}},
+                {"agc": None}, {"agc": {"on": "yes"}}, {"agc": {"gain": 3}},
+                {"agc": {"on": True, "target_dbfs": 5.0}}, {"agc": {"max_gain_db": float("inf")}},
+                {"denoise": {"on": True, "min_gain_db": 3.0}}, {"denoise": {"on": True, "smoothing": 1.0}},
+                {"highpass": {"on": True, "cutoff_hz": 9000.0}}):
+        # Ranges are checked on a step that is on; types and names on every step.
         check(raises_value_error(cfg), f"factory rejects {cfg}")
+
+    bad = voiced.copy()
+    bad[1000:1010] = np.nan
+    bad[2000] = np.inf
+    out = run(real_chain, bad, BLOCK)
+    check(len(out) == len(bad) and bool(np.isfinite(out).all())
+          and float(np.abs(out).max()) <= 1.0,
+          "NaN/inf input: length kept, output finite and within full scale")
+
+    spent = real_chain()
+    spent.flush()
+    try:
+        spent.process(audio[:BLOCK])
+        reused = True
+    except RuntimeError:
+        reused = False
+    check(spent.spent and not reused, "a flushed chain refuses more audio")
 
     perf.reset()
     chain = real_chain()

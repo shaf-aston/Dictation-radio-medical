@@ -101,9 +101,9 @@ class LiveSession:
     ) -> None:
         # Cleans each block before it is stored, so every listener (VAD, decode,
         # polish, live socket) hears the same audio. One per session: it learns
-        # this room. Flushed once, at close_open_tail_fast.
+        # this room. Flushed once, by whichever of close_open_tail_fast and
+        # finalize runs first.
         self._conditioner = conditioner
-        self._conditioner_flushed = False
         self.live_engine = live_engine
         self.final_engine = final_engine
         self.language = language
@@ -203,6 +203,13 @@ class LiveSession:
             if self._conditioner is not None:
                 block = self._conditioner.process(block)
             self._append(block)
+
+    def _flush_conditioner(self) -> None:
+        """Append what the conditioner still holds, so stored audio is as long
+        as the audio fed. Safe to call twice."""
+        with self._push_lock:
+            if self._conditioner is not None and not self._conditioner.spent:
+                self._append(self._conditioner.flush())
 
     def _append(self, block: np.ndarray) -> None:
         """Store *block* at the end of the buffer. Hold _push_lock."""
@@ -619,10 +626,7 @@ class LiveSession:
         regardless of confidence -- speed was the reason it was decoded by the
         fast model, so it has not earned the benefit of the doubt.
         """
-        with self._push_lock:
-            if self._conditioner is not None and not self._conditioner_flushed:
-                self._conditioner_flushed = True
-                self._append(self._conditioner.flush())
+        self._flush_conditioner()
         if self._stream is not None:
             # Ask the socket to settle everything it has been sent. Measured in
             # a few hundred milliseconds when it is healthy; if it is not, the
@@ -665,6 +669,7 @@ class LiveSession:
         kept as-is, which is why this is seconds and not a full re-transcribe.
         """
         t0 = time.time()
+        self._flush_conditioner()
         self._finish_background(cancelled)
 
         def decoded(result: AsrResult, index: Optional[int], start: int, _end: int) -> None:

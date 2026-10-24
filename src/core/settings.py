@@ -175,7 +175,8 @@ _DEFAULTS: dict = {
         "expander": {"on": False, "below_voice_db": 6.0, "max_cut_db": 15.0,
                      "voice_release_db_per_sec": 6.0},
         "agc": {"on": False, "target_dbfs": -20.0, "max_gain_db": 24.0,
-                "slew_db_per_sec": 20.0},
+                "slew_db_per_sec": 20.0, "voice_release_db_per_sec": 6.0,
+                "adapt_within_db": 10.0},
     },
 }
 
