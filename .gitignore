@@ -24,3 +24,4 @@ dictation_settings.json
 ruff_*.txt
 ux_screenshots/
 *.egg-info/
+.hypothesis/

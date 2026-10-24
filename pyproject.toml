@@ -48,7 +48,7 @@ train = [                                            # installed ON Lightning AI
     "datasets>=2.19", "accelerate>=0.30", "ctranslate2>=4.0",
     "soundfile>=0.12", "librosa>=0.10", "jiwer>=3.0", "sentencepiece>=0.2",
 ]
-dev = ["pytest>=8", "ruff>=0.5", "pyright>=1.1"]
+dev = ["pytest>=8", "hypothesis>=6", "ruff>=0.5", "pyright>=1.1"]
 
 [tool.setuptools.packages.find]
 include = ["src*"]

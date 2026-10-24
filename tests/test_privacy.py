@@ -78,7 +78,27 @@ def test_cleanup_is_off_by_default(monkeypatch, groq_recorder):
 
 def test_cleanup_returns_input_when_scrubbing_fails(monkeypatch, groq_recorder):
     # If an identifier somehow survives, nothing is sent and the report is kept.
-    monkeypatch.setattr(DeIdentifier, "deidentify_text", lambda self, text: text)
+    monkeypatch.setattr(DeIdentifier, "pseudonymise", lambda self, text: (text, {}))
     text = "Jane Doe: medial meniscal tear."
     assert llm_cleanup.clean_with_llm(text, PATIENT) == (text, [])
     assert groq_recorder == []
+
+
+def test_a_patient_called_ted_is_not_mistaken_for_a_leak():
+    # "[REDACTED]" contains "ted": the placeholder used to fail every check.
+    deid = DeIdentifier({"name": "Ted"})
+    assert deid.validate_clean(deid.deidentify_text("Ted has a fracture."))
+
+
+def test_what_was_scrubbed_is_put_back_after_the_round_trip():
+    from src.medical.deid import restore
+    text = "Jane Doe, MRN12345678. Compared with 3/4/2024: stable."
+    safe, originals = DeIdentifier(PATIENT).pseudonymise(text)
+    assert "Jane" not in safe and "3/4/2024" not in safe
+    assert restore(safe, originals) == text
+
+
+@pytest.mark.parametrize("returned", ["Stable.", "[PHI-1] [PHI-1] stable.", "[PHI-1] [PHI-9] stable."])
+def test_a_token_dropped_doubled_or_invented_refuses_the_cleanup(returned):
+    from src.medical.deid import restore
+    assert restore(returned, {"[PHI-1]": "3/4/2024"}) is None

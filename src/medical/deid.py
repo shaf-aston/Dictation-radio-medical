@@ -24,7 +24,7 @@ import hashlib
 import logging
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from src.core.patient_schema import IDENTIFYING_KEYS
 
@@ -51,6 +51,12 @@ _DATE_PATTERNS = [
 ]
 # Accession / MRN / NHS-style identifiers: optional letter prefix + 6–10 digits.
 _ID_PATTERN = re.compile(r"\b[A-Z]{0,3}\d{6,10}\b")
+
+#: What the scrubbers put in place of what they remove. Never itself a leak,
+#: so validation ignores it: otherwise a patient called "Ted" fails every
+#: check on the "ted" inside "[REDACTED]" and nothing can ever be sent.
+_PLACEHOLDER = re.compile(r"\[(?:REDACTED|DATE|ID|PHI-\d+)\]")
+_TOKEN = "[PHI-{}]"
 
 # Fields of patient_info that are treated as direct identifiers. Derived from
 # the shared schema so a new patient field is scrubbed by default, rather than
@@ -95,12 +101,39 @@ class DeIdentifier:
         Raises :class:`PrivacyError` if a known identifier survived: callers
         should treat the record as un-uploadable.
         """
+        text = _PLACEHOLDER.sub(" ", text)
         for pat in self._identifier_patterns:
             if pat.search(text):
                 raise PrivacyError(
                     "Patient identifier survived de-identification; record dropped."
                 )
         return True
+
+    def pseudonymise(self, text: str) -> Tuple[str, Dict[str, str]]:
+        """Scrub *text* reversibly, for a round trip that must come back whole.
+
+        The same spans :meth:`deidentify_text` removes become numbered tokens
+        (``[PHI-1]``), and the map from token to original is returned so
+        :func:`restore` can put the radiologist's own text back. One pass over
+        one combined pattern, so a later rule never matches inside a token an
+        earlier one wrote.
+        """
+        patterns = [p.pattern for p in self._identifier_patterns]
+        combined = re.compile(
+            "|".join(
+                [f"(?i:{p})" for p in patterns]
+                + [f"(?i:{p.pattern})" for p in _DATE_PATTERNS]
+                + [_ID_PATTERN.pattern]
+            )
+        )
+        originals: Dict[str, str] = {}
+
+        def keep(match: re.Match) -> str:
+            token = _TOKEN.format(len(originals) + 1)
+            originals[token] = match.group(0)
+            return token
+
+        return combined.sub(keep, text), originals
 
     # ------------------------------------------------------------------
     # Audio
@@ -158,3 +191,16 @@ class DeIdentifier:
         if not text:
             return False
         return any(pat.search(text) for pat in self._identifier_patterns)
+
+
+def restore(text: str, originals: Dict[str, str]) -> Optional[str]:
+    """Put back what :meth:`DeIdentifier.pseudonymise` took out, or None.
+
+    None unless every token comes back exactly once and no unknown token
+    appears: a token dropped, doubled or invented means the text that came
+    back cannot be mapped onto the report safely.
+    """
+    found = re.findall(r"\[PHI-\d+\]", text)
+    if sorted(found) != sorted(originals):
+        return None
+    return re.sub(r"\[PHI-\d+\]", lambda m: originals[m.group(0)], text)
