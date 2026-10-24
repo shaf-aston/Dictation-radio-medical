@@ -203,11 +203,7 @@ class LiveTranscribeWorker(QObject):
         finally:
             if self._session is not None:
                 self._session.close()
-            if self._session is not None and self._session.audio_sec > 0:
-                perf.set_gauge(
-                    "stream.decode_ratio",
-                    self._session.decode_audio_sec / self._session.audio_sec,
-                )
+                self._session.record_decode_ratio()
             logger.info(
                 "Worker finished in %.2fs, %d cycles emitted",
                 time.time() - wall_start, cycle_count,

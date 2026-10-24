@@ -23,7 +23,7 @@ from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
-from src.core import event_log
+from src.core import event_log, perf
 from src.core.settings import get_default
 from src.dictation.asr import AsrEngine, TranscribeContext
 from src.dictation.asr.port import AsrStream, StreamingAsrEngine, engine_identity
@@ -244,6 +244,15 @@ class LiveSession:
     @property
     def chunks_decoded(self) -> int:
         return self._chunks_decoded
+
+    def record_decode_ratio(self) -> None:
+        """Set perf's ``stream.decode_ratio``: seconds decoded per second heard.
+
+        1.0 is "decode once"; the run log reads it from perf, so both front-ends
+        set it the same way when a recording ends.
+        """
+        if self.audio_sec > 0:
+            perf.set_gauge("stream.decode_ratio", self.decode_audio_sec / self.audio_sec)
 
     @property
     def chunks_polished(self) -> int:
