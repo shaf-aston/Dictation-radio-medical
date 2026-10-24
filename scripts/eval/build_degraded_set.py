@@ -20,6 +20,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import math
 
 import numpy as np
 import soundfile as sf
@@ -76,7 +77,7 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
     for flag in ("quiet_db", "snr_db", "sir_db"):
-        if getattr(args, flag) <= 0:
+        if not math.isfinite(getattr(args, flag)) or getattr(args, flag) <= 0:
             ap.error(f"--{flag.replace('_', '-')} must be positive")
 
     name = args.name or f"{args.source}_{args.kind}"

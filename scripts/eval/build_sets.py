@@ -462,6 +462,7 @@ def build_eka(limit: int = 0) -> int:
     source = out_dir / "source"
     source.mkdir(parents=True, exist_ok=True)
     by_speaker: dict = {}
+    skipped = 0
     for shard in _EKA_SHARDS:
         path = source / f"test-{shard:05d}.parquet"
         if not path.exists():
@@ -473,9 +474,12 @@ def build_eka(limit: int = 0) -> int:
                 continue
             data, rate = sf.read(io.BytesIO(row["audio"]), dtype="float32")
             if rate != 16000 or data.ndim != 1:
+                skipped += 1
                 continue
             by_speaker.setdefault(row["speaker"], []).append((data, row["text"].strip()))
 
+    if skipped:
+        logger.warning("Eka: skipped %d phrases that were not 16 kHz mono", skipped)
     gap = np.zeros(int(_EKA_GAP_SEC * 16000), dtype=np.float32)
     clips: List[Clip] = []
     # Speaker ids look like email addresses: replaced by a number, never written.

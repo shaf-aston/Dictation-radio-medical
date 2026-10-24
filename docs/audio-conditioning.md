@@ -207,7 +207,8 @@ word came back in Cyrillic ("tuberculosis"). 69 changes in 30 clips: some only c
 punctuation, a few closer to the reference, most worse.
 
 Read the numbers with two cautions. Term error here is a mean of per-clip rates
-over few lexicon terms per clip, so one clip flipping moves it about 3 points: a
+(replay.py pools errors over all clips from 2026-10-24, as compare.py does, so
+later runs are not comparable to these) over few lexicon terms per clip, so one clip flipping moves it about 3 points: a
 small difference is noise, but no step moved even in the right direction on a
 kept kind, so a bigger sample cannot turn any of these into a pass (the bar is a
 quarter cut). And the high WER is partly the references: Eka's labels include

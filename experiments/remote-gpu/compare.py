@@ -15,6 +15,8 @@ import argparse
 import json
 import sys
 import time
+
+import soundfile as sf
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -55,13 +57,19 @@ def candidates(only):
             found.append((d.parent.name, lambda d=d, q=q: parakeet(str(d), q)))
         else:
             found.append((d.parent.name, lambda d=d: whisper(model_path=str(d))))
+    unknown = sorted(set(only or ()) - {n for n, _ in found})
+    if unknown:
+        raise SystemExit(f"--only: no candidate named {unknown}; have {[n for n, _ in found]}")
     return [c for c in found if not only or c[0] in only]
 
 
 def wer(pairs):
-    ref = " ".join(r for r, _ in pairs)
-    hyp = " ".join(h for _, h in pairs)
-    return word_error_rate(ref, hyp).as_dict()["wer"] if pairs else float("nan")
+    """Errors summed clip by clip over all reference words. Joining the clips into one
+    string would let the aligner match words across clip boundaries."""
+    if not pairs:
+        return float("nan")
+    scores = [word_error_rate(r, h) for r, h in pairs]
+    return sum(w.substitutions + w.deletions + w.insertions for w in scores) / max(1, sum(w.ref_words for w in scores))
 
 
 def main():
@@ -86,7 +94,7 @@ def main():
             t0 = time.perf_counter()
             text = eng.transcribe(str(c.audio_path), TranscribeContext(beam_size=1)).text
             dec += time.perf_counter() - t0
-            audio += c.duration_sec
+            audio += sf.info(str(c.audio_path)).duration  # the manifest's figure is 0.0 when it could not be read
             raw.append((c.reference, text))
             proc.append((c.reference, postprocess_transcript(text)))
             if is_unseen(i, c):

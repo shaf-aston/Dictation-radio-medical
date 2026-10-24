@@ -42,6 +42,7 @@ import numpy as np
 from scripts.eval import corpus
 from scripts.eval.metrics import term_error_rate, word_error_rate
 from src.core.settings import Settings
+from src.features.file_manager import eval_set_dir
 from src.dictation.conditioning.chain import Chain
 from src.dictation.conditioning.factory import ORDER, build_chain
 from src.dictation.asr.factory import DEFAULT_ENGINE, create_engine, model_kwargs
@@ -224,7 +225,7 @@ def replay(
 def _clips(args: argparse.Namespace) -> List[Path]:
     if args.audio:
         return [Path(args.audio)]
-    root = Path("data") / "eval" / args.set
+    root = eval_set_dir(args.set)
     clips = sorted(root.glob("*.wav"))
     if not clips:
         raise SystemExit(
@@ -304,11 +305,17 @@ def main() -> None:
         lexicon = list(get_correction_targets())
 
     steps = [n.strip() for n in args.condition.split(",") if n.strip()]
+    unknown = sorted(set(steps) - set(ORDER))
+    if unknown:  # a typo would otherwise run with every step off: an A/B of two identical arms
+        raise SystemExit(f"unknown --condition step(s) {unknown}; known: {', '.join(ORDER)}")
     if steps:
         print(f"conditioning: {', '.join(steps)}")
 
     cond_cfg = settings.get("audio_conditioning") or {}
     results = []
+    # Pooled over every clip (errors / words), as compare.py does: a mean of per-clip
+    # rates lets a clip with no lexicon term count as a perfect 0% and dilute the rest.
+    word_err = ref_words = term_err = term_tok = 0
     for clip in _clips(args):
         # One chain per clip: it learns the room, so none is shared.
         # The knobs the app would run with; only which steps are on comes from --condition.
@@ -327,8 +334,13 @@ def main() -> None:
         s = res.summary()
         ref = references.get(res.name, "")
         if ref:
-            res.wer = word_error_rate(ref, res.final_text).wer
-            res.term_error = term_error_rate(ref, res.final_text, lexicon).error_rate
+            w = word_error_rate(ref, res.final_text)
+            t = term_error_rate(ref, res.final_text, lexicon)
+            res.wer, res.term_error = w.wer, t.error_rate
+            word_err += w.substitutions + w.deletions + w.insertions
+            ref_words += w.ref_words
+            term_err += t.term_errors
+            term_tok += t.term_tokens
         scored = (f"  wer {res.wer:.1%}  term {res.term_error:.1%}"
                   if res.wer is not None else "")
         print(f"{res.name:<16} audio {s['audio_sec']:>6.2f}s  chunks {s['chunks']:>2}  "
@@ -348,8 +360,8 @@ def main() -> None:
     scored_runs = [r for r in results if r.term_error is not None]
     if scored_runs:
         # The veto metric. A latency win that moves this up is not a win.
-        print(f"accuracy    wer {statistics.mean(r.wer for r in scored_runs):.2%}  "
-              f"medical-term error {statistics.mean(r.term_error for r in scored_runs):.2%}"
+        print(f"accuracy    wer {word_err / max(1, ref_words):.2%}  "
+              f"medical-term error {term_err / max(1, term_tok):.2%}"
               f"   ({len(scored_runs)} scored)")
     else:
         print("accuracy    NOT SCORED: no reference for this audio")
