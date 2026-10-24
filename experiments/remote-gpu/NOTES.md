@@ -60,3 +60,12 @@ Two halves, kept apart. Run commands, file-by-file flow and glossary: [CORE-FLOW
 | parakeet-rad-v2 (int8) | 8.06% | 11.49% | 10.63% | 11.50% | 17.17% |
 
   Same precision, v2 wins everywhere (term error 13.62% -> 10.63% clean, 23.16% -> 17.17% noisy). But the app switched to fp32 stock the same day, which is better in noise than v2's int8 export (16.35% vs 17.17%). The rounding to int8 costs more than the training gained. Not adopted. Next (v3): same run, keep the fp32 export that the kernel already builds and throws away. Caveat: the tts voices and lexicon overlap the training lines, so the clean gain is likely inflated; the accent and Eka Care numbers are the honest ones.
+- Real voices, `eka` set (2026-10-24): 140 dictations by real Indian-English speakers reading medical phrases (Eka Care, MIT; never in training, the kernel only scored on Eka shards). compare.py, all 140 clips:
+
+| Model | WER | Term err | s/min |
+|---|---|---|---|
+| stock fp32 (what the app runs) | 22.90% | 11.35% | 6.4 |
+| stock int8 | 38.09% | 32.43% | 7.2 |
+| parakeet-rad-v2 (int8) | 30.94% | 24.32% | 7.4 |
+
+  On real accented voices int8 rounding is far worse than on the tts set: it nearly triples term error (11.35% -> 32.43%). At the same precision, v2's training cuts term error by a quarter (32.43% -> 24.32%), so the training does help real voices, but the rounding still swamps it. v3 (fp32 export) is the test that decides it. These numbers are not comparable with `replay.py`'s on the same clips: the two average differently.
