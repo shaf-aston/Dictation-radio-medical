@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Any, Callable, Optional, Tuple, Union
 
 import numpy as np
 import soundfile as sf
@@ -38,11 +38,9 @@ from PySide6.QtCore import QObject, Signal
 
 from src.core import perf
 from src.dictation.asr import AsrResult, create_engine
+from src.dictation.asr.models import resolve_model
 from src.dictation.stream import live_session
 from src.dictation.stream.live_session import LiveSession
-from src.dictation.stream.policy import plan_for
-from src.dictation.stream.rules import build_context_prompt
-from src.dictation.stream.segmenter import ChunkPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -90,43 +88,15 @@ class LiveTranscribeWorker(QObject):
     def __init__(
         self,
         audio_path: str,
-        model_size: str,
-        language: str,
-        vad_enabled: bool,
-        pause_threshold: float = 2.5,
-        live_model_size: Optional[str] = None,
+        get: Callable[[str], Any],
         model_path: Optional[Union[str, Path]] = None,
-        chunk_policy: Optional[ChunkPolicy] = None,
-        live_beam_size: int = 2,
-        final_beam_size: int = 5,
-        polish_confidence_ceiling: float = 0.75,
-        preview_max_lag_sec: float = 3.0,
-        trailing_silence_sec: float = 0.6,
-        streaming: bool = True,
-        background_polish: bool = True,
     ) -> None:
         super().__init__()
         self.audio_path = audio_path
-        self.model_size = model_size
-        # The fast model that writes what you see while speaking; the accurate
-        # model_size engine only runs the post-stop polish.
-        self.live_model_size = live_model_size or model_size
-        self.language = language
-        # VAD is load-bearing for chunk cutting, so it is always on; this flag
-        # only gates the engine's own VAD inside the polish decodes.
-        self.vad_enabled = vad_enabled
-        self.pause_threshold = pause_threshold
-        self.live_beam_size = max(1, int(live_beam_size))
-        self.final_beam_size = max(1, int(final_beam_size))
-        self.polish_confidence_ceiling = float(polish_confidence_ceiling)
-        self.preview_max_lag_sec = float(preview_max_lag_sec)
+        # Settings.get: every knob is read once, by LiveSession.from_settings,
+        # when run() builds the session.
+        self._get = get
         self.model_path = model_path
-        # None means "size chunks from the live engine's cost", which is only
-        # known once run() has built the engine.
-        self._chunk_policy = chunk_policy
-        self._trailing_silence_sec = float(trailing_silence_sec)
-        self._streaming = bool(streaming)
-        self._background_polish = bool(background_polish)
         self._session: Optional[LiveSession] = None
         self._keep_running = True
         self._final_requested = False
@@ -238,33 +208,18 @@ class LiveTranscribeWorker(QObject):
         # Engines load their model lazily, so creating both here is free. A
         # fine-tuned voice model (model_path) only ever replaces the accurate
         # engine: live text comes from the stock fast model, as on the web.
-        live_engine = create_engine(model_size=self.live_model_size, device="auto")
-        if self.live_model_size == self.model_size and not self.model_path:
+        live_size = resolve_model(self._get("live_model_size"))
+        final_size = resolve_model(self._get("model_size"))
+        live_engine = create_engine(model_size=live_size, device="auto")
+        if live_size == final_size and not self.model_path:
             final_engine = live_engine
         else:
             final_engine = create_engine(
-                model_size=self.model_size, device="auto", model_path=self.model_path
+                model_size=final_size, device="auto", model_path=self.model_path
             )
-        plan = plan_for(live_engine.capabilities(), self._trailing_silence_sec)
-        policy = self._chunk_policy or plan.policy
-        logger.info("Chunk plan %s: %s", "manual" if self._chunk_policy else plan.row, policy)
-        return LiveSession(
-            live_engine,
-            final_engine,
-            language=self.language,
-            policy=policy,
-            pause_threshold=self.pause_threshold,
-            live_beam_size=self.live_beam_size,
-            final_beam_size=self.final_beam_size,
-            preview_max_lag_sec=self.preview_max_lag_sec,
-            preview_min_tail_sec=plan.preview_min_tail_sec,
-            polish_confidence_ceiling=self.polish_confidence_ceiling,
-            initial_prompt=build_context_prompt(),
-            postprocess=False,
-            polish_vad_filter=self.vad_enabled,
-            on_decoded=self._emit_absolute_segments,
-            streaming=self._streaming,
-            background_polish=self._background_polish,
+        return LiveSession.from_settings(
+            self._get, live_engine, final_engine,
+            postprocess=False, on_decoded=self._emit_absolute_segments,
         )
 
     def _run_final_polish(self) -> None:

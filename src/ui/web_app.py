@@ -27,9 +27,8 @@ from src.dictation.postprocess.pipeline import (
     postprocess_transcript,
 )
 from src.dictation.asr import AsrEngine, TranscribeContext, create_engine
+from src.cloud.framework.registry import active_voice_model_path
 from src.dictation.stream.live_session import LiveSession
-from src.dictation.stream.rules import build_context_prompt
-from src.dictation.stream.policy import plan_from_settings
 from src.dictation.asr.models import SUPPORTED_MODELS, resolve_model
 from src.features.accent_corrections import ACCENT_LABELS
 from src.features.clinical_disclaimer import (
@@ -374,20 +373,22 @@ def _render_html(theme: str) -> str:
     )
 
 
-def _get_engine(model_size: Optional[str] = None) -> AsrEngine:
+def _get_engine(model_size: Optional[str] = None, model_path: Optional[Path] = None) -> AsrEngine:
     """Return an ASR engine for *model_size* (default: the saved setting).
 
-    Engines are cached per model name, so the live dictation loop's fast model
+    *model_path* is an active fine-tuned voice model, which replaces the stock
+    weights of that size. Engines are cached per (name, model_path), so the live dictation loop's fast model
     and the accurate one that re-decodes after Stop are each built once and
     then reused for the life of the process. Whisper's own weights cache holds
     two (``faster_whisper_engine._MODEL_CACHE_MAX``), which is what makes holding exactly
     this pair free.
     """
     name = resolve_model(model_size or _settings().get("model_size"))
+    key = (name, str(model_path) if model_path else None)
     with transcriber_lock:
-        if name not in asr_engines:
-            asr_engines[name] = create_engine(model_size=name)
-        return asr_engines[name]
+        if key not in asr_engines:
+            asr_engines[key] = create_engine(model_size=name, model_path=model_path)
+        return asr_engines[key]
 
 
 def _download_filename(patient: dict, ext: str) -> str:
@@ -541,9 +542,10 @@ async def set_preferences(payload: PreferencesUpdate):
         "last_macro_region": macro_region,
     })
 
-    # Drop the cached engine so the next request builds the newly chosen model.
+    # Drop the cached engines so the next request builds the newly chosen model.
     with transcriber_lock:
-        asr_engines.pop(resolve_model(model_size), None)
+        for key in [k for k in asr_engines if k[0] == resolve_model(model_size)]:
+            del asr_engines[key]
 
     return {
         "preferences": _current_preferences(),
@@ -1011,51 +1013,15 @@ async def transcribe_audio(file: UploadFile = File(...)):
 
 
 
-def _live_session(settings, prefs: dict) -> LiveSession:
-    """Build a session from saved settings: the only place the knobs are read."""
-    live_model = resolve_model(settings.get("live_model_size", get_default("live_model_size")))
-    final_model = resolve_model(prefs.get("model_size") or settings.get("model_size"))
-    live_engine = _get_engine(live_model)
-    # Chunk lengths and preview pacing come from what the engine that will
-    # actually answer says a call costs (stream/policy.py), unless the
-    # settings file asks for its own numbers.
-    plan = plan_from_settings(settings.get, live_engine.capabilities())
-    # The knobs are read here and nowhere else, so this is the one honest place
-    # to say which of them a recording actually ran with.
-    event_log.emit(
-        "live", "dictation session configured",
-        live_model=live_model, final_model=final_model,
-        language=prefs["language"], accent=prefs["accent"], cleanup=prefs["cleanup_level"],
-        chunk_plan=plan.row,
-        chunk_min_sec=plan.policy.min_sec,
-        chunk_soft_max_sec=plan.policy.soft_max_sec,
-        chunk_force_cut_sec=plan.policy.force_cut_sec,
-        live_beam_size=int(settings.get("live_beam_size")),
-        final_beam_size=int(settings.get("final_beam_size")),
-        preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
-        preview_min_tail_sec=plan.preview_min_tail_sec,
-    )
-    return LiveSession(
-        live_engine,
-        _get_engine(final_model),
-        language=prefs["language"],
-        accent=prefs["accent"],
-        cleanup_level=prefs["cleanup_level"],
-        policy=plan.policy,
-        preview_min_tail_sec=plan.preview_min_tail_sec,
-        streaming=bool(settings.get("asr_streaming", get_default("asr_streaming"))),
-        background_polish=bool(settings.get("background_polish", get_default("background_polish"))),
-        pause_threshold=float(settings.get("pause_threshold", 2.5)),
-        live_beam_size=int(settings.get("live_beam_size")),
-        final_beam_size=int(settings.get("final_beam_size")),
-        preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
-        polish_confidence_ceiling=float(settings.get("polish_confidence_ceiling")),
-        uncertain_word_confidence=float(
-            settings.get("uncertain_word_confidence", get_default("uncertain_word_confidence"))
-        ),
-        initial_prompt=build_context_prompt(),
-        sr=LIVE_SAMPLE_RATE,
-    )
+def _live_session(settings) -> LiveSession:
+    """A session from the saved settings (LiveSession.from_settings reads them).
+
+    The accurate engine uses an active fine-tuned voice model, as the desktop
+    does; live text always comes from the stock fast model.
+    """
+    live_engine = _get_engine(settings.get("live_model_size"))
+    final_engine = _get_engine(settings.get("model_size"), active_voice_model_path())
+    return LiveSession.from_settings(settings.get, live_engine, final_engine, sr=LIVE_SAMPLE_RATE)
 
 
 @app.websocket("/ws/dictate")
@@ -1066,7 +1032,7 @@ async def dictate_socket(ws: WebSocket) -> None:
     generation = _dictation_generation
     settings = _settings()
     prefs = _current_preferences()
-    session = _live_session(settings, prefs)
+    session = _live_session(settings)
     cycle_sec = float(settings.get("live_cycle_sec", get_default("live_cycle_sec")))
     max_sec = int(settings.get("max_upload_mb", get_default("max_upload_mb"))) * 1024 * 1024 / (2 * LIVE_SAMPLE_RATE)
 

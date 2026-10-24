@@ -11,8 +11,7 @@ from PySide6.QtCore import QThread, QTimer
 from PySide6.QtWidgets import QMessageBox
 
 from src.core import perf
-from src.dictation.stream.policy import MANUAL, plan_from_settings
-from src.dictation.asr.models import resolve_model
+from src.cloud.framework.registry import active_voice_model_path
 from src.dictation.worker import LiveTranscribeWorker
 from src.features.file_manager import create_temp_wav
 from src.features import run_log
@@ -31,17 +30,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Cloud training capture helpers (all no-ops unless the user has opted in)
 # ---------------------------------------------------------------------------
-
-def _active_model_path():
-    """Return the active fine-tuned model directory, or None for the base model."""
-    try:
-        from src.cloud.framework.registry import ModelRegistry
-        from src.training.schemas import TASK_WHISPER_VOICE
-        return ModelRegistry().get_active_model_path(TASK_WHISPER_VOICE)
-    except Exception as exc:
-        logger.debug("Model registry lookup failed: %s", exc)
-        return None
-
 
 def _start_training_capture(window: MainWindow, wav_path: str, model_size: str) -> None:
     """Start a collector session and route voice corrections into it."""
@@ -213,7 +201,6 @@ def on_start_recording(window: MainWindow) -> None:
     model_size = window.model_combo.currentText()
     language = window.language_input.text().strip() or "en"
     vad_enabled = window.vad_checkbox.isChecked()
-    pause_threshold = float(window.settings.get("pause_threshold", 2.5))
     window._active_accent = window.accent_combo.currentData() or "neutral"
     window._active_cleanup_level = window.cleanup_combo.currentData() or "medium"
 
@@ -227,7 +214,7 @@ def on_start_recording(window: MainWindow) -> None:
     })
 
     # Use an active fine-tuned model if one has been downloaded and activated.
-    active_model_path = _active_model_path()
+    active_model_path = active_voice_model_path()
 
     # Begin capturing corrections for cloud training (no-op without consent).
     _start_training_capture(window, path, model_size)
@@ -259,22 +246,7 @@ def on_start_recording(window: MainWindow) -> None:
 
     window.live_thread = QThread()
     window.live_worker = LiveTranscribeWorker(
-        path, model_size, language, vad_enabled, pause_threshold,
-        live_model_size=resolve_model(window.settings.get("live_model_size")),
-        model_path=active_model_path,
-        # None = "auto": the worker sizes chunks from its live engine's cost
-        # once the engine exists (stream/policy.py). Manual numbers verbatim.
-        chunk_policy=(
-            plan_from_settings(window.settings.get, None).policy
-            if window.settings.get("chunk_policy") == MANUAL else None
-        ),
-        trailing_silence_sec=float(window.settings.get("chunk_trailing_silence_sec")),
-        streaming=bool(window.settings.get("asr_streaming")),
-        background_polish=bool(window.settings.get("background_polish")),
-        live_beam_size=int(window.settings.get("live_beam_size")),
-        final_beam_size=int(window.settings.get("final_beam_size")),
-        polish_confidence_ceiling=float(window.settings.get("polish_confidence_ceiling")),
-        preview_max_lag_sec=float(window.settings.get("preview_max_lag_sec")),
+        path, window.settings.get, model_path=active_model_path,
     )
     window.live_worker.moveToThread(window.live_thread)
     window.live_thread.started.connect(window.live_worker.run)

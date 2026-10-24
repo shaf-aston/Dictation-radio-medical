@@ -292,9 +292,9 @@ class MainWindow(QMainWindow):
             # cache is keyed on that reference: warming the stock model while
             # a fine-tune is active would miss the cache AND pin an unused
             # model in RAM.
-            from src.ui.recording_session import _active_model_path
+            from src.cloud.framework.registry import active_voice_model_path
 
-            active_model = _active_model_path()
+            active_model = active_voice_model_path()
             warmers = postprocess_warmers() + [
                 transcriber_warmer(
                     model_size,

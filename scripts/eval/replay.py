@@ -33,7 +33,7 @@ import argparse
 import json
 import statistics
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -47,8 +47,6 @@ from src.dictation.conditioning.chain import Chain
 from src.dictation.conditioning.factory import ORDER, build_chain
 from src.dictation.asr.factory import DEFAULT_ENGINE, create_engine, model_kwargs
 from src.dictation.stream.live_session import LiveSession
-from src.dictation.stream.rules import build_context_prompt
-from src.dictation.stream.segmenter import ChunkPolicy
 from src.dictation.stream.vad import SAMPLE_RATE
 
 
@@ -68,6 +66,8 @@ class ReplayResult:
     first_word_sec: Optional[float] = None
     wer: Optional[float] = None
     term_error: Optional[float] = None
+    # The chunk shape the session actually ran with.
+    policy: Dict[str, float] = field(default_factory=dict)
 
     def percentile(self, p: float) -> float:
         if not self.commit_lag:
@@ -106,23 +106,6 @@ def load_audio(path: Path) -> np.ndarray:
     return decode_audio(str(path), sampling_rate=SAMPLE_RATE)
 
 
-def _policy_from(settings: Settings, overrides: Optional[Dict[str, float]] = None) -> ChunkPolicy:
-    """The shipped policy, with any --chunk-* override applied on top.
-
-    Overriding here rather than by editing dictation_settings.json keeps an
-    A/B run from mutating the user's own configuration, and keeps the two arms
-    of a comparison in one command each.
-    """
-    values = {
-        "min_sec": float(settings.get("chunk_min_sec")),
-        "soft_max_sec": float(settings.get("chunk_soft_max_sec")),
-        "force_cut_sec": float(settings.get("chunk_force_cut_sec")),
-        "trailing_silence_sec": float(settings.get("chunk_trailing_silence_sec")),
-    }
-    values.update({k: v for k, v in (overrides or {}).items() if v is not None})
-    return ChunkPolicy(**values)
-
-
 def replay(
     audio: np.ndarray,
     name: str,
@@ -134,38 +117,31 @@ def replay(
     final_engine_name: str = "",
     polish_ceiling: Optional[float] = None,
     realtime: bool = False,
-    policy: Optional[ChunkPolicy] = None,
+    chunk_overrides: Optional[Dict[str, float]] = None,
     conditioner: Optional[Chain] = None,
 ) -> ReplayResult:
-    """Drive one recording through the live loop exactly as the socket does."""
+    """Drive one recording through the live loop exactly as the socket does.
+
+    The session is built by the app's own builder, so it runs the chunk shape
+    the app would (``chunk_policy: auto`` included). ``chunk_overrides`` and
+    ``polish_ceiling`` are A/B knobs laid on top, never written to the user's
+    settings file.
+    """
     sr = SAMPLE_RATE
     cycle_sec = float(settings.get("live_cycle_sec"))
     block = max(1, int(cycle_sec * sr))
 
-    session = LiveSession(
+    overrides = {} if polish_ceiling is None else {"polish_confidence_ceiling": polish_ceiling}
+    session = LiveSession.from_settings(
+        settings.get,
         create_engine(engine_name, **model_kwargs(engine_name, live_model)),
         create_engine(final_engine_name or engine_name,
                       **model_kwargs(final_engine_name or engine_name, final_model)),
-        language=str(settings.get("language")),
-        accent=str(settings.get("accent")),
-        cleanup_level=str(settings.get("cleanup_level")),
-        policy=policy or _policy_from(settings),
-        pause_threshold=float(settings.get("pause_threshold")),
-        live_beam_size=int(settings.get("live_beam_size")),
-        final_beam_size=int(settings.get("final_beam_size")),
-        preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
-        preview_min_tail_sec=float(settings.get("preview_min_tail_sec")),
-        polish_confidence_ceiling=(
-            polish_ceiling if polish_ceiling is not None
-            else float(settings.get("polish_confidence_ceiling"))
-        ),
-        uncertain_word_confidence=float(settings.get("uncertain_word_confidence")),
-        initial_prompt=build_context_prompt(),
-        sr=sr,
-        conditioner=conditioner,
+        chunk_overrides=chunk_overrides, sr=sr, conditioner=conditioner, **overrides,
     )
 
-    result = ReplayResult(name=name, audio_sec=len(audio) / sr, chunks=0, final_text="")
+    result = ReplayResult(name=name, audio_sec=len(audio) / sr, chunks=0, final_text="",
+                          policy=asdict(session.policy))
     committed_words = 0
     frontier = 0.0
     fed = 0
@@ -283,19 +259,19 @@ def main() -> None:
         "" if args.engine == "parakeet" else str(settings.get("live_model_size")))
     final_model = args.final_model or (
         "" if final_engine == "parakeet" else str(settings.get("model_size")))
-    policy = _policy_from(settings, {
+    chunk_overrides = {
         "min_sec": args.chunk_min,
         "soft_max_sec": args.chunk_soft_max,
         "force_cut_sec": args.chunk_force_cut,
         "trailing_silence_sec": args.trailing_silence,
-    })
+    }
 
     ceiling = (args.polish_ceiling if args.polish_ceiling is not None
                else float(settings.get("polish_confidence_ceiling")))
     print(f"engine={args.engine} live={live_model} final_engine={final_engine} "
           f"final={final_model} polish_ceiling={ceiling}")
-    print(f"policy min={policy.min_sec} soft={policy.soft_max_sec} "
-          f"force={policy.force_cut_sec} trailing={policy.trailing_silence_sec}")
+    set_chunks = {k: v for k, v in chunk_overrides.items() if v is not None}
+    print(f"chunk_policy={settings.get('chunk_policy')} overrides={set_chunks or 'none'}")
     print(f"mode={'realtime' if args.realtime else 'flat out (audio-seconds lag)'}\n")
 
     references = {} if args.audio else _references(args.set)
@@ -327,7 +303,7 @@ def main() -> None:
             load_audio(clip), clip.stem, settings,
             engine_name=args.engine, live_model=live_model,
             final_model=final_model, final_engine_name=final_engine,
-            polish_ceiling=ceiling, realtime=args.realtime, policy=policy,
+            polish_ceiling=ceiling, realtime=args.realtime, chunk_overrides=chunk_overrides,
             conditioner=conditioner,
         )
         results.append(res)
@@ -378,11 +354,7 @@ def main() -> None:
         "live_model": live_model,
         "final_model": final_model,
         "realtime": args.realtime,
-        "policy": {
-            "min_sec": policy.min_sec, "soft_max_sec": policy.soft_max_sec,
-            "force_cut_sec": policy.force_cut_sec,
-            "trailing_silence_sec": policy.trailing_silence_sec,
-        },
+        "policy": results[0].policy if results else {},
         "clips": [{"name": r.name, **r.summary(), "wer": r.wer,
                    "term_error": r.term_error, "text": r.final_text} for r in results],
     }, indent=2), encoding="utf-8")

@@ -18,8 +18,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple
+from dataclasses import dataclass, replace
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -31,7 +31,9 @@ from src.dictation.asr.types import AsrResult, StreamError, StreamFinal, StreamI
 from src.dictation.postprocess.incremental import IncrementalPostprocessor
 from src.dictation.stream.ledger import ChunkLedger, close_sentence
 from src.dictation.stream.polish import decode_run, polish, weak_runs
+from src.dictation.stream.policy import plan_from_settings
 from src.dictation.stream.rules import (
+    build_context_prompt,
     low_confidence_words,
     mean_confidence,
     has_speech,
@@ -73,6 +75,64 @@ class LiveUpdate:
 
 class LiveSession:
     """A single dictation, fed audio in blocks, yielding transcript updates."""
+
+    @classmethod
+    def from_settings(
+        cls,
+        get: Callable[[str], Any],
+        live_engine: AsrEngine,
+        final_engine: AsrEngine,
+        *,
+        chunk_overrides: Optional[Dict[str, float]] = None,
+        **overrides: Any,
+    ) -> "LiveSession":
+        """A session shaped by the settings: the only place its knobs are read.
+
+        *get* is ``Settings.get``. The web socket, the desktop worker and the
+        replay harness each used to read the settings themselves, and drifted
+        (the web hard-coded a pause fallback, replay ignored ``chunk_policy:
+        auto`` and so could score a shape the app never runs). Each caller now
+        passes only what is genuinely its own: its sample rate, the desktop's
+        ``postprocess=False``, replay's A/B ``chunk_overrides``.
+        """
+        plan = plan_from_settings(get, live_engine.capabilities())
+        policy = replace(
+            plan.policy, **{k: v for k, v in (chunk_overrides or {}).items() if v is not None}
+        )
+        knobs: Dict[str, Any] = dict(
+            language=str(get("language")),
+            accent=str(get("accent")),
+            cleanup_level=str(get("cleanup_level")),
+            pause_threshold=float(get("pause_threshold")),
+            live_beam_size=int(get("live_beam_size")),
+            final_beam_size=int(get("final_beam_size")),
+            preview_max_lag_sec=float(get("preview_max_lag_sec")),
+            polish_confidence_ceiling=float(get("polish_confidence_ceiling")),
+            uncertain_word_confidence=float(get("uncertain_word_confidence")),
+            streaming=bool(get("asr_streaming")),
+            background_polish=bool(get("background_polish")),
+            polish_vad_filter=bool(get("vad_filter")),
+            initial_prompt=build_context_prompt(),
+        )
+        knobs.update(overrides)
+        # Every front-end builds here, so this is the one honest place to say
+        # which knobs a recording actually ran with.
+        event_log.emit(
+            "live", "dictation session configured",
+            live_engine=str(engine_identity(live_engine)),
+            final_engine=str(engine_identity(final_engine)),
+            chunk_plan=plan.row,
+            chunk_min_sec=policy.min_sec,
+            chunk_soft_max_sec=policy.soft_max_sec,
+            chunk_force_cut_sec=policy.force_cut_sec,
+            preview_min_tail_sec=plan.preview_min_tail_sec,
+            **{k: v for k, v in knobs.items()
+               if isinstance(v, (str, int, float)) and k != "initial_prompt"},
+        )
+        return cls(
+            live_engine, final_engine,
+            policy=policy, preview_min_tail_sec=plan.preview_min_tail_sec, **knobs,
+        )
 
     def __init__(
         self,
@@ -591,6 +651,11 @@ class LiveSession:
         self._preview_cost = cost if self._preview_cost <= 0 else 0.6 * self._preview_cost + 0.4 * cost
         self._preview_earliest = time.time() + cost
         return self._agreement.update(result.text.strip() if result else "")
+
+    @property
+    def policy(self) -> ChunkPolicy:
+        """The chunk shape this session cuts with (what the settings resolved to)."""
+        return self._ledger.policy
 
     # -- after Stop -----------------------------------------------------
 
