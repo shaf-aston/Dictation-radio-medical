@@ -167,6 +167,8 @@ _DEFAULTS: dict = {
     "disclaimer_shown": False,         # has user seen the clinical disclaimer
     # Mic cleaning before anything listens (src/dictation/conditioning). Every
     # step is off until replay.py shows it passes its marks (docs/audio-conditioning.md).
+    # Read ONLY by scripts/eval/replay.py today: no step has passed, so neither
+    # front-end builds a chain, and switching a step on here changes nothing in the app.
     "audio_conditioning": {
         "window_samples": 512,
         "highpass": {"on": False, "cutoff_hz": 80.0},

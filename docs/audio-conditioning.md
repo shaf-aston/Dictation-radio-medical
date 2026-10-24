@@ -101,7 +101,10 @@ shared one would carry one dictation's noise into the next.
 
 Callers today: `replay.py` passes one when `--condition` names steps, with the
 knobs from settings (only which steps are on comes from the flag);
-`simulate_lag.py` passes nothing. Slice 3 adds `worker.py` and `web_app.py`.
+`simulate_lag.py` passes nothing. Slice 3 adds `worker.py` and `web_app.py`;
+it is on hold because no step has passed (results below), so the app ignores
+these settings. A step that throws mid-dictation is dropped for the rest of that
+dictation (`LiveSession.feed`) and the raw audio carries on.
 Before `web_app.py` feeds a socket message to the chain, it must cap the
 message size: the chain trusts its caller on block length.
 Alignment matters: the desktop's training collector cuts the raw WAV at the sample

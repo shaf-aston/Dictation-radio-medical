@@ -201,7 +201,13 @@ class LiveSession:
             block = block.astype(np.float32)
         with self._push_lock:
             if self._conditioner is not None:
-                block = self._conditioner.process(block)
+                try:
+                    block = self._conditioner.process(block)
+                except Exception:
+                    # A failed step leaves the chain unusable. Dictation goes on
+                    # with raw audio; only what the chain was holding is lost.
+                    logger.exception("audio conditioning failed, continuing without it")
+                    self._conditioner = None
             self._append(block)
 
     def _flush_conditioner(self) -> None:
