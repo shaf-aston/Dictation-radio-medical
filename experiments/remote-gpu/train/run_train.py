@@ -9,6 +9,7 @@ the kernel works end to end; its output stays in train/_out and no version is sa
 """
 import argparse
 import json
+import os
 import shutil
 import sys
 from datetime import date
@@ -53,6 +54,7 @@ def next_version(name: str) -> Path:
 
 
 def save_version(dest: Path, engine: str, cfg: dict, clips: int, data: Path, note: str) -> None:
+    data_label = os.path.relpath(data, HERE)  # before anything moves: a failure here must not strand the model
     dest.mkdir(parents=True)  # fails loudly if it somehow exists: never overwrite
     shutil.move(str(OUT / cfg["output"]), str(dest / "model"))
     if (OUT / "train_log.json").exists():
@@ -61,7 +63,7 @@ def save_version(dest: Path, engine: str, cfg: dict, clips: int, data: Path, not
     shutil.copy(PACK / "manifest.jsonl", dest / "train_manifest.jsonl")
     (dest / "README.md").write_text(
         f"# {dest.name}\n\n- date: {date.today()}\n- engine: {engine}\n- base model: {cfg['base_model']}\n"
-        f"- data: {clips} local clips from {data.relative_to(HERE)} (list: train_manifest.jsonl)"
+        f"- data: {clips} local clips from {data_label} (list: train_manifest.jsonl)"
         f" plus Kaggle sources {cfg['kaggle_sources'] or 'none'}\n"
         f"- settings: {engine}.json\n- note: {note}\n"
         f"- measured error rate: not yet. Run `python compare.py` and paste the table here.\n"
@@ -77,7 +79,9 @@ def main() -> None:
     ap.add_argument("--smoke", action="store_true")
     a = ap.parse_args()
     cfg = json.loads((HERE / "train" / f"{a.engine}.json").read_text())
-    smoke = cfg.pop("smoke", {})
+    smoke = cfg.pop("smoke", None)
+    if a.smoke and smoke is None:
+        raise SystemExit(f"train/{a.engine}.json has no smoke block, so --smoke would start a full run")
     if a.smoke:
         cfg.update(smoke)
     load_env()

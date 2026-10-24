@@ -13,17 +13,30 @@ PACK = HERE / "train" / "_pack"
 
 
 def pack_data(src: Path) -> int:
-    """Fill PACK from `src`; returns the clip count."""
+    """Fill PACK from `src`; returns the clip count.
+
+    Only folders under data/ are packed: the bundle goes to Kaggle, and the app's own
+    eval sets (the user's voice among them) must never be uploaded by a mistyped --data."""
+    src = src.resolve()
+    if not src.is_relative_to(HERE / "data"):
+        raise SystemExit(f"--data must be a folder under {HERE / 'data'}, got {src}")
     rows = [json.loads(ln) for ln in (src / "manifest.jsonl").read_text().splitlines() if ln.strip()]
     shutil.rmtree(PACK, ignore_errors=True)
     (PACK / "_flac").mkdir(parents=True)
+    seen = set()
     for r in rows:
-        a, sr = sf.read(src / r["audio"], dtype="float32")
+        audio = (src / r["audio"]).resolve()
+        if not audio.is_relative_to(src):
+            raise SystemExit(f"manifest audio path leaves {src}: {r['audio']}")
+        a, sr = sf.read(audio, dtype="float32")
         if a.ndim > 1:
             a = a.mean(axis=1)
         if sr != 16000:
             a = resample_poly(a, 16000, sr)
         r["audio"] = Path(r["audio"]).with_suffix(".flac").name
+        if r["audio"] in seen:  # flattened names would overwrite each other and mislabel a clip
+            raise SystemExit(f"two clips pack to the same name: {r['audio']}")
+        seen.add(r["audio"])
         sf.write(PACK / "_flac" / r["audio"], a, 16000)
     # One archive, not hundreds of files: the Kaggle CLI uploads files one request at a time.
     with tarfile.open(PACK / "audio.tar", "w") as tf:

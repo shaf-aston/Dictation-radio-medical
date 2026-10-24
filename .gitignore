@@ -11,6 +11,8 @@ tmpclaude-*
 
 # Runtime data (user-specific)
 data/
+# ...except the experiment's data-building scripts (its data/.gitignore still hides the clips)
+!experiments/remote-gpu/data/
 autosave/
 dictation_settings.json
 

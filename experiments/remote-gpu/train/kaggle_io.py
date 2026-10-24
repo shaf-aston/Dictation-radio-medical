@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from datetime import date
 from pathlib import Path
@@ -27,15 +28,16 @@ def _windows_upload_state_dir(pack: Path) -> None:
     if os.name != "nt":
         return
     tail = str(pack.resolve()).replace(":", "_").replace("\\", "/")
-    (Path(os.environ.get("TEMP", "")) / ".kaggle" / "uploads" / tail).mkdir(parents=True, exist_ok=True)
+    (Path(tempfile.gettempdir()) / ".kaggle" / "uploads" / tail).mkdir(parents=True, exist_ok=True)
 
 
 def push_dataset(pack: Path) -> None:
     """Create or version the private dataset, then wait until Kaggle has processed it."""
     _windows_upload_state_dir(pack)
     (pack / "dataset-metadata.json").write_text(json.dumps({
-        "title": DATASET, "id": f"{USER}/{DATASET}", "licenses": [{"name": "CC0-1.0"}]}))
-    if DATASET in kaggle("datasets", "list", "--mine", check=False):
+        "title": DATASET, "id": f"{USER}/{DATASET}", "licenses": [{"name": "CC0-1.0"}], "isPrivate": True}))
+    mine = kaggle("datasets", "list", "--mine", "--csv", check=False).splitlines()
+    if any(ln.split(",", 1)[0] == f"{USER}/{DATASET}" for ln in mine):
         kaggle("datasets", "version", "-p", str(pack), "-m", f"data {date.today()}", "--dir-mode", "zip")
     else:
         kaggle("datasets", "create", "-p", str(pack), "--dir-mode", "zip")
