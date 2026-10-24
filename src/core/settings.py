@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, List
 
-from src.core.json_store import read_json, write_json
+from src.core.json_store import read_json, update_json
 from src.core.paths import settings_file
 
 _DEFAULTS: dict = {
@@ -245,11 +245,11 @@ class Settings:
 
     def save(self) -> None:
         """Write this instance's changed keys into the file as it is now."""
-        on_disk = read_json(self._path, {})
-        for key in self._dirty:
-            on_disk[key] = self._data[key]
-        write_json(self._path, on_disk)
-        self._data = on_disk
+        changed = {key: self._data[key] for key in self._dirty}
+        merged = update_json(self._path, {}, lambda on_disk: on_disk.update(changed))
+        if merged is None:
+            return  # still dirty: the next save tries again
+        self._data = merged
         self._dirty = set()
         self._mtime = self._current_mtime()
 

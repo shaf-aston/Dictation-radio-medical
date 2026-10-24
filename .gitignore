@@ -25,3 +25,6 @@ ruff_*.txt
 ux_screenshots/
 *.egg-info/
 .hypothesis/
+
+# Cross-process locks beside shared files (src/core/file_lock.py)
+.*.lock

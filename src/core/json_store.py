@@ -5,7 +5,8 @@ loader, adaptive learning, macros, the audit log, and edit tracking each
 hand-rolled the same "read JSON with a fallback default; write JSON, creating
 parent directories" skeleton: including its error handling, which is the part
 that was easiest to get subtly wrong. This module is that skeleton, written
-once: whole-document JSON (:func:`read_json` / :func:`write_json`) and
+once: whole-document JSON (:func:`read_json` / :func:`write_json`, and
+:func:`update_json` for a change that must not lose another process's) and
 append-only JSON Lines (:func:`append_jsonl` / :func:`read_jsonl`).
 """
 
@@ -17,7 +18,9 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
+
+from src.core.file_lock import FileLock
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +53,7 @@ def read_json(path: Path, default: Any) -> Any:
         return default
 
 
-def write_json(path: Path, data: Any) -> None:
+def write_json(path: Path, data: Any) -> bool:
     """Write *data* as indented JSON to *path*, creating parent directories.
 
     Written atomically (temp file + ``os.replace``) so a crash mid-write can
@@ -64,6 +67,8 @@ def write_json(path: Path, data: Any) -> None:
     the second ``os.replace`` finds the file already consumed, or, worse, moves a
     half-written temp over the target. That is the exact corruption this function
     exists to prevent, so a shared name would defeat its own purpose.
+
+    Returns whether the file was written; a failure is logged, not raised.
     """
     path = Path(path)
     tmp: Optional[str] = None
@@ -74,8 +79,10 @@ def write_json(path: Path, data: Any) -> None:
             json.dump(data, handle, indent=2, ensure_ascii=False)
         os.replace(tmp, path)
         tmp = None  # renamed, so there is nothing left to clean up
+        return True
     except (OSError, TypeError) as exc:
         logger.warning("Could not write %s: %s", path, exc)
+        return False
     finally:
         if tmp is not None:
             # A failed write must not leave a stray temp file next to the real one.
@@ -83,6 +90,23 @@ def write_json(path: Path, data: Any) -> None:
                 os.unlink(tmp)
             except OSError:
                 pass
+
+
+def update_json(path: Path, default: Any, change: Callable[[Any], None]) -> Optional[Any]:
+    """Read *path*, let *change* edit the data in place, write it back; return it.
+
+    Returns None when the file could not be written, so the caller still holds
+    the change and can try again.
+
+    Read and write happen under one cross-process lock. The desktop app and
+    the web app write the same files; without it, each could read, both
+    change, and the second write would undo the first.
+    """
+    path = Path(path)
+    with FileLock(path.with_name(f".{path.name}.lock")):
+        data = read_json(path, default)
+        change(data)
+        return data if write_json(path, data) else None
 
 
 def append_jsonl(path: Path, records: Iterable[Dict[str, Any]]) -> int:

@@ -29,11 +29,12 @@ import logging
 import re
 import threading
 import time
-from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
 from collections import defaultdict
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from src.core.json_store import read_json, write_json
+from src.core.json_store import read_json, update_json
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,57 @@ _MAX_FREQUENCY_TERMS = 10000   # Limit frequency tracking
 _MIN_WORD_LENGTH = 3           # Don't learn very short words
 _SAVE_DEBOUNCE_SEC = 30        # Batch saves to reduce I/O
 _PUNCTUATION = ".,;:!?()\"'"   # stripped before comparing two words
+
+
+@dataclass
+class _Learned:
+    """Everything learned, in memory; the file holds the same four parts."""
+
+    word_corrections: Dict[str, str] = field(default_factory=dict)
+    custom_terms: Set[str] = field(default_factory=set)
+    term_frequency: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    accent_hints: Dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, data) -> "_Learned":
+        data = data if isinstance(data, dict) else {}
+        return cls(
+            dict(data.get("word_corrections", {})),
+            set(data.get("custom_terms", [])),
+            defaultdict(int, data.get("term_frequency", {})),
+            dict(data.get("accent_hints", {})),
+        )
+
+    def to_json(self) -> dict:
+        return {
+            "word_corrections": dict(self.word_corrections),
+            "custom_terms": sorted(self.custom_terms),
+            "term_frequency": dict(self.term_frequency),
+            "accent_hints": dict(self.accent_hints),
+        }
+
+    def add_correction(self, wrong: str, correct: str) -> None:
+        if wrong not in self.word_corrections and len(self.word_corrections) >= _MAX_CORRECTIONS:
+            del self.word_corrections[next(iter(self.word_corrections))]  # the oldest
+        self.word_corrections[wrong] = correct
+
+    def add_term(self, term: str) -> None:
+        if term not in self.custom_terms and len(self.custom_terms) >= _MAX_CUSTOM_TERMS:
+            logger.warning("Custom terms full, evicted: %s", self.custom_terms.pop())
+        self.custom_terms.add(term)
+
+    def count_use(self, term: str) -> None:
+        if term not in self.term_frequency and len(self.term_frequency) >= _MAX_FREQUENCY_TERMS:
+            del self.term_frequency[min(self.term_frequency, key=self.term_frequency.__getitem__)]
+        self.term_frequency[term] += 1
+
+    def add_accent_hint(self, wrong: str, correct: str) -> None:
+        self.accent_hints[wrong] = correct
+
+    def clear(self) -> None:
+        for part in (self.word_corrections, self.custom_terms,
+                     self.term_frequency, self.accent_hints):
+            part.clear()
 
 
 class AdaptiveLearning:
@@ -74,14 +126,12 @@ class AdaptiveLearning:
 
         self._data_dir = data_dir or self._default_data_dir()
         self._data_lock = threading.Lock()
-        self._dirty = False
         self._last_save = 0.0
-
-        # Learning data structures
-        self._word_corrections: Dict[str, str] = {}
-        self._custom_terms: Set[str] = set()
-        self._term_frequency: Dict[str, int] = defaultdict(int)
-        self._accent_hints: Dict[str, str] = {}
+        self._learned = _Learned()
+        # Each change since the last save, replayed onto the file as it is
+        # when saved: the desktop and web apps learn side by side, and writing
+        # this process's whole state would undo whatever the other learned.
+        self._unsaved: List[Callable[[_Learned], None]] = []
 
         # Compiled patterns (rebuilt when corrections change). Each entry is
         # ``(trigger_lower, pattern, replacement)``: trigger_lower is the cheap
@@ -94,7 +144,7 @@ class AdaptiveLearning:
         self._initialized = True
 
         logger.info("AdaptiveLearning initialized with %d corrections, %d custom terms",
-                    len(self._word_corrections), len(self._custom_terms))
+                    len(self._learned.word_corrections), len(self._learned.custom_terms))
 
     @staticmethod
     def _default_data_dir() -> Path:
@@ -123,15 +173,7 @@ class AdaptiveLearning:
             logger.debug("Not learned: '%s' is a real word", wrong)
             return False
 
-        with self._data_lock:
-            if len(self._word_corrections) >= _MAX_CORRECTIONS and self._word_corrections:
-                oldest = next(iter(self._word_corrections))
-                del self._word_corrections[oldest]
-
-            self._word_corrections[wrong] = correct
-            self._dirty = True
-            self._rebuild_patterns()
-
+        self._change(lambda learned: learned.add_correction(wrong, correct), rebuild=True)
         logger.debug("Learned correction: '%s' → '%s'", wrong, correct)
         self._maybe_save()
 
@@ -151,14 +193,7 @@ class AdaptiveLearning:
             return
         term = term.lower().strip()
 
-        with self._data_lock:
-            if len(self._custom_terms) >= _MAX_CUSTOM_TERMS and self._custom_terms:
-                evicted = self._custom_terms.pop()
-                logger.warning("Custom terms full, evicted: %s", evicted)
-
-            self._custom_terms.add(term)
-            self._dirty = True
-
+        self._change(lambda learned: learned.add_term(term))
         self._maybe_save()
 
     def record_term_usage(self, term: str) -> None:
@@ -167,26 +202,16 @@ class AdaptiveLearning:
             return
         term = term.lower().strip()
 
-        with self._data_lock:
-            if len(self._term_frequency) >= _MAX_FREQUENCY_TERMS and self._term_frequency:
-                min_term = min(self._term_frequency, key=lambda t: self._term_frequency[t])
-                del self._term_frequency[min_term]
-
-            self._term_frequency[term] += 1
-            self._dirty = True
-
-        # Don't save on every usage - too frequent
+        self._change(lambda learned: learned.count_use(term))
+        self._maybe_save()  # debounced, so not a write per word
 
     def learn_accent_pattern(self, wrong: str, correct: str) -> None:
         """Learn an accent-specific correction pattern."""
         if not wrong or not correct:
             return
 
-        with self._data_lock:
-            self._accent_hints[wrong.lower()] = correct.lower()
-            self._dirty = True
-            self._rebuild_patterns()
-
+        wrong, correct = wrong.lower(), correct.lower()
+        self._change(lambda learned: learned.add_accent_hint(wrong, correct), rebuild=True)
         self._maybe_save()
 
     # ------------------------------------------------------------------
@@ -196,27 +221,27 @@ class AdaptiveLearning:
     def get_correction(self, word: str) -> Optional[str]:
         """Get learned correction for a word, or None if not found."""
         with self._data_lock:
-            return self._word_corrections.get(word.lower())
+            return self._learned.word_corrections.get(word.lower())
 
     def is_known_term(self, term: str) -> bool:
         """Check if term is in custom vocabulary."""
         with self._data_lock:
-            return term.lower() in self._custom_terms
+            return term.lower() in self._learned.custom_terms
 
     def custom_terms(self) -> Set[str]:
         """A copy of the words the radiologist has said to keep as spoken."""
         with self._data_lock:
-            return set(self._custom_terms)
+            return set(self._learned.custom_terms)
 
     def get_term_frequency(self, term: str) -> int:
         """Get usage frequency of a term."""
         with self._data_lock:
-            return self._term_frequency.get(term.lower(), 0)
+            return self._learned.term_frequency.get(term.lower(), 0)
 
     def get_high_frequency_terms(self, min_count: int = 3) -> List[str]:
         """Get terms used at least min_count times."""
         with self._data_lock:
-            return [t for t, c in self._term_frequency.items() if c >= min_count]
+            return [t for t, c in self._learned.term_frequency.items() if c >= min_count]
 
     # ------------------------------------------------------------------
     # Post-processing integration
@@ -258,13 +283,13 @@ class AdaptiveLearning:
         """
         with self._data_lock:
             # Custom vocabulary always injected
-            custom = list(self._custom_terms)
+            custom = list(self._learned.custom_terms)
 
             # High-frequency passively learned terms
-            freq_terms = [t for t, c in self._term_frequency.items() if c >= 5]
+            freq_terms = [t for t, c in self._learned.term_frequency.items() if c >= 5]
             freq_terms_sorted = sorted(
                 freq_terms,
-                key=lambda t: self._term_frequency.get(t, 0),
+                key=lambda t: self._learned.term_frequency.get(t, 0),
                 reverse=True,
             )
 
@@ -322,7 +347,7 @@ class AdaptiveLearning:
         """Rebuild compiled regex patterns for corrections."""
         patterns = []
 
-        for wrong, correct in self._word_corrections.items():
+        for wrong, correct in self._learned.word_corrections.items():
             if not _may_rewrite(wrong):  # learned before this rule existed
                 continue
             try:
@@ -332,7 +357,7 @@ class AdaptiveLearning:
             except re.error:
                 continue
 
-        for wrong, correct in self._accent_hints.items():
+        for wrong, correct in self._learned.accent_hints.items():
             if not _may_rewrite(wrong):
                 continue
             try:
@@ -343,45 +368,54 @@ class AdaptiveLearning:
 
         self._correction_patterns = patterns
 
+    def _change(self, edit: Callable[[_Learned], None], rebuild: bool = False) -> None:
+        """Apply *edit* now, and keep it to replay onto the file at the next save."""
+        with self._data_lock:
+            edit(self._learned)
+            self._unsaved.append(edit)
+            if rebuild:
+                self._rebuild_patterns()
+
     def _maybe_save(self) -> None:
-        """Save data if dirty and debounce time has passed."""
-        now = time.time()
-        if self._dirty and (now - self._last_save) > _SAVE_DEBOUNCE_SEC:
+        """Save if anything changed and the debounce time has passed."""
+        if self._unsaved and (time.time() - self._last_save) > _SAVE_DEBOUNCE_SEC:
             self._save()
 
     def _save(self) -> None:
-        """Persist learning data to disk (atomically, via the shared store)."""
+        """Replay this process's changes onto the file as it is now, and adopt the result."""
         with self._data_lock:
-            data = {
-                "word_corrections": dict(self._word_corrections),
-                "custom_terms": list(self._custom_terms),
-                "term_frequency": dict(self._term_frequency),
-                "accent_hints": dict(self._accent_hints),
-            }
+            edits, self._unsaved = self._unsaved, []
 
-        write_json(self._data_dir / _LEARNING_FILE, data)
+        def replay(data: dict) -> None:
+            learned = _Learned.from_json(data)
+            for edit in edits:
+                edit(learned)
+            data.clear()
+            data.update(learned.to_json())
+
+        merged = update_json(self._data_dir / _LEARNING_FILE, {}, replay)
         with self._data_lock:
-            self._dirty = False
+            if merged is None:  # not written: keep the edits for the next save
+                self._unsaved = edits + self._unsaved
+                return
+            self._learned = _Learned.from_json(merged)
+            for edit in self._unsaved:  # made while the file was being written
+                edit(self._learned)
+            self._rebuild_patterns()
             self._last_save = time.time()
 
     def _load(self) -> None:
         """Load learning data from disk."""
-        data = read_json(self._data_dir / _LEARNING_FILE, None)
-        if not data:
-            return
-
+        learned = _Learned.from_json(read_json(self._data_dir / _LEARNING_FILE, {}))
         with self._data_lock:
-            self._word_corrections = data.get("word_corrections", {})
-            self._custom_terms = set(data.get("custom_terms", []))
-            self._term_frequency = defaultdict(int, data.get("term_frequency", {}))
-            self._accent_hints = data.get("accent_hints", {})
+            self._learned = learned
             self._rebuild_patterns()
 
         logger.info(
             "Loaded learning data: %d corrections, %d terms, %d frequencies",
-            len(self._word_corrections),
-            len(self._custom_terms),
-            len(self._term_frequency),
+            len(learned.word_corrections),
+            len(learned.custom_terms),
+            len(learned.term_frequency),
         )
 
     # ------------------------------------------------------------------
@@ -390,21 +424,14 @@ class AdaptiveLearning:
 
     def reset(self) -> None:
         """Reset all learned data."""
-        with self._data_lock:
-            self._word_corrections.clear()
-            self._custom_terms.clear()
-            self._term_frequency.clear()
-            self._accent_hints.clear()
-            self._correction_patterns.clear()
-            self._dirty = True
-
+        self._change(_Learned.clear, rebuild=True)
         self._save()
         logger.info("Reset all adaptive learning data")
 
     def export_corrections(self) -> Dict[str, str]:
         """Export learned corrections for review."""
         with self._data_lock:
-            return dict(self._word_corrections)
+            return dict(self._learned.word_corrections)
 
     def import_corrections(self, corrections: Dict[str, str]) -> None:
         """Import corrections (merge with existing)."""
@@ -419,10 +446,10 @@ class AdaptiveLearning:
         """Get learning statistics."""
         with self._data_lock:
             return {
-                "corrections": len(self._word_corrections),
-                "custom_terms": len(self._custom_terms),
-                "tracked_terms": len(self._term_frequency),
-                "accent_hints": len(self._accent_hints),
+                "corrections": len(self._learned.word_corrections),
+                "custom_terms": len(self._learned.custom_terms),
+                "tracked_terms": len(self._learned.term_frequency),
+                "accent_hints": len(self._learned.accent_hints),
             }
 
 

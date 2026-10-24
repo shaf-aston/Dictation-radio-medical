@@ -151,6 +151,14 @@ class StagingDB:
             rows = self._conn.execute(sql, params).fetchall()
         return [self._row_to_record(r) for r in rows]
 
+    def delete_pending(self) -> int:
+        """Delete every record not yet uploaded (consent withdrawn); return how many."""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM correction_records WHERE upload_status = ?", (UPLOAD_PENDING,))
+            self._conn.commit()
+        return cur.rowcount
+
     def mark_uploaded(self, record_ids: List[int], batch_id: str) -> None:
         if not record_ids:
             return

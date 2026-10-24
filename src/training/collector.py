@@ -30,6 +30,7 @@ import logging
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,8 @@ class CorrectionCollector:
         if not self._consent_active():
             return
         with self._session_lock:
+            if self._session is not None:  # never finalised: nothing will use its clip
+                _delete_clip(self._session.audio_clip)
             self._session = _Session(
                 session_id=session_id,
                 wav_path=wav_path,
@@ -220,6 +223,8 @@ class CorrectionCollector:
             if self._session is not None and self._session.session_id == session_id:
                 self._session.audio_clip = clip
                 self._session.audio_prepared = True
+                return
+        _delete_clip(clip)  # its session ended while the audio was being cleaned
 
     @staticmethod
     def _deidentify_audio(patient_info, wav_path, segments, session_id):
@@ -230,16 +235,36 @@ class CorrectionCollector:
         )
 
     def finalize_session(self) -> int:
-        """Persist the session's corrections and close it. Returns count saved."""
-        if not self._consent_active():
-            self._clear()
-            return 0
+        """Persist the session's corrections and close it. Returns count saved.
+
+        A clip is kept only while a staged record points to it: with nothing
+        saved (no consent, no corrections, every one dropped by the privacy
+        check) the session's de-identified audio is deleted with it.
+        """
         with self._session_lock:
             session = self._session
             self._session = None
-        if session is None or not session.corrections:
+        if session is None:
             return 0
-        return self._persist(session)
+        saved = self._persist(session) if self._consent_active() and session.corrections else 0
+        if not saved:
+            _delete_clip(session.audio_clip)
+        return saved
+
+    def withdraw_consent(self) -> int:
+        """Delete everything staged and not yet uploaded; return the records removed.
+
+        Withdrawing consent means what was collected under it stops waiting to
+        be sent: the open session, every pending record, and every audio clip.
+        """
+        from src.core.paths import training_audio_dir
+        from src.training.staging_db import get_staging_db
+        self._clear()
+        removed = get_staging_db().delete_pending()
+        for clip in training_audio_dir().iterdir():
+            _delete_clip(str(clip))
+        logger.info("Consent withdrawn: removed %d staged record(s) and their audio", removed)
+        return removed
 
     def _persist(self, session: _Session) -> int:
         from src.features import audit_log
@@ -254,7 +279,7 @@ class CorrectionCollector:
         # is somehow still present.
         audio_clip = session.audio_clip
         if audio_clip is None and not session.audio_prepared and session.wav_path:
-            audio_clip = self._deidentify_audio(
+            audio_clip = session.audio_clip = self._deidentify_audio(
                 session.patient_info, session.wav_path,
                 session.segments, session.session_id,
             )
@@ -308,51 +333,13 @@ class CorrectionCollector:
             logger.warning("Could not read pending count: %s", exc)
             return 0
 
-    def capture_image_label(self, record) -> tuple[bool, str]:
-        """Stage a labeled image for training.
 
-        Args:
-            record: ImageLabelRecord with image_path, labels, and consent_flags.
-
-        Returns:
-            (True, message) on success; (False, error) on failure.
-            Failures are logged but never raise.
-        """
-        if not self._consent_active():
-            return False, "Cloud training disabled. Enable in settings to proceed."
-        if not record.consent_flags.get("image_labeling_consent"):
-            return False, "Consent required for image upload."
-
+def _delete_clip(clip: Optional[str]) -> None:
+    if clip:
         try:
-            if de_id_path := self._deidentify_image(record.image_path):
-                record.de_identified_image_path = de_id_path
-
-            from src.training.staging_db import get_staging_db
-            get_staging_db().insert_image_label(record)
-            logger.info("Captured labeled image: %s", record.image_path)
-            return True, "Image labeled and staged for training."
-        except Exception as exc:
-            logger.exception("Failed to capture image label: %s", exc)
-            return False, f"Failed to save image: {exc}"
-
-    @staticmethod
-    def _deidentify_image(image_path: str) -> Optional[str]:
-        """Copy image to training directory (stub for PHI scrubbing).
-
-        Currently a pass-through; in production would apply image-level
-        de-identification (e.g. DICOM tag removal, pixel-level redaction).
-
-        Returns: path to de-identified copy, or None on failure.
-        """
-        try:
-            from pathlib import Path
-            from src.core.paths import imaging_training_dir
-            dest = imaging_training_dir() / Path(image_path).name
-            dest.write_bytes(Path(image_path).read_bytes())
-            return str(dest)
-        except Exception as exc:
-            logger.warning("Image de-identification failed (non-critical): %s", exc)
-            return None
+            Path(clip).unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Could not delete training clip %s: %s", clip, exc)
 
 
 # ---------------------------------------------------------------------------

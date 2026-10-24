@@ -32,6 +32,7 @@ abstention thresholds (those stay a separate, per-site calibration lever; see
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -56,6 +57,16 @@ _TRAUMA_OVERSAMPLE = 3
 def _is_trauma_positive(labels: dict) -> bool:
     """True if *labels* marks any chest-trauma-focus pathology positive (1)."""
     return any(labels.get(label) == 1 for label in _TRAUMA_FOCUS_LABELS)
+
+
+def _upload_name(image: Path) -> str:
+    """The name an image is uploaded under: from its content, never its filename.
+
+    Clinical exports often name a file after the patient or the accession
+    number, and two datasets can both hold an ``0001.png``: named by content,
+    the filename never leaves the device and no image overwrites another.
+    """
+    return hashlib.sha256(image.read_bytes()).hexdigest()[:24] + image.suffix.lower()
 
 
 class ScanClassifierTask:
@@ -130,7 +141,7 @@ class ScanClassifierTask:
                 except (OSError, json.JSONDecodeError, ValueError) as exc:
                     logger.warning("Skipping unreadable scan label %s: %s", label_file, exc)
                     continue
-                arcname = f"images/{img.name}"
+                arcname = f"images/{_upload_name(img)}"
                 members[str(img)] = arcname
                 example = {"image_file": arcname, "labels": labels}
                 if _is_trauma_positive(labels):

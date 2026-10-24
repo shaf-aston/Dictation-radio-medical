@@ -146,6 +146,7 @@ def show_cloud_training_dialog(window: MainWindow) -> None:
         return
 
     enabled = enable_box.isChecked()
+    was_enabled = bool(s.get("cloud_enabled")) and bool(s.get("cloud_training_consent"))
     s.batch_set({
         "cloud_enabled": enabled,
         "cloud_training_consent": enabled,
@@ -158,6 +159,10 @@ def show_cloud_training_dialog(window: MainWindow) -> None:
     elif not enabled and get_api_key():
         # Disabling cloud training removes the stored credential.
         clear_api_key()
+    if was_enabled and not enabled:
+        from src.training.collector import get_correction_collector
+        removed = get_correction_collector().withdraw_consent()
+        window._show_status(f"Cloud training off: {removed} staged correction(s) deleted", 5000)
 
     from src.features import audit_log
     audit_log.log_cloud_consent(enabled)
