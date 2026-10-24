@@ -208,7 +208,7 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
         QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QLabel,
         QLineEdit, QVBoxLayout,
     )
-    from src.dictation.postprocess.llm_cleanup import (
+    from src.features.ai_cleanup import (
         clear_groq_key, get_groq_key, store_groq_key,
     )
 
@@ -279,7 +279,7 @@ def offer_ai_cleanup(window: MainWindow, *, automatic: bool) -> None:
     and ID rather than guessing at them. ``automatic`` (after Stop) stays
     quiet when there is nothing to do: no pop-up for a disabled feature.
     """
-    from src.dictation.postprocess.llm_cleanup import clean_with_llm, is_enabled
+    from src.features.ai_cleanup import clean_with_llm, is_enabled
 
     if window.recorder.is_recording:
         window._show_status("Stop recording before AI cleanup", 3000, state="warn")

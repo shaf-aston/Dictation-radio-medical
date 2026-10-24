@@ -92,7 +92,7 @@ def test_correct_the_word_keeps_a_decimal_whole():
 
 def test_every_accent_rule_can_fire():
     # The gate in front of the rules is built from them, so none is unreachable.
-    from src.features.accent_corrections import ACCENT_PROFILES, apply_accent_corrections
+    from src.dictation.postprocess.accent import ACCENT_PROFILES, apply_accent_corrections
     assert apply_accent_corrections("Severe artritis.", "middle_eastern") == "Severe arthritis."
     for accent, rules in ACCENT_PROFILES.items():
         for pattern, _ in rules:

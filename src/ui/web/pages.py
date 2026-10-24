@@ -15,7 +15,7 @@ from src.dictation.asr.factory import describe_engine
 from src.dictation.asr.models import SUPPORTED_MODELS
 from src.dictation.postprocess.pipeline import CLEANUP_LEVEL_LABELS
 from src.features import template_fields
-from src.features.accent_corrections import ACCENT_LABELS
+from src.dictation.postprocess.accent import ACCENT_LABELS
 from src.features.clinical_disclaimer import DISCLAIMER_TEXT, DISCLAIMER_TITLE, needs_showing
 from src.features.report_manager import DOCX_AVAILABLE
 from src.medical import term_lookup

@@ -11,7 +11,7 @@ from src.core.paths import templates_dir
 from src.dictation.asr.models import SUPPORTED_MODELS
 from src.dictation.postprocess.pipeline import CLEANUP_LEVELS
 from src.features import audit_log
-from src.features.accent_corrections import ACCENT_LABELS
+from src.dictation.postprocess.accent import ACCENT_LABELS
 from src.features.clinical_disclaimer import mark_shown
 from src.medical import macros
 from src.ui.web import state

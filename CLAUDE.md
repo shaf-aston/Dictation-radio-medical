@@ -133,7 +133,9 @@ src/
 │                           safety gate; lives here so dictation/training/cloud
 │                           all import it downward without dictation touching
 │                           src.cloud.*
-├── features/    accent_corrections.py · adaptive_learning.py · audit_log.py
+├── features/    adaptive_learning.py · audit_log.py · ai_cleanup.py (the
+│                  optional Groq polish: the one network feature here, kept out
+│                  of dictation/, which stays offline)
 │   ├── template_fields.py  what a template field is ([Right / Left], [X]),
 │   │                       declared once: the release gate, Tab navigation and
 │   │                       pick-list answers ("left") all read it; the web page
@@ -182,7 +184,7 @@ src/
 ```
 
 Other optional, off-by-default add-ons:
-- `dictation/postprocess/llm_cleanup.py`: on-demand Groq report polish (NOT in
+- `features/ai_cleanup.py`: on-demand Groq report polish (NOT in
   the per-chunk pipeline); de-identifies first, key in keychain, consent-gated.
 - `scripts/lightning/`: training entrypoints run ON Lightning AI: `train_whisper`
   + `convert_to_ct2` (voice), `train_text_corrector`, `train_scan_classifier`.
@@ -403,7 +405,7 @@ there.
 - **Secrets live in the OS keychain only** (`keyring`), never in
   `dictation_settings.json` or logs. The Lightning project id (not a secret)
   is in settings; the Groq key follows the same rule
-  (`llm_cleanup.get_groq_key`).
+  (`ai_cleanup.get_groq_key`).
 - **Scan suggestions abstain by default and must be localisable**: a finding
   reaches the radiologist only if its label was trained AND its probability ≥
   the calibrated threshold AND Grad-CAM produced a region. Always an assistive

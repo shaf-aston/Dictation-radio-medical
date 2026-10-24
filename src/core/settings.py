@@ -158,7 +158,7 @@ _DEFAULTS: dict = {
     "lightning_project_id": "",        # Lightning AI project (API key lives in OS keychain)
     "min_corrections_before_upload": 20,  # don't train on tiny datasets
     "active_model_version": None,      # active fine-tuned version, or None for base model
-    # --- AI report cleanup (Groq; dictation/postprocess/llm_cleanup.py) ---
+    # --- AI report cleanup (Groq; features/ai_cleanup.py) ---
     # Off: it sends de-identified text off the device, so it is switched on
     # by the radiologist, and only works with cloud_training_consent as well.
     "groq_cleanup_enabled": False,

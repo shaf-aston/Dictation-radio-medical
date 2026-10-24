@@ -11,7 +11,7 @@ import types
 
 import pytest
 
-from src.dictation.postprocess import llm_cleanup
+from src.features import ai_cleanup
 from src.medical.deid import DeIdentifier, PrivacyError
 
 PATIENT = {"name": "Jane Doe", "id": "MRN12345678", "dob": "01/02/1960"}
@@ -57,13 +57,13 @@ def groq_recorder(monkeypatch):
             self.chat = types.SimpleNamespace(completions=_Completions())
 
     monkeypatch.setitem(sys.modules, "groq", types.SimpleNamespace(Groq=_Groq))
-    monkeypatch.setattr(llm_cleanup, "is_enabled", lambda: True)
-    monkeypatch.setattr(llm_cleanup, "get_groq_key", lambda: "test-key")
+    monkeypatch.setattr(ai_cleanup, "is_enabled", lambda: True)
+    monkeypatch.setattr(ai_cleanup, "get_groq_key", lambda: "test-key")
     return sent
 
 
 def test_cleanup_sends_scrubbed_text_only(groq_recorder):
-    llm_cleanup.clean_with_llm("Jane Doe MRN12345678: medial meniscal tear.", PATIENT)
+    ai_cleanup.clean_with_llm("Jane Doe MRN12345678: medial meniscal tear.", PATIENT)
     (payload,) = groq_recorder
     assert "Jane Doe" not in payload
     assert "MRN12345678" not in payload
@@ -71,8 +71,8 @@ def test_cleanup_sends_scrubbed_text_only(groq_recorder):
 
 
 def test_cleanup_is_off_by_default(monkeypatch, groq_recorder):
-    monkeypatch.setattr(llm_cleanup, "is_enabled", lambda: False)
-    assert llm_cleanup.clean_with_llm("Some text.", PATIENT) == ("Some text.", [])
+    monkeypatch.setattr(ai_cleanup, "is_enabled", lambda: False)
+    assert ai_cleanup.clean_with_llm("Some text.", PATIENT) == ("Some text.", [])
     assert groq_recorder == []
 
 
@@ -80,7 +80,7 @@ def test_cleanup_returns_input_when_scrubbing_fails(monkeypatch, groq_recorder):
     # If an identifier somehow survives, nothing is sent and the report is kept.
     monkeypatch.setattr(DeIdentifier, "pseudonymise", lambda self, text: (text, {}))
     text = "Jane Doe: medial meniscal tear."
-    assert llm_cleanup.clean_with_llm(text, PATIENT) == (text, [])
+    assert ai_cleanup.clean_with_llm(text, PATIENT) == (text, [])
     assert groq_recorder == []
 
 

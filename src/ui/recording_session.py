@@ -17,7 +17,7 @@ from src.dictation.worker import LiveTranscribeWorker
 from src.core.paths import create_temp_wav
 from src.features import run_log
 from src.ui.postprocess_worker import PostprocessWorker, build_changes
-from src.features.accent_corrections import ACCENT_LABELS, suggest_accent
+from src.dictation.postprocess.accent import ACCENT_LABELS, suggest_accent
 from src.features.report_release import (
     add_communication_statement,
     communication_statement,

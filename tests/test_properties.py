@@ -13,7 +13,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from src.dictation.postprocess import llm_cleanup
+from src.features import ai_cleanup
 from src.dictation.postprocess.pipeline import postprocess_transcript
 from src.dictation.postprocess.voice_commands import apply_scratch_commands
 from src.features.template_fields import (
@@ -95,8 +95,8 @@ def echo_groq(monkeypatch):
             self.chat = types.SimpleNamespace(completions=_Completions())
 
     monkeypatch.setitem(sys.modules, "groq", types.SimpleNamespace(Groq=_Groq))
-    monkeypatch.setattr(llm_cleanup, "is_enabled", lambda: True)
-    monkeypatch.setattr(llm_cleanup, "get_groq_key", lambda: "test-key")
+    monkeypatch.setattr(ai_cleanup, "is_enabled", lambda: True)
+    monkeypatch.setattr(ai_cleanup, "get_groq_key", lambda: "test-key")
 
 
 @settings(FAST, suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow])
@@ -104,7 +104,7 @@ def echo_groq(monkeypatch):
 def test_cleanup_that_changes_nothing_gives_back_the_same_report(echo_groq, text, extra):
     """Scrubbing is for the trip out: what comes back must be the radiologist's report."""
     report = extra + text
-    cleaned, _ = llm_cleanup.clean_with_llm(report, {"name": "Jane Doe", "id": "RX1234567"})
+    cleaned, _ = ai_cleanup.clean_with_llm(report, {"name": "Jane Doe", "id": "RX1234567"})
     assert cleaned == report
 
 

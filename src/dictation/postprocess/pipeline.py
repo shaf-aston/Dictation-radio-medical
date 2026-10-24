@@ -81,7 +81,7 @@ from src.dictation.postprocess.context_correct import (
     apply_context_correction,
     rejoin_split_compounds,
 )
-from src.features.accent_corrections import apply_accent_corrections
+from src.dictation.postprocess.accent import apply_accent_corrections
 from src.features.adaptive_learning import apply_learned_corrections
 from src.dictation.postprocess.analysis import PipelineAnalyzer
 from src.core import perf
