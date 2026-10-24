@@ -29,7 +29,7 @@ from src.dictation.asr.port import AsrStream, StreamingAsrEngine, engine_identit
 from src.dictation.conditioning.chain import Chain
 from src.dictation.asr.types import AsrResult, StreamError, StreamFinal, StreamInterim
 from src.dictation.postprocess.incremental import IncrementalPostprocessor
-from src.dictation.stream.ledger import ChunkLedger, close_sentence
+from src.dictation.stream.ledger import ChunkLedger
 from src.dictation.stream.polish import decode_run, polish, weak_runs
 from src.dictation.stream.policy import plan_from_settings
 from src.dictation.stream.rules import (
@@ -787,7 +787,7 @@ class LiveSession:
         if not self.postprocess:
             final = raw
         else:
-            final = close_sentence(self._post.process(raw, 0)[0]) if raw else ""
+            final = self._post.finish(raw)[0]
         logger.info(
             "final polish  audio=%.1fs  elapsed=%.2fs  polished=%d  chars=%d",
             self.audio_sec, time.time() - t0, polished, len(final),

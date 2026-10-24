@@ -514,6 +514,7 @@ def on_transcription_finished(window: MainWindow) -> None:
         getattr(window, "_active_accent", "neutral"),
         getattr(window, "_active_cleanup_level", "medium"),
         window._final_seq,
+        final=True,
     )
     window._last_raw_transcript = ""
 
