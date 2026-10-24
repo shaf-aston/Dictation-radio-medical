@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import io
 import json
 
 import anyio
@@ -12,7 +11,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal, Optional
 
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
@@ -24,9 +23,8 @@ from src.core.settings import Settings, get_default
 from src.dictation.postprocess.pipeline import (
     CLEANUP_LEVEL_LABELS,
     CLEANUP_LEVELS,
-    postprocess_transcript,
 )
-from src.dictation.asr import AsrEngine, TranscribeContext, create_engine
+from src.dictation.asr import AsrEngine, create_engine
 from src.cloud.framework.registry import active_voice_model_path
 from src.dictation.stream.live_session import LiveSession
 from src.dictation.asr.models import SUPPORTED_MODELS, resolve_model
@@ -419,7 +417,7 @@ async def lifespan(_: FastAPI):
 def _warm_up_singletons() -> None:
     """Pre-build the slow spelling index and speech model off the request path.
 
-    Left lazy, both are built on the *first* ``/transcribe`` call and stall it by
+    Left lazy, both are built on the *first* dictation and stall it by
     seconds. Warming at startup on a background thread makes the first real
     request fast. Best-effort: warm-up never blocks or fails app startup.
     """
@@ -756,10 +754,8 @@ def _record_web_run(
 ) -> None:
     """Write one run record for a browser dictation.
 
-    Both browser paths land here. The one-shot upload has no separate "catching
-    up after Stop", so it leaves *finalise_sec* at zero rather than inventing
-    one; the live socket fills it in, because for streaming that number, how
-    long after the last word the final text arrived, is the whole point.
+    *finalise_sec* is how long after the last word the final text arrived:
+    for streaming, that number is the whole point.
     """
     record = run_log.start(
         "web", model=str(prefs.get("model_size", "")), engine=str(settings.get("asr_engine", "")),
@@ -920,82 +916,6 @@ async def events_endpoint(after: int = 0, limit: int = 500):
         "latest": event_log.latest_seq(),
         "running": event_log.running(),
     }
-
-
-@app.post("/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
-    settings = _settings()
-    max_size = int(settings.get("max_upload_mb", get_default("max_upload_mb"))) * 1024 * 1024
-    # Read one byte past the limit: enough to detect an oversized upload without
-    # buffering the whole of it.
-    audio_bytes = await file.read(max_size + 1)
-
-    if len(audio_bytes) > max_size:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum size is {max_size / 1024 / 1024:.0f}MB"
-        )
-
-    file_like = io.BytesIO(audio_bytes)
-    file_like.name = "audio.webm"
-
-    try:
-        t_start = time.time()
-        prefs = _current_preferences()
-        pause_threshold = settings.get("pause_threshold", 2.5)
-        # A one-shot batch transcription of the whole clip, not the
-        # latency-critical live loop: so it wants the same proper beam search as
-        # the desktop's post-stop polish, and reads the same setting. Two names
-        # for one decision is how the two front-ends drift apart.
-        beam_size = int(settings.get("final_beam_size"))
-
-        # Whisper transcription and post-processing are synchronous and
-        # multi-second/CPU-bound. Run them in a worker thread so a request does
-        # not block the event loop and stall every other concurrent request.
-        # Timed per request as well as into perf. perf is never reset on this
-        # path, so its snapshot is cumulative for the process: which is the
-        # right thing for /api/debug/perf and the wrong thing for one run's
-        # record. These are this run's own numbers.
-        run_stages: dict = {}
-        run_audio_sec = 0.0
-
-        def _transcribe() -> str:
-            nonlocal run_audio_sec
-            t0 = time.time()
-            with perf.stage("web.transcribe"):
-                result = _get_engine().transcribe(
-                    file_like,
-                    TranscribeContext(
-                        language=prefs["language"],
-                        vad_filter=bool(prefs["vad_filter"]),
-                        beam_size=beam_size,
-                        condition_on_previous_text=False,
-                        pause_threshold=pause_threshold,
-                    ),
-                )
-                text = result.text
-            run_stages["transcribe"] = round(time.time() - t0, 3)
-            if result.segments:
-                run_audio_sec = round(float(result.segments[-1].end), 3)
-            t1 = time.time()
-            with perf.stage("web.postprocess"):
-                cleaned = postprocess_transcript(
-                    text, accent=prefs["accent"], cleanup_level=prefs["cleanup_level"]
-                )
-            run_stages["postprocess"] = round(time.time() - t1, 3)
-            return cleaned
-
-        text = await anyio.to_thread.run_sync(_transcribe)
-        elapsed = time.time() - t_start
-        perf.record("web.request", elapsed)
-        _record_web_run(settings, prefs, text, elapsed=elapsed,
-                        audio_sec=run_audio_sec, stages=run_stages)
-        return {"text": text}
-    except Exception as e:
-        logger.error("Transcription failed: %s", e, exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="Failed to transcribe audio"
-        ) from e
 
 
 # ---------------------------------------------------------------------------
