@@ -69,3 +69,12 @@ Two halves, kept apart. Run commands, file-by-file flow and glossary: [CORE-FLOW
 | parakeet-rad-v2 (int8) | 30.94% | 24.32% | 7.4 |
 
   On real accented voices int8 rounding is far worse than on the tts set: it nearly triples term error (11.35% -> 32.43%). At the same precision, v2's training cuts term error by a quarter (32.43% -> 24.32%), so the training does help real voices, but the rounding still swamps it. v3 (fp32 export) is the test that decides it. These numbers are not comparable with `replay.py`'s on the same clips: the two average differently.
+- Parakeet v3 `parakeet-rad-v3` (2026-10-24): v2's recipe, fp32 export kept. compare.py, raw text, against stock fp32 (what the app runs):
+
+| Set | Stock term err | v3 term err | Stock WER | v3 WER |
+|---|---|---|---|---|
+| tts clean | 11.72% | 9.81% | 8.06% | 7.34% |
+| tts noise | 16.35% | 13.35% | 9.68% | 8.84% |
+| eka real voices | 11.35% | 7.03% | 22.90% | 19.70% |
+
+  Wins: the first version to beat what the app runs. Term error falls on every set, by 38% on the real voices; WER never rises. So the training did help, and int8 rounding was what hid it in v2. Speed is the same network at the same precision; the measured s/min gap flips sign between sets, so it is machine load. Caveats: Eka labels are noisy and its speakers are all Indian-English. Next: one optional setting pointing Parakeet at `models/parakeet-rad-v3/model`, default off, then a click-through in the app.
