@@ -1,8 +1,8 @@
-"""Runs ON Kaggle (GPU). Fine-tunes Parakeet TDT 0.6b v3, exports the int8 ONNX folder the app's engine loads.
+"""Runs ON Kaggle (GPU). Fine-tunes Parakeet TDT 0.6b v3, exports the ONNX folder the app's engine loads, at the precision in parakeet.json.
 
 Reads /kaggle/input/rd-train-data/{manifest.jsonl,audio.tar} (our synthetic radiology clips), the Kaggle
 medical-speech dataset, and three Hugging Face sets; settings come from train/parakeet.json.
-Writes /kaggle/working/model_onnx/ (onnx_asr.load_model("nemo-conformer-tdt", path, quantization="int8"))
+Writes /kaggle/working/model_onnx/ (onnx_asr.load_model("nemo-conformer-tdt", path, quantization=cfg["quantization"]))
 + train_log.json, which also holds stock vs tuned error rates on three test sets the model never trained on.
 
 Training text keeps capitals and punctuation, because Parakeet writes them: a set without them would teach
@@ -209,7 +209,7 @@ def score(asr) -> dict:
     return res
 
 
-log["eval"]["stock"] = score(onnx_asr.load_model(cfg["stock_onnx_model"], quantization="int8"))
+log["eval"]["stock"] = score(onnx_asr.load_model(cfg["stock_onnx_model"], quantization=cfg["quantization"]))
 save_log(eval=log["eval"])
 
 # ---------- training ----------
@@ -363,15 +363,17 @@ except torch.cuda.OutOfMemoryError as e:
     log["out_of_memory"] = str(e)[:500]
 save_log(batch_size=bs, accumulate=accumulate, steps_done=trainer.global_step, training=stopped)
 
-# ---------- export: only the int8 files the app loads go to the output ----------
+# ---------- export: only the files for the chosen precision go to the output (null = full precision) ----------
 export(TMP / "tuned", model)
 dest = OUT / cfg["output"]
 dest.mkdir()
-for name in ("encoder-model.int8.onnx", "decoder_joint-model.int8.onnx", "vocab.txt", "config.json"):
-    shutil.copy(TMP / "tuned" / name, dest / name)
+for f in (TMP / "tuned").iterdir():
+    # fp32 keeps every non-int8 file, so the encoder's separate weights file comes along whatever it is named
+    if f.name in ("vocab.txt", "config.json") or (".int8." in f.name) == bool(cfg["quantization"]):
+        shutil.copy(f, dest / f.name)
 save_log(exported=sorted(p.name for p in dest.iterdir()))
 
-log["eval"]["tuned"] = score(onnx_asr.load_model("nemo-conformer-tdt", str(dest), quantization="int8"))
+log["eval"]["tuned"] = score(onnx_asr.load_model("nemo-conformer-tdt", str(dest), quantization=cfg["quantization"]))
 if cfg.get("check_export"):
     # Full precision too: int8 rounds each weight, so a change far too small to learn anything still tips
     # some weights into the next step. Comparing fp32 to fp32 tells training apart from rounding.

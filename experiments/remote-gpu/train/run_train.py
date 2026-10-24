@@ -22,23 +22,21 @@ from pack import PACK, pack_data  # noqa: E402
 OUT = HERE / "train" / "_out"
 LOAD_LINE = {
     "whisper": "FasterWhisperEngine(model_path=r'{model}')",
-    "parakeet": "onnx_asr.load_model('nemo-conformer-tdt', r'{model}', quantization='int8')",
+    "parakeet": "onnx_asr.load_model('nemo-conformer-tdt', r'{model}', quantization={quantization!r})",
 }
-# score label -> the label it must match on a smoke run
-SMOKE_PAIRS = {"untouched_int8": "stock", "tuned_fp32": "untouched_fp32"}
-
-
-def check_smoke(log: dict) -> None:
+def check_smoke(log: dict, cfg: dict) -> None:
     """A smoke run learns almost nothing, so our export must match the published model, the trained model
     must match the untouched one at full precision, and the BatchNorm averages must not have moved.
     The tuned int8 score is printed, not gated: rounding magnifies even a 1e-7 change on 24 clips."""
     if log.get("training", "finished") != "finished":
         raise SystemExit(f"smoke run failed: training {log['training']}")
     scores, gap = log.get("eval", {}), SETTINGS["smoke_max_wer_gap_pp"]
+    # score label -> the label it must match; stock is scored at the export's precision
+    pairs = {f"untouched_{cfg.get('quantization') or 'fp32'}": "stock", "tuned_fp32": "untouched_fp32"}
     for label, got in scores.items():
         print(label, got)
     print("max change", log.get("max_change"))
-    for label, ref in SMOKE_PAIRS.items():
+    for label, ref in pairs.items():
         off = {s: scores[label][s] for s in scores[ref] if abs(scores[label][s] - scores[ref][s]) > gap}
         if off:
             raise SystemExit(f"smoke run failed: {label} differs from {ref} by more than {gap} pp: {off}")
@@ -67,7 +65,7 @@ def save_version(dest: Path, engine: str, cfg: dict, clips: int, data: Path, not
         f" plus Kaggle sources {cfg['kaggle_sources'] or 'none'}\n"
         f"- settings: {engine}.json\n- note: {note}\n"
         f"- measured error rate: not yet. Run `python compare.py` and paste the table here.\n"
-        f"\nLoad with: {LOAD_LINE[engine].format(model=dest / 'model')}\n", encoding="utf-8")
+        f"\nLoad with: {LOAD_LINE[engine].format(model=dest / 'model', quantization=cfg.get('quantization'))}\n", encoding="utf-8")
 
 
 def main() -> None:
@@ -90,7 +88,7 @@ def main() -> None:
     run_kernel(a.engine, cfg)
     fetch_output(OUT, cfg)
     if a.smoke:
-        check_smoke(json.loads((OUT / "train_log.json").read_text()))
+        check_smoke(json.loads((OUT / "train_log.json").read_text()), cfg)
         print("smoke run passed; output in", OUT)
         return
     save_version(dest, a.engine, cfg, clips, a.data.resolve(), a.note)

@@ -20,7 +20,7 @@ Own-voice set first: `python -m scripts.eval.build_sets --set own --record` (fro
 2. `data/build_train.py` speaks them with every Windows voice except the held-out one (`settings.json`), writes `data/train/`.
 3. `train/pack.py` turns the clips into one flac tarball, so the upload is one request, not hundreds.
 4. `train/kaggle_io.py` is the only file that talks to Kaggle: upload the data, run `train/<engine>_kernel.py` on a GPU with `train/<engine>.json` written into it, wait, download.
-5. `train/<engine>_kernel.py` runs ON Kaggle. `whisper_kernel.py` exports a CTranslate2 folder. `parakeet_kernel.py` also pulls public medical and accented speech sets, scores stock vs tuned on three held-out sets (in `train_log.json`), and exports the int8 ONNX folder onnx-asr loads.
+5. `train/<engine>_kernel.py` runs ON Kaggle. `whisper_kernel.py` exports a CTranslate2 folder. `parakeet_kernel.py` also pulls public medical and accented speech sets, scores stock vs tuned on three held-out sets (in `train_log.json`), and exports the ONNX folder onnx-asr loads, at the `quantization` set in `parakeet.json` (null = full precision).
 6. `train/run_train.py` files the result into a NEW `models/<name>-vN/` (never overwrites) with its README, config and clip list.
 7. `compare.py` loads each `models/*/model` through the app's own engine (`FasterWhisperEngine`, or `ParakeetEngine` when the folder has `parakeet.json`) and prints one table.
 

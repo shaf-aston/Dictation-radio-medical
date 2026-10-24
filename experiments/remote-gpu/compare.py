@@ -12,6 +12,7 @@ voice (every 3rd clip, starting at the 2nd) or, for the own set, every clip.
 Tuned voices are 'seen', so read 'unseen' first.
 """
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -34,22 +35,24 @@ def whisper(**kw):
     return FasterWhisperEngine(**kw)
 
 
-def parakeet(path=None):
-    """The app's own ParakeetEngine (fp32); a tuned folder is loaded into it, so decoding is the app's code path."""
+def parakeet(path=None, quantization=None):
+    """The app's own ParakeetEngine (fp32 unless told); a tuned folder is loaded into it, so decoding is the app's code path."""
     import onnx_asr
-    eng = ParakeetEngine()
+    eng = ParakeetEngine(quantization=quantization)
     if path:
-        eng._model = onnx_asr.load_model("nemo-conformer-tdt", path, quantization="int8").with_timestamps()
+        eng._model = onnx_asr.load_model("nemo-conformer-tdt", path, quantization=quantization).with_timestamps()
     return eng
 
 
 def candidates(only):
-    # The app runs Parakeet at fp32; tuned exports are int8, so int8 stock is the like-for-like row.
+    # The app runs Parakeet at fp32; v1 and v2 exported int8 only, so int8 stock is their like-for-like row.
     found = [("stock-whisper", lambda: whisper(model_size="small.en")), ("stock-parakeet", parakeet),
-             ("stock-parakeet-int8", lambda: ParakeetEngine(quantization="int8"))]
+             ("stock-parakeet-int8", lambda: parakeet(quantization="int8"))]
     for d in sorted(MODELS.glob("*/model")):
         if (d.parent / "parakeet.json").exists():
-            found.append((d.parent.name, lambda d=d: parakeet(str(d))))
+            # Versions saved before the quantization knob were int8.
+            q = json.loads((d.parent / "parakeet.json").read_text()).get("quantization", "int8")
+            found.append((d.parent.name, lambda d=d, q=q: parakeet(str(d), q)))
         else:
             found.append((d.parent.name, lambda d=d: whisper(model_path=str(d))))
     return [c for c in found if not only or c[0] in only]
