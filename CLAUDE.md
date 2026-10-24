@@ -49,7 +49,11 @@ src/
 │   │                       wrapper and its port adapter, one file) ·
 │   │                       engines/parakeet_engine.py (onnx-asr; no prompt,
 │   │                       one model shared process-wide; full precision
-│   │                       unless parakeet_precision says int8) · prompt.py
+│   │                       unless parakeet_precision says int8; the
+│   │                       parakeet_model setting picks stock "standard" or
+│   │                       a fine-tune folder under data/models/fine_tuned/,
+│   │                       "Voice model" in both front-ends, warmed on
+│   │                       switch by warmup.rewarm) · prompt.py
 │   │                       (the radiology priming vocabulary, same for every
 │   │                       engine) · models.py (known model names + fallback)
 │   ├── stream/             chunk-once streaming, vad.py (Silero VAD, bundled

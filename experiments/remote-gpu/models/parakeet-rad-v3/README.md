@@ -34,7 +34,7 @@ In noise it fixed 7 and broke 8; quiet, fixed 9 and broke 5.
 - Not checked line by line: Hani89 (38 synthetic clips, 0.4% of training).
 - Caveat: the synthetic training sentences were written from the app's own medical word list, which is the same list term error counts. That is the vocabulary the app needs, but it favours v3 on exactly that score.
 
-## Verdict: promising, not proven. Not adopted.
+## Verdict: promising, not proven. Optional switch, default off.
 
 - Clear gain: overall accuracy on clean real voices (WER down 3.2 points; the range stays below zero).
 - Medical words on clean real voices look better (21 missed down to 13), but that is 8 words out of 185, and the range reaches zero. It does not clear the bar (a quarter AND 2 points) with confidence.
@@ -44,4 +44,6 @@ In noise it fixed 7 and broke 8; quiet, fixed 9 and broke 5.
 - Limits: Eka labels are noisy, all its speakers are Indian-English, and it is short phrases, not reports.
 - What would decide it: more real medical words. The user's own recorded voice (`own` set) reading real reports is the test; wiring v3 in as an optional setting (default off) is the user's call after that.
 
-Load with: onnx_asr.load_model('nemo-conformer-tdt', r'C:\Users\Shaf\Downloads\vibe-code-projs\radio-dictate\experiments\remote-gpu\models\parakeet-rad-v3\model', quantization=None)
+In the app (2026-10-24): stored at `data/models/fine_tuned/parakeet-rad-v3`; choose it under "Voice model" in either front-end (setting `parakeet_model`, default `standard`).
+
+Load by hand with: onnx_asr.load_model('nemo-conformer-tdt', 'data/models/fine_tuned/parakeet-rad-v3', quantization=None)

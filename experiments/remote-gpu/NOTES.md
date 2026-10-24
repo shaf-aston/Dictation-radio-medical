@@ -79,3 +79,5 @@ Two halves, kept apart. Run commands, file-by-file flow and glossary: [CORE-FLOW
 | libri | +0.33 (-0.06 to +0.77) | no medical terms |
 
   Promising, not proven; not adopted. The only change that beats luck is WER on clean real voices. The medical-word gain there is 8 words and its range reaches zero; noise and quiet show nothing; general English is 0.33 points worse, a tie at best and just over the 0.3 allowed. No leak: 0 Eka phrases or four-word runs in training, 0 shared EdAcc speakers. Caveat: the synthetic training text came from the app's own word list, the same one term error counts. Next: more real medical words decide it, the user's own voice (`own` set) reading reports; wiring v3 in (one setting, default off) is the user's call after that.
+
+- 2026-10-24: v3 wired in as an optional switch, default still standard. Stored at `data/models/fine_tuned/parakeet-rad-v3` (packed copy, identical output). Picked with "Voice model" in web Settings and the desktop settings bar (setting `parakeet_model`). One model in memory at a time; switching preloads it, first words about 1.7s after a switch either way. Same speed as stock.

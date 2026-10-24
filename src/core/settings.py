@@ -22,6 +22,12 @@ _DEFAULTS: dict = {
     # first-word time and lag. The cost is memory: 2.2 GB loaded against 0.7 GB,
     # and a one-time 2.4 GB download. "int8" is for a machine short of memory.
     "parakeet_precision": "fp32",
+    # Which Parakeet: "standard" (the download) or a fine-tuned folder's name in
+    # data/models/fine_tuned/. parakeet-rad-v3, measured 2026-10-24 on 140 real
+    # Indian-English clips: WER 22.9 % -> 19.7 %, medical words missed 21 -> 13
+    # of 185; general English 1.85 % -> 2.18 %. Same speed and memory. Table:
+    # experiments/remote-gpu/models/parakeet-rad-v3/README.md.
+    "parakeet_model": "standard",
     "model_size": "base.en",   # English-only: faster AND more accurate than "base"
     "language": "en",
     "vad_filter": True,

@@ -15,7 +15,7 @@ from typing import Any, List, Tuple
 from src.dictation.asr.engines.deepgram_engine import DeepgramEngine
 from src.dictation.asr.engines.fallback_engine import ChainEngine
 from src.dictation.asr.engines.faster_whisper_engine import FasterWhisperEngine
-from src.dictation.asr.engines.parakeet_engine import ParakeetEngine
+from src.dictation.asr.engines.parakeet_engine import ParakeetEngine, model_dir_for
 from src.dictation.asr.port import AsrEngine
 from src.core.settings import Settings, get_default
 
@@ -27,9 +27,12 @@ _PARAKEET_QUANTIZATION = {"fp32": None, "int8": "int8"}
 
 
 def _make_parakeet(**kwargs: Any) -> ParakeetEngine:
-    """Parakeet at the precision the ``parakeet_precision`` setting names.
-    Raises ``ValueError`` on an unknown value rather than guessing one."""
-    precision = Settings().get("parakeet_precision")
+    """Parakeet with the weights ``parakeet_model`` names, at the precision
+    ``parakeet_precision`` names. Raises ``ValueError`` on an unknown value
+    rather than guessing one."""
+    settings = Settings()
+    kwargs.setdefault("model_dir", model_dir_for(settings.get("parakeet_model")))
+    precision = settings.get("parakeet_precision")
     if precision not in _PARAKEET_QUANTIZATION:
         raise ValueError(
             f"Unknown parakeet_precision {precision!r}. Available: {sorted(_PARAKEET_QUANTIZATION)}"

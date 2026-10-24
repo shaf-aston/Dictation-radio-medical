@@ -130,6 +130,7 @@ class MainWindow(QMainWindow):
     btn_record: QPushButton
     btn_stop: QPushButton
     model_combo: QComboBox
+    parakeet_combo: QComboBox
     vad_checkbox: QCheckBox
     language_input: QLineEdit
     accent_combo: QComboBox

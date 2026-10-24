@@ -28,6 +28,7 @@ from src.dictation.asr import AsrEngine, create_engine
 from src.cloud.framework.registry import active_voice_model_path
 from src.dictation.stream.live_session import LiveSession
 from src.dictation.asr.models import SUPPORTED_MODELS, resolve_model
+from src.dictation.asr.engines.parakeet_engine import available_models as parakeet_models
 from src.features.accent_corrections import ACCENT_LABELS
 from src.features.clinical_disclaimer import (
     DISCLAIMER_TEXT,
@@ -85,6 +86,7 @@ class PreferencesUpdate(BaseModel):
     vad_filter: bool = True
     accent: str = "neutral"
     cleanup_level: str = "medium"
+    parakeet_model: str = "standard"
     macro_region: str = ""
 
 
@@ -158,7 +160,7 @@ def _normalize_theme(theme: object) -> str:
 #: ``settings._DEFAULTS``: re-listing them here is how the web and desktop
 #: defaults drifted apart.
 _PREFERENCE_KEYS = (
-    "model_size", "language", "vad_filter", "accent", "cleanup_level",
+    "model_size", "language", "vad_filter", "accent", "cleanup_level", "parakeet_model",
 )
 
 _settings_instance: Optional[Settings] = None
@@ -293,6 +295,7 @@ def _bootstrap_payload() -> dict:
         "preferences": _current_preferences(),
         "patient_defaults": empty_patient_info(),
         "supported_models": SUPPORTED_MODELS,
+        "parakeet_models": parakeet_models(),
         "accent_options": [
             {"key": key, "label": label}
             for key, label in ACCENT_LABELS.items()
@@ -529,21 +532,32 @@ async def set_preferences(payload: PreferencesUpdate):
     macro_region = payload.macro_region.strip()
     if macro_region not in macros.REGION_ORDER and macros.REGION_ORDER:
         macro_region = macros.REGION_ORDER[0]
+    if payload.parakeet_model not in parakeet_models():
+        raise HTTPException(status_code=422, detail="Unknown Parakeet model")
 
     settings = _settings()
+    model_changed = payload.parakeet_model != settings.get("parakeet_model")
     settings.batch_set({
         "model_size": model_size,
         "language": language,
         "vad_filter": bool(payload.vad_filter),
         "accent": accent,
         "cleanup_level": cleanup_level,
+        "parakeet_model": payload.parakeet_model,
         "last_macro_region": macro_region,
     })
 
     # Drop the cached engines so the next request builds the newly chosen model.
     with transcriber_lock:
+        if model_changed:
+            asr_engines.clear()
         for key in [k for k in asr_engines if k[0] == resolve_model(model_size)]:
             del asr_engines[key]
+    if model_changed:
+        # Load the new weights now, not inside the next dictation's first decode.
+        from src.dictation.warmup import rewarm, transcriber_warmer
+
+        rewarm([transcriber_warmer(model_size)])
 
     return {
         "preferences": _current_preferences(),

@@ -38,6 +38,7 @@ const patientStudyDate = document.getElementById('patientStudyDate');
 const patientReferrer = document.getElementById('patientReferrer');
 const patientAccession = document.getElementById('patientAccession');
 const modelSelect = document.getElementById('modelSelect');
+const parakeetSelect = document.getElementById('parakeetSelect');
 const languageInput = document.getElementById('languageInput');
 const accentSelect = document.getElementById('accentSelect');
 const cleanupSelect = document.getElementById('cleanupSelect');
@@ -203,12 +204,14 @@ function applyPatientInfo(info) {
 }
 
 function populateModelOptions() {
-    modelSelect.innerHTML = '';
-    (BOOTSTRAP.supported_models || []).forEach((model) => {
-        const option = document.createElement('option');
-        option.value = model;
-        option.textContent = model;
-        modelSelect.appendChild(option);
+    [[modelSelect, BOOTSTRAP.supported_models], [parakeetSelect, BOOTSTRAP.parakeet_models]].forEach(([select, models]) => {
+        select.innerHTML = '';
+        (models || []).forEach((model) => {
+            const option = document.createElement('option');
+            option.value = model;
+            option.textContent = model;
+            select.appendChild(option);
+        });
     });
 }
 
@@ -369,6 +372,7 @@ function insertTextAtCursor(text) {
 function loadReportSettingsFromServer() {
     const prefs = BOOTSTRAP.preferences || {};
     modelSelect.value = prefs.model_size || (BOOTSTRAP.supported_models || [])[0] || 'base';
+    parakeetSelect.value = prefs.parakeet_model || 'standard';
     languageInput.value = prefs.language || 'en';
     accentSelect.value = prefs.accent || 'neutral';
     cleanupSelect.value = prefs.cleanup_level || 'medium';
@@ -389,10 +393,11 @@ function updateSettingsBadge() {
     const badge = document.getElementById('settingsBadge');
     if (!badge) return;
     const m = modelSelect.value || 'base';
+    const p = parakeetSelect.value === 'standard' ? '' : parakeetSelect.value;
     const l = languageInput.value.trim() || 'en';
     const a = accentSelect.options[accentSelect.selectedIndex]?.text || 'Neutral';
     const v = vadCheckbox.checked ? 'VAD' : '';
-    badge.textContent = [m, l, a, v].filter(Boolean).join(' · ');
+    badge.textContent = [p, m, l, a, v].filter(Boolean).join(' · ');
 }
 
 function applyBootstrapState() {
@@ -435,6 +440,7 @@ async function persistPreferences() {
     preferenceSaveInFlight = true;
     const payload = {
         model_size: modelSelect.value || 'base',
+        parakeet_model: parakeetSelect.value || 'standard',
         language: languageInput.value.trim() || 'en',
         vad_filter: vadCheckbox.checked,
         accent: accentSelect.value || 'neutral',
@@ -458,6 +464,7 @@ async function persistPreferences() {
             BOOTSTRAP.macros = result.macros;
         }
         modelSelect.value = BOOTSTRAP.preferences.model_size || payload.model_size;
+        parakeetSelect.value = BOOTSTRAP.preferences.parakeet_model || payload.parakeet_model;
         languageInput.value = BOOTSTRAP.preferences.language || payload.language;
         accentSelect.value = BOOTSTRAP.preferences.accent || payload.accent;
         cleanupSelect.value = BOOTSTRAP.preferences.cleanup_level || payload.cleanup_level;
@@ -791,6 +798,7 @@ copyBtn.addEventListener('click', async () => {
 });
 
 modelSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });
+parakeetSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });
 languageInput.addEventListener('input', () => { schedulePreferenceSave(); updateSettingsBadge(); });
 accentSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });
 cleanupSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });

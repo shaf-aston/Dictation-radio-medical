@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QAction, QKeySequence
 
+from src.dictation.asr.engines.parakeet_engine import available_models as parakeet_models
 from src.dictation.asr.models import SUPPORTED_MODELS, resolve_model
 from src.dictation.postprocess import CLEANUP_LEVEL_LABELS
 from src.features.accent_corrections import ACCENT_LABELS
@@ -241,6 +242,17 @@ def build_settings_panel(window: MainWindow) -> QFrame:
     )
     window.model_combo.setFixedWidth(104)
 
+    window.parakeet_combo = QComboBox()
+    for name in parakeet_models():
+        window.parakeet_combo.addItem(name, name)
+    idx = window.parakeet_combo.findData(window.settings.get("parakeet_model"))
+    if idx >= 0:
+        window.parakeet_combo.setCurrentIndex(idx)
+    window.parakeet_combo.setToolTip(
+        "standard is the downloaded model; any other name is one trained on radiology speech"
+    )
+    window.parakeet_combo.currentIndexChanged.connect(partial(_switch_parakeet, window))
+
     window.language_input = QLineEdit(window.settings.get("language", "en"))
     window.language_input.setFixedWidth(44)
     window.language_input.setToolTip("ISO language code, e.g. 'en'")
@@ -273,6 +285,8 @@ def build_settings_panel(window: MainWindow) -> QFrame:
     window.vad_checkbox.setToolTip("Voice activity detection - filters silence (recommended)")
     window.vad_checkbox.setChecked(window.settings.get("vad_filter", True))
 
+    layout.addWidget(QLabel("Voice model:"))
+    layout.addWidget(window.parakeet_combo)
     layout.addWidget(QLabel("Model:"))
     layout.addWidget(window.model_combo)
     layout.addWidget(QLabel("Language:"))
@@ -284,6 +298,15 @@ def build_settings_panel(window: MainWindow) -> QFrame:
     layout.addWidget(window.vad_checkbox)
     layout.addStretch()
     return frame
+
+
+def _switch_parakeet(window: MainWindow, _index: int) -> None:
+    """Save the chosen voice model and load it now, so the next dictation's
+    first words do not wait on a 2.4 GB load."""
+    window.settings.set("parakeet_model", window.parakeet_combo.currentData())
+    from src.dictation.warmup import rewarm, transcriber_warmer  # noqa: PLC0415
+
+    rewarm([transcriber_warmer(window.model_combo.currentText())])
 
 
 def build_editor_panel(window: MainWindow) -> QWidget:
