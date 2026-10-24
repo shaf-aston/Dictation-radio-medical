@@ -11,22 +11,25 @@ import re
 from typing import List, Pattern
 
 _HALLUCINATION_PATTERNS: List[Pattern] = [
+    # A whole line and nothing else, like the other two: unanchored at the end
+    # it ate the next two words, so "Thank you\nno acute fracture" lost its
+    # "no acute" and became "Fracture". [^\S\n] keeps every match on one line.
     re.compile(
-        r"^(?:thank you(?:\s+(?:for|so))?(?:\s+\w+){0,2})[.!]?\s*",
+        r"^thank[^\S\n]+you(?:[^\S\n]+(?:for|so))?(?:[^\S\n]+\w+){0,2}[.!]?[^\S\n]*$",
         re.IGNORECASE | re.MULTILINE,
     ),
     re.compile(
-        r"\s*(?:see you\s+(?:next\s+time|in\s+the\s+next))[.!]?\s*$",
+        r"[^\S\n]*(?:see[^\S\n]+you[^\S\n]+(?:next[^\S\n]+time|in[^\S\n]+the[^\S\n]+next))[.!]?[^\S\n]*$",
         re.IGNORECASE | re.MULTILINE,
     ),
     re.compile(
-        r"^(?:subtitles?\s+by|translated\s+by)(?:\s+\w+){0,2}[.!]?\s*$",
+        r"^(?:subtitles?[^\S\n]+by|translated[^\S\n]+by)(?:[^\S\n]+\w+){0,2}[.!]?[^\S\n]*$",
         re.IGNORECASE | re.MULTILINE,
     ),
 ]
 
 _REPETITION_LINE = re.compile(
-    r"^(\b\w+\b)(?:\s+\1){4,}\s*[.!?]?\s*$", re.IGNORECASE | re.MULTILINE
+    r"^(\b\w+\b)(?:[^\S\n]+\1){4,}[^\S\n]*[.!?]?[^\S\n]*$", re.IGNORECASE | re.MULTILINE
 )
 
 

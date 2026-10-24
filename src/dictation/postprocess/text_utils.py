@@ -6,7 +6,9 @@ import re
 from typing import List
 
 _RE_HSPACE = re.compile(r"[^\S\n]+")
-_RE_PREPUNCT = re.compile(r"[ \t]+([.,;:!?)])")
+#: A space before punctuation closes up, except before a "?" that leads a
+#: word (a query: "Indication: ?PE") and a "." that leads a digit (".5 cm").
+_RE_PREPUNCT = re.compile(r"[ \t]+([,;:!)]|\.(?!\d)|\?(?!\w))")
 #: A sentence ends at terminal punctuation, or at a line break: what follows
 #: "new line" / "new paragraph" (or a heading's colon) starts a sentence.
 _RE_SENT = re.compile(r"([.!?]+\s+|\n+)")
@@ -19,7 +21,10 @@ _RE_SPACE_IN_BRACKET = re.compile(r"\([ \t]+")
 # its first mark. Single spaced marks are left alone: those are the legitimate
 # output of the spoken-punctuation stage (" : ", " . ") and get joined by
 # _RE_PREPUNCT below.
-_RE_PUNCT_RUN = re.compile(r"([.,;:!?])[.,;:!?\s]*[.,;:!?]")
+#: "?" is not folded: after another mark it is a query marker
+#: ("Clinical history: ?scaphoid fracture"), and folding it turned a question
+#: into a statement.
+_RE_PUNCT_RUN = re.compile(r"([.,;:!?])[.,;:!\s]*[.,;:!]")
 
 
 def normalize_spaces(text: str) -> str:

@@ -58,3 +58,13 @@ def test_a_bad_rule_learned_before_the_guard_no_longer_fires(tmp_path, monkeypat
         assert instance.apply_learned_corrections("medial menscus") == "medial meniscus"
     finally:
         monkeypatch.setattr(al.AdaptiveLearning, "_instance", None)
+
+
+def test_inserting_a_word_is_not_learned_as_replacing_the_next_one(learning):
+    learning.track_edit("the menicus is torn", "the medial menicus is torn")
+    assert learning.export_corrections() == {}
+
+
+def test_a_typed_fix_of_one_mishearing_is_learned(learning):
+    learning.track_edit("the menicus is torn", "the meniscus is torn")
+    assert learning.export_corrections() == {"menicus": "meniscus"}

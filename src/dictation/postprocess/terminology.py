@@ -61,7 +61,9 @@ _RULES: List[_Rule] = [
     (_ci(r"\bhomo[- ]?geneous\b"), "homogeneous"),
     (_ci(r"\bhetero[- ]?geneous\b"), "heterogeneous"),
     (_ci(r"\bbone\s+marrow\s+o[ea]dema\b"), "bone marrow oedema"),
-    (_ci(r"\bmarrow\s+o[ea]dema\b"), "bone marrow oedema"),
+    # Not after "bone": the rule above already wrote that, and matching inside
+    # its output gave "bone bone marrow oedema", one more "bone" per pass.
+    (_ci(r"(?<!bone\s)\bmarrow\s+o[ea]dema\b"), "bone marrow oedema"),
     (_cs(r"\bBMO\b"), "bone marrow oedema"),
     (_ci(r"\bsub[- ]?chondral\b"), "subchondral"),
     (_ci(r"\bsub[- ]?articular\b"), "subarticular"),

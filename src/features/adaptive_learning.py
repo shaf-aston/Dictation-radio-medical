@@ -283,28 +283,16 @@ class AdaptiveLearning:
         """
         if not old_text or not new_text:
             return
-
-        old_words = old_text.lower().split()
-        new_words = new_text.lower().split()
-
-        # Only learn from simple single-word edits
-        if abs(len(old_words) - len(new_words)) > 1:
-            return
-
-        # Find differing words
-        changes_found = 0
-        for old, new in zip(old_words, new_words):
-            if old != new:
-                changes_found += 1
-                if changes_found != 1:
-                    # Multiple changes - too complex to learn
-                    return
-
-                # Learn this single-word correction
-                if self._is_valid_correction(old, new):
-                    self.learn_correction(old, new)
+        # Aligned by a real diff, not position: zipping the two word lists
+        # paired "meniscus" with "medial" when one word was inserted ("the
+        # meniscus" -> "the medial meniscus") and learned that as a fix.
+        edits, fixes = _word_fixes(old_text, new_text)
+        if len(edits) == 1 and len(fixes) == 1:
+            wrong, right = fixes[0]
+            if self._is_valid_correction(wrong, right):
+                self.learn_correction(wrong, right)
         # Record frequency of terms in new text
-        for word in new_words:
+        for word in new_text.lower().split():
             if len(word) >= _MIN_WORD_LENGTH and word.isalpha():
                 self.record_term_usage(word)
 
@@ -489,18 +477,32 @@ def learn_from_session(dictated: str, final: str) -> int:
     "looks like a real correction" test the live tracker uses is learned, so
     the next dictation corrects it on its own. Returns how many were learned.
     """
-    from src.features.edit_tracking import diff_edits
     learning = get_adaptive_learning()
     learned = 0
-    for edit in diff_edits(dictated, final):
-        before, after = edit["before"], edit["after"]
-        if edit["op"] != "replace" or " " in before or " " in after:
-            continue
-        wrong = before.strip(_PUNCTUATION).lower()
-        right = after.strip(_PUNCTUATION).lower()
-        if wrong != right and learning._is_valid_correction(wrong, right):
+    for wrong, right in _word_fixes(dictated, final)[1]:
+        if learning._is_valid_correction(wrong, right):
             learned += learning.learn_correction(wrong, right)
     return learned
+
+
+def _word_fixes(before: str, after: str):
+    """The edits from *before* to *after*, and the one-word-for-one-word ones.
+
+    Returns ``(edits, fixes)``: every diff record, and ``(wrong, right)``
+    lower-case pairs for the replacements of a single word by a single word,
+    punctuation stripped. The one alignment both learning paths use.
+    """
+    from src.features.edit_tracking import diff_edits  # noqa: PLC0415
+    edits = diff_edits(before, after)
+    fixes = []
+    for edit in edits:
+        if edit["op"] != "replace" or " " in edit["before"] or " " in edit["after"]:
+            continue
+        wrong = edit["before"].strip(_PUNCTUATION).lower()
+        right = edit["after"].strip(_PUNCTUATION).lower()
+        if wrong and right and wrong != right:
+            fixes.append((wrong, right))
+    return edits, fixes
 
 
 def get_custom_prompt_suffix() -> str:

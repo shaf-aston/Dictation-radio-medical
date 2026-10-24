@@ -86,7 +86,18 @@ def _nearest_term(word: str, max_distance: int, sym: Optional[Any] = None) -> Op
     suggestions = sym.lookup(
         word, Verbosity.CLOSEST, max_edit_distance=max_distance, transfer_casing=False,
     )
-    return suggestions[0].term if suggestions else None
+    # Only an unambiguous answer is a correction. Every term returned sits at
+    # the same (smallest) distance; when several do, a curated lexicon term
+    # wins only if it is the only one, and otherwise the word is left alone.
+    # Picking the most frequent of a tie turned "cholithiasis" into
+    # "urolithiasis" and "stetosis" into "stenosis": a guess between two
+    # diagnoses is not a spelling fix. The same rule as _four_letter_decision.
+    terms = [s.term for s in suggestions]
+    if len(terms) <= 1:
+        return terms[0] if terms else None
+    lexicon = set(medical_dict.get_correction_targets())
+    curated = [t for t in terms if t in lexicon]
+    return curated[0] if len(curated) == 1 else None
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +397,9 @@ def apply_medical_dictionary_suggestions(text: str) -> str:
 
     def _replace(m: re.Match) -> str:
         w = m[0]
-        if w.upper() in _ACRONYMS:
+        # Written in capitals, a word is an abbreviation: never a typo of a
+        # dictionary word ("TEVAR" -> "TEAR", "CVST" -> "CYST", "STEMI").
+        if w.upper() in _ACRONYMS or (len(w) >= 2 and w.isupper()):
             return w
         wl = w.lower()
         if len(wl) < _MIN_LEN_LEXICON_ONLY:

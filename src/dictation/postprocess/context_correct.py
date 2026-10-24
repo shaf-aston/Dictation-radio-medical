@@ -147,6 +147,11 @@ def _cased(original: str, replacement: str) -> str:
     return replacement
 
 
+#: Punctuation that ends a clause: a cue on the far side of it is about
+#: something else.
+_CLAUSE_BREAK = re.compile(r"[.;:?!\n]")
+
+
 def apply_context_correction(text: str) -> str:
     """Swap confusable real words for the member that best fits the context.
 
@@ -176,6 +181,14 @@ def _apply_context_correction(text: str) -> str:
         return text
     lowers = [m.group(0).lower() for m in tokens]
     ctx = context_model.get_context_model()
+    # Which clause each word is in. A cue only counts inside its own clause:
+    # "Fracture of the right ilium. Bowel loops are unremarkable." must not
+    # read "bowel" as evidence about the hip bone in the sentence before.
+    clause = [0] * len(tokens)
+    for k in range(1, len(tokens)):
+        gap = text[tokens[k - 1].end():tokens[k].start()]
+        clause[k] = clause[k - 1] + (1 if _CLAUSE_BREAK.search(gap) else 0)
+    present = set(lowers)
 
     # (start, end, replacement) edits, applied right-to-left so spans stay valid.
     edits: List[Tuple[int, int, str]] = []
@@ -189,10 +202,22 @@ def _apply_context_correction(text: str) -> str:
         left = lowers[i - 1] if i > 0 else None
         right = lowers[i + 1] if i + 1 < len(lowers) else None
 
-        # Cue words within the ±window, and which members they support.
-        window = set(lowers[max(0, i - _CUE_WINDOW): i]) | set(
-            lowers[i + 1: i + 1 + _CUE_WINDOW]
-        )
+        spoken_prior = priors.get(spoken, 0.0)
+        # Both members of a set in one report, the spoken one a word that can
+        # be right: the radiologist is using both on purpose ("the ilium is
+        # intact; the terminal ileum is thickened"). Neither is a mishearing.
+        if spoken_prior > _NEVER_CORRECT_PRIOR and any(
+            m in present for m in entry["members"] if m != spoken
+        ):
+            continue
+
+        # Cue words within the ±window of the same clause, and which members
+        # they support.
+        window = {
+            lowers[k]
+            for k in range(max(0, i - _CUE_WINDOW), min(len(tokens), i + 1 + _CUE_WINDOW))
+            if k != i and clause[k] == clause[i]
+        }
         cued = {
             m for m in entry["members"]
             if any(c in window for c in entry["cues"].get(m, ()))
@@ -216,7 +241,6 @@ def _apply_context_correction(text: str) -> str:
         if spoken in cued:
             continue  # the spoken word is itself supported: never touch it
 
-        spoken_prior = priors.get(spoken, 0.0)
         candidates = cued - {spoken}
         if not candidates:
             if spoken_prior > _NEVER_CORRECT_PRIOR:
