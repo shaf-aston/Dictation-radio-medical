@@ -165,3 +165,50 @@ def test_the_trailing_pause_never_moves_a_cut_that_would_have_happened_anyway():
 def test_a_trailing_pause_is_refused_when_the_knob_is_not_positive():
     with pytest.raises(ValueError):
         ChunkPolicy(trailing_silence_sec=0.0)
+
+
+def test_a_pause_is_measured_between_speech_not_between_chunks():
+    sr = 16000
+    ledger = ChunkLedger(pause_threshold=2.5, sr=sr)
+    # Chunks tile the audio; the 4 s silence sits inside the second chunk.
+    ledger.commit(Chunk(0, sr * 8, closed=True), "no acute fracture", 0.9, speech=(0, sr * 4))
+    ledger.commit(Chunk(sr * 8, sr * 12, closed=True), "the spine is intact", 0.9,
+                  speech=(sr * 8, sr * 12))
+    assert ledger.committed_text == "no acute fracture.\nthe spine is intact"
+
+
+def test_a_sound_with_no_words_is_not_a_pause():
+    sr = 16000
+    ledger = ChunkLedger(pause_threshold=2.5, sr=sr)
+    ledger.commit(Chunk(0, sr * 3, closed=True), "the lungs", 0.9, speech=(0, int(sr * 2.3)))
+    # A 3-second cough between two 0.7 s pauses, decoded as nothing.
+    ledger.commit(Chunk(sr * 3, sr * 6, closed=True), "", None, speech=(sr * 3, int(sr * 5.7)))
+    ledger.commit(Chunk(sr * 6, sr * 9, closed=True), "are clear", 0.9, speech=(int(sr * 6.4), sr * 9))
+    assert ledger.committed_text == "the lungs are clear"
+
+
+def test_touching_speech_marks_are_a_cut_point():
+    sr = 16000
+    # Silero splits a short pause down the middle: the marks meet exactly.
+    marks = [SpeechMark(0, sr * 3), SpeechMark(sr * 3, sr * 6), SpeechMark(sr * 6, sr * 9)]
+    chunks = cut_chunks(sr * 9, marks, ChunkPolicy(min_sec=2.0, soft_max_sec=5.0, force_cut_sec=20.0))
+    assert [c.end_sample for c in chunks if c.closed][0] == sr * 3
+
+
+def test_a_force_cut_is_marked_and_both_sides_are_polished():
+    sr = 16000
+    chunks = cut_chunks(sr * 25, [SpeechMark(0, sr * 25)], ChunkPolicy(min_sec=2, soft_max_sec=5, force_cut_sec=20))
+    assert chunks[0].forced and chunks[0].end_sample == sr * 20
+    ledger = ChunkLedger(sr=sr)
+    ledger.commit(Chunk(0, sr * 5, closed=True), "the lesion", 0.99)
+    ledger.commit(Chunk(sr * 5, sr * 20, closed=True, forced=True), "in the com", 0.99)
+    ledger.commit(Chunk(sr * 20, sr * 25, closed=True), "pression", 0.99)
+    assert ledger.forced_cut_indices() == [1, 2]
+
+
+def test_a_polish_never_empties_a_chunk_that_had_words():
+    ledger = ChunkLedger(sr=16000)
+    ledger.commit(Chunk(0, 16000, closed=True), "small effusion", 0.4)
+    assert ledger.replace(0, "", None) is False
+    assert ledger.committed_text == "small effusion"
+    assert ledger.replace(0, "small effusions", 0.9) is True

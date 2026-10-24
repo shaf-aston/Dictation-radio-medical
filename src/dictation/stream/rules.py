@@ -10,7 +10,7 @@ made a front-end look like core.
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -102,6 +102,18 @@ def has_speech(marks: Sequence[SpeechMark], start: int, end: int) -> bool:
     redundant, and the VAD is the one the segmenter already trusts to cut on.
     """
     return any(m.start_sample < end and m.end_sample > start for m in marks)
+
+
+def speech_span(marks: Sequence[SpeechMark], start: int, end: int) -> Optional[Tuple[int, int]]:
+    """Where the VAD heard speech inside ``[start, end)``, or None.
+
+    What a pause is measured from: chunks tile the audio with no gaps, so the
+    silence between two chunks' speech is invisible in their boundaries.
+    """
+    inside = [m for m in marks if m.start_sample < end and m.end_sample > start]
+    if not inside:
+        return None
+    return max(start, inside[0].start_sample), min(end, inside[-1].end_sample)
 
 
 def should_skip_preview(preview_cost_sec: float, max_lag_sec: float) -> bool:

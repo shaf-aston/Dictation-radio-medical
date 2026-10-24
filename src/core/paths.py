@@ -362,6 +362,9 @@ def settings_file() -> Path:
 # Report file naming
 # ---------------------------------------------------------------------------
 
+_MAX_ID_CHARS = 64
+
+
 def report_filename(
     patient_info: dict, ext: str, prefix: str = "", fallback_id: str = "report"
 ) -> str:
@@ -370,12 +373,15 @@ def report_filename(
     The desktop save dialog, the web download header, and autosave each built
     this name themselves and drifted apart. One builder, one naming scheme.
 
-    The patient ID is sanitised: it lands in a filename (and, on the web, in a
-    ``Content-Disposition`` header), so path separators, quotes, and control
-    characters must not survive it.
+    The patient ID lands in a filename and, on the web, in a
+    ``Content-Disposition`` header, which is Latin-1. So only ASCII letters,
+    digits, ``-`` and ``_`` survive, and at most 64 of them: "李12345" made the
+    web export fail with a 500, and a 250-character ID made autosave fail
+    silently (the name was too long for the file system).
     """
     raw = str(patient_info.get("id") or "").strip()
-    pid = "".join(ch if (ch.isalnum() or ch in "-_") else "_" for ch in raw).strip("_")
+    pid = "".join(ch if (ch.isascii() and (ch.isalnum() or ch in "-_")) else "_" for ch in raw)
+    pid = "_".join(part for part in pid.split("_") if part)[:_MAX_ID_CHARS].strip("_")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"{prefix}{pid or fallback_id}_{timestamp}{ext}"
 

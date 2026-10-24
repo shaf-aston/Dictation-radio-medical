@@ -30,7 +30,7 @@ import threading
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-from src.dictation.asr.engines.parakeet_engine import merge_pieces
+from src.dictation.asr.engines.parakeet_engine import MIN_SAMPLES, merge_pieces
 from src.dictation.asr.types import (
     LOCAL_DECODE_COST,
     AsrResult,
@@ -123,7 +123,7 @@ class ParakeetHotwordEngine:
                 samples = samples.mean(axis=1)
         else:
             samples, rate = np.asarray(audio, dtype=np.float32), SAMPLE_RATE
-        if samples.size == 0:
+        if samples.size < MIN_SAMPLES:
             return AsrResult(text="")
 
         self.preload()

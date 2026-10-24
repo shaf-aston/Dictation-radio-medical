@@ -167,3 +167,63 @@ def test_unreadable_audio_gives_no_clip(tmp_path):
 @pytest.mark.parametrize("date", ["January 2, 2024", "September 14 2023", "Dec 1, 2022", "jul 4, 2021"])
 def test_month_name_dates_are_scrubbed(date):
     assert date not in DeIdentifier(PATIENT).deidentify_text(f"Compared with {date}.")
+
+
+# -- every form an identifier is written in -----------------------------------
+
+VARIANT_PATIENT = {"name": "Jane Doe", "id": "MRN12345678", "dob": "01/02/1960",
+                   "accession": "ACC2024-5566"}
+
+
+@pytest.mark.parametrize("text, leak", [
+    ("Doe, Jane, 64F, left knee.", "Doe"),
+    ("Mrs Doe reports pain.", "Doe"),
+    ("Jane was seen today.", "Jane"),
+    ("Jane  Doe left knee.", "Jane"),
+    ("Jane\nDoe left knee.", "Doe"),
+    ("MRN 1234 5678 reviewed.", "5678"),
+    ("mrn12345678 reviewed.", "12345678"),
+    ("MRN-1234-5678 reviewed.", "5678"),
+    ("NHS 943 476 5919.", "5919"),
+    ("DOB 1960-02-01.", "1960"),
+    ("Born 1 Feb 1960.", "1960"),
+    ("Born February 1st, 1960.", "1960"),
+    ("Born 01.02.1960.", "1960"),
+    ("Accession ACC2024-5566.", "5566"),
+])
+def test_every_form_of_an_identifier_is_scrubbed_and_checked(text, leak):
+    deid = DeIdentifier(VARIANT_PATIENT)
+    safe = deid.deidentify_text(text)
+    assert leak not in safe
+    assert deid.validate_clean(safe)
+
+
+@pytest.mark.parametrize("text", [
+    "Doe, Jane.", "Mrs DOE.", "MRN 1234 5678.", "mrn-12345678.", "acc 2024 5566",
+])
+def test_the_check_catches_the_patients_own_identifiers_in_any_form(text):
+    # Independent of the scrub: it must see what a weaker scrub would miss.
+    with pytest.raises(PrivacyError):
+        DeIdentifier(VARIANT_PATIENT).validate_clean(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Anular tear at L4-L5.",            # patient "Ann": a name part is a whole word
+    "Measures 12 mm, previously 15 20 mm.",
+    "Grade 2 of 4. T2 hyperintense.",
+])
+def test_clinical_text_is_left_alone(text):
+    assert DeIdentifier({"name": "Ann Lee"}).deidentify_text(text) == text
+
+
+def test_audio_is_silenced_wherever_the_text_would_be_scrubbed(tmp_path):
+    import numpy as np
+    import soundfile as sf
+    path = tmp_path / "in.wav"
+    sf.write(str(path), (0.5 * np.ones(3 * SR)).astype("float32"), SR)
+    segments = [{"start": 0.0, "end": 0.4, "text": "accession RX7654321"},
+                {"start": 2.5, "end": 2.9, "text": "no effusion"}]
+    out = DeIdentifier({"name": "Jane Doe"}).deidentify_audio(str(path), segments, tmp_path / "o", "s")
+    audio, _ = sf.read(out, dtype="float32")
+    assert np.all(audio[: int(0.9 * SR)] == 0.0)        # the spoken accession number
+    assert np.abs(audio[int(1.5 * SR):]).max() > 0.4     # the clinical words

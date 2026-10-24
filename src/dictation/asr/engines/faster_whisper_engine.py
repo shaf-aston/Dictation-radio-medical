@@ -422,7 +422,7 @@ class FasterWhisperEngine:
 
     def capabilities(self) -> EngineCaps:
         return EngineCaps(
-            word_confidence=True, hotwords=True,
+            word_confidence=True, hotwords=True, beam_sensitive=True,
             cost=_decode_cost(self._transcriber.model_path or self._transcriber.model_size),
         )
 

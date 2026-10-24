@@ -51,6 +51,24 @@ def clear_api_key() -> None:
     clear_secret(_KEYRING_KEY)
 
 
+def _origin(url: str) -> tuple:
+    from urllib.parse import urlsplit
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    return scheme, (parts.hostname or "").lower(), parts.port or {"https": 443, "http": 80}.get(scheme)
+
+
+def may_send_key(url: str, base_url: str) -> bool:
+    """Would sending the API key to *url* keep it with the API that issued it?
+
+    Only to the API's own origin (scheme, host and port), and only over https:
+    a different host is someone else's server, and plain http hands the key to
+    anyone on the network path.
+    """
+    origin = _origin(url)
+    return origin[0] == "https" and origin == _origin(base_url)
+
+
 class LightningAIClient:
     """Minimal REST wrapper for Lightning AI training jobs."""
 
@@ -178,12 +196,8 @@ class LightningAIClient:
         # Bounded read timeout: a stalled download must not hang the poll thread
         # forever. The connect timeout is short; reads get a generous 5 min/chunk.
         timeout = httpx.Timeout(_TIMEOUT, read=300.0)
-        # Only attach the Lightning auth header when the artifact is served from
-        # the API host. Lightning typically returns a pre-signed CDN/S3 URL on a
-        # different host; sending the Bearer key there would leak it off-device.
-        from urllib.parse import urlparse
-        same_host = urlparse(artifact_url).netloc == urlparse(self._base_url).netloc
-        headers = self._headers() if same_host else {}
+        # Lightning usually returns a pre-signed CDN/S3 URL, which needs no key.
+        headers = self._headers() if may_send_key(artifact_url, self._base_url) else {}
         try:
             with httpx.Client(timeout=timeout) as client:
                 with client.stream("GET", artifact_url, headers=headers) as resp:

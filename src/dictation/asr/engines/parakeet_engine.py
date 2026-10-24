@@ -167,12 +167,17 @@ class ParakeetEngine:
         ).with_timestamps()
 
 
+#: The encoder's smallest input: one output frame is 8 subsampled 10 ms mel
+#: frames. Shorter audio crashes both runtimes (onnx-asr IndexError, sherpa
+#: ConvInteger) instead of decoding to nothing, which the port promises.
+MIN_SAMPLES = int(0.08 * SAMPLE_RATE)
+
+
 def _as_input(audio: Any) -> Any:
     """Normalise the port's audio argument into something onnx-asr accepts.
 
-    Returns ``None`` for empty audio so the caller can skip the model
-    entirely: a zero-length waveform crashes the log-mel preprocessor rather
-    than transcribing to nothing.
+    Returns ``None`` for audio shorter than :data:`MIN_SAMPLES` so the caller
+    skips the model entirely.
     """
     if isinstance(audio, (str, Path)):
         return str(audio)
@@ -180,7 +185,7 @@ def _as_input(audio: Any) -> Any:
     import numpy as np  # noqa: PLC0415 - kept out of module import for symmetry
 
     samples = np.asarray(audio)
-    if samples.size == 0:
+    if samples.size < MIN_SAMPLES:
         return None
     if samples.dtype != np.float32:
         samples = samples.astype(np.float32)

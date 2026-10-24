@@ -95,3 +95,10 @@ def test_pieces_without_probabilities_give_words_without_confidence():
 
 def test_the_hotword_engine_claims_no_word_confidence():
     assert ParakeetHotwordEngine().capabilities().word_confidence is False
+
+
+def test_audio_shorter_than_the_encoder_input_decodes_to_nothing():
+    import numpy as np
+    from src.dictation.asr.engines.parakeet_engine import MIN_SAMPLES, _as_input
+    assert _as_input(np.zeros(MIN_SAMPLES - 1, np.float32)) is None
+    assert _as_input(np.zeros(MIN_SAMPLES, np.float32)) is not None

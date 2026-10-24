@@ -36,6 +36,7 @@ from src.dictation.stream.rules import (
     has_speech,
     level_db,
     should_skip_preview,
+    speech_span,
 )
 from src.dictation.stream.segmenter import Chunk, ChunkPolicy
 from src.dictation.stream.tail import LocalAgreement2
@@ -468,8 +469,8 @@ class LiveSession:
         with self._bg_lock:
             results, self._bg_results = self._bg_results, []
         for index, result in results:
-            self._ledger.replace(index, result.text, mean_confidence(result))
-            self._note_uncertain(result, index)
+            if self._ledger.replace(index, result.text, mean_confidence(result)):
+                self._note_uncertain(result, index)
             self._bg_applied.add(index)
         if results:
             event_log.emit("live", "background polish applied", chunks=len(results))
@@ -521,7 +522,11 @@ class LiveSession:
             )
             if result is None:
                 break  # retry this (and any later) chunk next cycle
-            self._ledger.commit(chunk, result.text, mean_confidence(result))
+            span = speech_span(marks, chunk.start_sample - tail_start, stop)
+            self._ledger.commit(
+                chunk, result.text, mean_confidence(result),
+                speech=(span[0] + tail_start, span[1] + tail_start) if span else None,
+            )
             self._note_uncertain(result)
             self._decoded(result, chunk.start_sample)
             self._chunks_decoded += 1
@@ -564,7 +569,11 @@ class LiveSession:
         cost = time.time() - started
         self._preview_cost = cost if self._preview_cost <= 0 else 0.6 * self._preview_cost + 0.4 * cost
         self._preview_earliest = time.time() + cost
-        return self._agreement.update(result.text.strip() if result else "")
+        if result is None:
+            # A failed decode says nothing about the audio: keep what is shown.
+            # Read as "no speech" it cleared the words already on screen.
+            return self._agreement.stable()
+        return self._agreement.update(result.text.strip())
 
     # -- after Stop -----------------------------------------------------
 
@@ -619,8 +628,10 @@ class LiveSession:
             self.close()
             self._last_stable = ""
         end = self._len
-        tail = self._buf[self._ledger.open_start_sample:end]
-        if not len(tail) or not detect_speech(tail):
+        start = self._ledger.open_start_sample
+        tail = self._buf[start:end]
+        marks = detect_speech(tail) if len(tail) else []
+        if not marks:
             return
         result = self._decode(
             self.live_engine, tail, self.live_beam_size,
@@ -628,8 +639,12 @@ class LiveSession:
         )
         if result is None or not (text := result.text.strip()):
             return
-        closing = Chunk(self._ledger.open_start_sample, end, closed=True)
-        self._ledger.commit(closing, text, mean_confidence(result))
+        closing = Chunk(start, end, closed=True)
+        span = speech_span(marks, 0, len(tail))
+        self._ledger.commit(
+            closing, text, mean_confidence(result),
+            speech=(span[0] + start, span[1] + start) if span else None,
+        )
         self._note_uncertain(result)
         self._decoded(result, closing.start_sample)
         self._chunks_decoded += 1
@@ -657,12 +672,11 @@ class LiveSession:
                 self._decoded(result, start)
 
         # The polish exists to hand weak chunks to a BETTER decode. When the
-        # accurate engine is the same cloud model as the live one (Deepgram
-        # answering both, the default), it would send the same audio to the
-        # same model and get the same words back, for a billed call and a
-        # slower "final". Then only audio never decoded at all is worth a call.
-        # A local model is still re-run at the wider final beam, which is a
-        # better decode even on the same weights, so it is not skipped.
+        # accurate engine is the live one and the beam does not change its
+        # answer (a cloud model, greedy or fixed-beam Parakeet), it would decode
+        # the same audio into the same words. Then only audio never decoded at
+        # all is worth a call, plus the chunks either side of a forced cut,
+        # which decoded together are different audio from either alone.
         same_model = (
             engine_identity(self.final_engine) == engine_identity(self.live_engine)
             and _ignores_beam(self.final_engine)
@@ -671,7 +685,10 @@ class LiveSession:
             event_log.emit("live", "polish skipped, final engine is the live engine")
         # The tail closed at Stop was decoded fast on purpose; a confident fast
         # decode is still a fast decode, so it is re-done here either way.
-        forced = () if self._forced_polish_index is None else (self._forced_polish_index,)
+        # Across every force cut, whatever the engines: decoded together the
+        # two sides are different audio from either alone.
+        cut_pairs = tuple(self._ledger.forced_cut_indices())
+        stop_tail = () if self._forced_polish_index is None else (self._forced_polish_index,)
         polished = self._chunks_polished = polish(
             self._ledger, self._audio(),
             lambda clip, stage: self._decode(
@@ -680,7 +697,7 @@ class LiveSession:
                 vad_filter=self.polish_vad_filter,
             ),
             ceiling=float("-inf") if same_model else self.polish_confidence_ceiling,
-            force=() if same_model else forced,
+            force=cut_pairs if same_model else tuple(sorted({*cut_pairs, *stop_tail})),
             skip=self._bg_applied,
             on_progress=on_progress or (lambda _msg: None),
             on_decoded=decoded,
@@ -762,8 +779,14 @@ class LiveSession:
 
 
 def _ignores_beam(engine: AsrEngine) -> bool:
-    """A cloud engine decodes the same way whatever beam it is asked for."""
+    """True when the beam asked for does not change what this engine decodes.
+
+    Read from what the engine declares (EngineCaps.beam_sensitive), not from
+    whether it is a cloud engine: greedy Parakeet and the fixed-beam hotword
+    decoder ignore it too, and re-running them on the same weights only
+    repeated their answer.
+    """
     try:
-        return bool(engine.capabilities().network)
+        return not engine.capabilities().beam_sensitive
     except Exception:
         return False

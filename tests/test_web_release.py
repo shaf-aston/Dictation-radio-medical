@@ -122,3 +122,11 @@ def test_another_sites_page_cannot_open_the_dictation_socket(client):
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("ws://127.0.0.1:8005/ws/dictate", headers={"origin": "https://evil.example"}) as ws:
             ws.receive_json()
+
+
+@pytest.mark.parametrize("pid", ["李12345", "x" * 250, "../../etc/passwd", 'a"b\r\nc'])
+def test_any_patient_id_exports(client, pid):
+    response = client.post("/api/report/save-txt", json={"text": CLEAN, "patient": {"id": pid}})
+    assert response.status_code == 200
+    name = response.headers["content-disposition"].split('filename="')[1].rstrip('"')
+    assert name.isascii() and "/" not in name and len(name) < 100

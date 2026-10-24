@@ -72,6 +72,9 @@ class Chunk:
     start_sample: int
     end_sample: int
     closed: bool
+    #: Ended by the force cut, not at a silence: the words either side of the
+    #: cut may be split mid-word, so the polish always re-decodes across it.
+    forced: bool = False
 
     @property
     def length_samples(self) -> int:
@@ -117,10 +120,15 @@ def cut_chunks(
     soft_s = int(policy.soft_max_sec * sr)
     force_s = int(policy.force_cut_sec * sr)
 
+    # Every boundary between two VAD marks is a confirmed silence. Marks can
+    # touch: Silero splits a short gap down the middle (any pause under twice
+    # its padding), and that midpoint is the safest cut there is. Requiring a
+    # gap ("<") ignored every pause under ~400 ms, which in fluent dictation
+    # left nothing to cut at but the forced cut mid-word.
     cut_candidates = [
         marks[i].end_sample
         for i in range(len(marks) - 1)
-        if marks[i].end_sample < marks[i + 1].start_sample
+        if marks[i].end_sample <= marks[i + 1].start_sample
     ]
 
     # The last mark has no successor to prove the silence after it is real, so
@@ -147,6 +155,7 @@ def cut_chunks(
         in_range = [c for c in cut_candidates if min_pt <= c < force_pt]
         within_soft = [c for c in in_range if c <= soft_pt]
 
+        forced = False
         if within_soft:
             cut = within_soft[-1]
         elif in_range:
@@ -161,10 +170,11 @@ def cut_chunks(
             # leaves a silent tail that gets force-cut into a silent chunk and
             # decoded for nothing.
             cut = force_pt
+            forced = True
         else:
             break
 
-        chunks.append(Chunk(chunk_start, cut, closed=True))
+        chunks.append(Chunk(chunk_start, cut, closed=True, forced=forced))
         chunk_start = cut
         cut_candidates = [c for c in cut_candidates if c > chunk_start]
         if trailing_cut is not None and trailing_cut <= chunk_start:

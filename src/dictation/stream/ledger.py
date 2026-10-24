@@ -14,8 +14,8 @@ cycle, which this class is responsible for slicing out.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import List, Optional
+from dataclasses import dataclass, replace
+from typing import List, Optional, Tuple
 
 from src.dictation.stream.segmenter import Chunk, ChunkPolicy, cut_chunks
 from src.dictation.stream.vad import SAMPLE_RATE, SpeechMark
@@ -30,6 +30,15 @@ class CommittedChunk:
     end_sample: int
     text: str
     mean_confidence: Optional[float]
+    #: Where the VAD heard speech in it (absolute samples); the chunk's own
+    #: bounds when unknown. Pauses are measured between these.
+    speech: Optional[Tuple[int, int]] = None
+    #: This chunk ended at a force cut, not at a silence.
+    forced_end: bool = False
+
+    @property
+    def speech_bounds(self) -> Tuple[int, int]:
+        return self.speech or (self.start_sample, self.end_sample)
 
 
 #: Characters that already end a sentence.
@@ -109,20 +118,31 @@ class ChunkLedger:
 
     @property
     def committed_text(self) -> str:
+        """The committed chunks' text, a long pause between two of them read
+        as the end of a sentence and a paragraph break.
+
+        The pause is the silence between one chunk's last speech and the next
+        one's first. Chunks tile the audio with no gaps, and cuts fall where
+        speech ends, so measured between chunk boundaries every pause was 0
+        (and a chunk with no text in the middle of a sentence read as one).
+        """
         pieces: List[str] = []
         prev_end: Optional[int] = None
         for c in self._committed:
             if not c.text:
+                # Heard but not words (a cough, a breath): not a pause either.
+                if c.speech is not None and prev_end is not None:
+                    prev_end = max(prev_end, c.speech[1])
                 continue
+            start, end = c.speech_bounds
             if prev_end is not None:
-                gap_sec = (c.start_sample - prev_end) / self._sr
-                if gap_sec >= self._pause_threshold:
+                if (start - prev_end) / self._sr >= self._pause_threshold:
                     pieces[-1] = close_sentence(pieces[-1])
                     pieces.append("\n")
                 else:
                     pieces.append(" ")
             pieces.append(c.text)
-            prev_end = c.end_sample
+            prev_end = end
         return "".join(pieces)
 
     def pending_cuts(self, total_samples: int, tail_marks: List[SpeechMark]) -> List[Chunk]:
@@ -140,11 +160,14 @@ class ChunkLedger:
         base = self._open_start
         tail_len = max(0, total_samples - base)
         return [
-            Chunk(base + c.start_sample, base + c.end_sample, c.closed)
+            Chunk(base + c.start_sample, base + c.end_sample, c.closed, c.forced)
             for c in cut_chunks(tail_len, tail_marks, self.policy)
         ]
 
-    def commit(self, chunk: Chunk, text: str, mean_confidence: Optional[float]) -> None:
+    def commit(
+        self, chunk: Chunk, text: str, mean_confidence: Optional[float],
+        speech: Optional[Tuple[int, int]] = None,
+    ) -> None:
         """Freeze one chunk. *chunk* offsets are absolute (as returned by
         :meth:`pending_cuts`); it must start exactly at the current open
         frontier and must be closed: committing chunks out of order or
@@ -156,10 +179,26 @@ class ChunkLedger:
                 f"Chunk starts at {chunk.start_sample}, expected the open "
                 f"frontier {self._open_start}: commits must be in order"
             )
-        self._committed.append(
-            CommittedChunk(chunk.start_sample, chunk.end_sample, text.strip(), mean_confidence)
-        )
+        self._committed.append(CommittedChunk(
+            chunk.start_sample, chunk.end_sample, text.strip(), mean_confidence,
+            speech=speech, forced_end=chunk.forced,
+        ))
         self._open_start = chunk.end_sample
+
+    def forced_cut_indices(self) -> List[int]:
+        """Both chunks on each side of every force cut.
+
+        A boundary not at a silence is never trusted: on the real engine the
+        words at a 20-second force cut came out wrong in 5 of 12 clips
+        ("impression" -> "compression") while both halves read as confident.
+        """
+        out = set()
+        for i, c in enumerate(self._committed):
+            if c.forced_end:
+                out.add(i)
+                if i + 1 < len(self._committed):
+                    out.add(i + 1)
+        return sorted(out)
 
     def low_confidence_indices(self, ceiling: float) -> List[int]:
         """Indices of committed chunks worth a confidence-targeted re-decode.
@@ -174,9 +213,17 @@ class ChunkLedger:
             if c.mean_confidence is not None and c.mean_confidence < ceiling
         ]
 
-    def replace(self, index: int, text: str, mean_confidence: Optional[float]) -> None:
-        """Overwrite one committed chunk's text: the polish pass only."""
+    def replace(self, index: int, text: str, mean_confidence: Optional[float]) -> bool:
+        """Overwrite one committed chunk's text: the polish pass only.
+
+        Refused (False) when it would empty a chunk that had text: an empty
+        re-decode of audio already heard as speech is a failed decode, not
+        silence. Applied, it deleted the words from the report, and with the
+        background polish it took words back while the radiologist was still
+        dictating.
+        """
         old = self._committed[index]
-        self._committed[index] = CommittedChunk(
-            old.start_sample, old.end_sample, text.strip(), mean_confidence
-        )
+        if old.text and not text.strip():
+            return False
+        self._committed[index] = replace(old, text=text.strip(), mean_confidence=mean_confidence)
+        return True

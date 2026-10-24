@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
@@ -34,20 +35,25 @@ except ImportError:
         "Run: pip install python-docx"
     )
 
-# Section headers for Word export formatting (avoid generic words that could match body text)
+# Section names a report line can be (with or without a trailing colon).
 _SECTION_HEADERS = {
-    "TECHNIQUE", "FINDINGS", "IMPRESSION", "CONCLUSION",
-    "CLINICAL INDICATION", "CLINICAL DETAILS", "COMPARISON",
-    "TECHNIQUE:", "FINDINGS:", "IMPRESSION:", "CONCLUSION:",
-    "CLINICAL INDICATION:", "CLINICAL DETAILS:", "COMPARISON:",
-    # RSNA-style section headers
-    "EXAMINATION", "EXAMINATION:",
-    # RCR-style (Royal College of Radiologists) section headers
-    "CLINICAL HISTORY", "CLINICAL HISTORY:", "OPINION", "OPINION:",
-    # ECR/ESR-style (European structured-reporting) section headers
-    "CLINICAL INFORMATION", "CLINICAL INFORMATION:",
-    "RECOMMENDATION", "RECOMMENDATION:", "RECOMMENDATIONS", "RECOMMENDATIONS:",
+    "TECHNIQUE", "FINDINGS", "IMPRESSION", "CONCLUSION", "COMPARISON",
+    "CLINICAL INDICATION", "CLINICAL DETAILS", "EXAMINATION",           # RSNA
+    "CLINICAL HISTORY", "OPINION",                                      # RCR
+    "CLINICAL INFORMATION", "RECOMMENDATION", "RECOMMENDATIONS",        # ECR/ESR
 }
+_LEADING_HEADER = re.compile(
+    rf"^({'|'.join(sorted(_SECTION_HEADERS, key=len, reverse=True))})\s*:\s*(.*)$", re.IGNORECASE
+)
+#: Characters XML 1.0 cannot hold (every control character but tab and line
+#: breaks). One stray one, a barcode scanner's ESC in the ID box, made the
+#: Word export raise while the text export of the same report worked.
+_NOT_XML = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+
+
+def _clean(value: object) -> str:
+    """Every string either export writes, report or header, goes through here."""
+    return _NOT_XML.sub("", str(value or ""))
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +88,7 @@ def save_report_txt(path: str, text: str, patient_info: dict) -> None:
 
 def format_plain_text_report(text: str, patient_info: dict) -> str:
     """Return the formatted plain-text report body."""
+    text = _clean(text)
     now = datetime.now().strftime("%d/%m/%Y %H:%M")
     rule = "=" * 64
     label_width = max(len(label) for _, label in PATIENT_FIELDS) + 2
@@ -89,7 +96,7 @@ def format_plain_text_report(text: str, patient_info: dict) -> str:
         "RADIOLOGY REPORT",
         rule,
         *(
-            f"{label + ':':<{label_width}}{patient_info.get(key, '')}"
+            f"{label + ':':<{label_width}}{_clean(patient_info.get(key))}"
             for key, label in PATIENT_FIELDS
         ),
         rule,
@@ -130,33 +137,36 @@ def _build_word_document(text: str, patient_info: dict):
     for index, (key, label) in enumerate(PATIENT_FIELDS):
         row, col = divmod(index, 2)
         _tbl_cell(tbl, row, col * 2, f"{label}:", bold=True)
-        _tbl_cell(tbl, row, col * 2 + 1, patient_info.get(key, ""))
+        _tbl_cell(tbl, row, col * 2 + 1, _clean(patient_info.get(key)))
 
     doc.add_paragraph()  # spacer
 
     # ---- Report body ----
-    for line in text.split("\n"):
-        stripped = line.strip()
-        if not stripped:
+    # A heading is a whole line that names a section. "FINDINGS: normal" is a
+    # paragraph led by its label; "Findings are within normal limits" is just
+    # a paragraph (matching on how a line began turned it into a heading).
+    for line in _clean(text).split("\n"):
+        line = line.rstrip()
+        if not line.strip():
             doc.add_paragraph()
             continue
-
-        upper = stripped.upper()
-        if (
-            upper in _SECTION_HEADERS
-            or (
-                stripped.endswith(":")
-                and stripped.upper() == stripped
-                and len(stripped.split()) <= 5
-            )
-            or any(upper.startswith(h) for h in _SECTION_HEADERS)
+        name = line.strip().rstrip(":").strip().upper()
+        if name in _SECTION_HEADERS or (
+            line.strip().endswith(":") and line.strip().upper() == line.strip()
+            and len(line.split()) <= 5
         ):
-            h = doc.add_heading(stripped, level=2)
+            h = doc.add_heading(line.strip(), level=2)
             h.runs[0].font.color.rgb = RGBColor(0x1F, 0x49, 0x7D)
+            continue
+        p = doc.add_paragraph()
+        led = _LEADING_HEADER.match(line.strip())
+        if led:
+            p.add_run(f"{led.group(1)}: ").bold = True
+            p.add_run(led.group(2))
         else:
-            p = doc.add_paragraph(stripped)
-            for run in p.runs:
-                run.font.size = Pt(11)
+            p.add_run(line)  # leading indentation kept
+        for run in p.runs:
+            run.font.size = Pt(11)
 
     # ---- Signature line ----
     doc.add_paragraph()
