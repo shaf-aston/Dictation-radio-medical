@@ -52,7 +52,9 @@ _WORDS: Dict[str, str] = {
 }
 
 #: Words where "ize" is not the -ize suffix, so the rule must not touch them.
-_NOT_A_SUFFIX = {"size", "sizes", "sized", "seize", "seized", "prize", "capsize", "baize"}
+#: Short ones (size, seize, prize, baize) never match: the rule needs three
+#: letters before the "i".
+_NOT_A_SUFFIX = {"capsize", "capsizes", "capsized", "capsizing"}
 
 #: British -> US patterns, for recognising a British spelling as a real word.
 _UK_TO_US = (

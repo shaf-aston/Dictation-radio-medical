@@ -102,3 +102,63 @@ def test_what_was_scrubbed_is_put_back_after_the_round_trip():
 def test_a_token_dropped_doubled_or_invented_refuses_the_cleanup(returned):
     from src.medical.deid import restore
     assert restore(returned, {"[PHI-1]": "3/4/2024"}) is None
+
+
+@pytest.mark.parametrize(
+    "text, gone",
+    [
+        ("Compared with the study of March 4, 2024.", "March 4, 2024"),
+        ("Accession RX7654321 attached.", "RX7654321"),  # not the patient's own ID
+        ("Seen by JD.", "JD"),  # two characters is long enough to be an identifier
+    ],
+)
+def test_generic_identifiers_are_scrubbed(text, gone):
+    assert gone not in DeIdentifier({**PATIENT, "name": "JD"}).deidentify_text(text)
+
+
+def test_a_one_letter_value_is_not_treated_as_an_identifier():
+    # Otherwise every "J" in a report would be redacted.
+    assert DeIdentifier({"name": "J"}).deidentify_text("J-shaped tear.") == "J-shaped tear."
+
+
+# -- audio: the training clip silences what was said around a name -----------
+
+SR = 16000
+
+
+def _tone(tmp_path, channels=1):
+    import numpy as np
+    import soundfile as sf
+    tone = (0.5 * np.sin(np.linspace(0, 2 * np.pi * 440 * 3, 3 * SR))).astype("float32")
+    audio = tone if channels == 1 else np.stack([tone, np.zeros_like(tone)], axis=1)
+    path = tmp_path / "in.wav"
+    sf.write(str(path), audio, SR)
+    return str(path)
+
+
+def _scrub(tmp_path, wav):
+    import soundfile as sf
+    segments = [
+        {"start": 1.0, "end": 1.5, "text": "Jane Doe was seen"},
+        {"start": 2.6, "end": 2.8, "text": "no effusion"},
+    ]
+    out = DeIdentifier(PATIENT).deidentify_audio(wav, segments, tmp_path / "a" / "b", "s1")
+    assert out is not None and "s1" in out
+    audio, _ = sf.read(out, dtype="float32")
+    return audio
+
+
+@pytest.mark.parametrize("channels", [1, 2])
+def test_audio_around_a_spoken_name_is_silenced_and_nothing_else(tmp_path, channels):
+    import numpy as np
+    audio = _scrub(tmp_path, _tone(tmp_path, channels))
+    assert audio.ndim == 1
+    # The flagged segment plus half a second either side is silent...
+    assert np.all(audio[int(0.5 * SR):int(2.0 * SR)] == 0.0)
+    # ...and the speech outside it, including the clean segment, is untouched.
+    assert np.abs(audio[:int(0.45 * SR)]).max() > 0.4
+    assert np.abs(audio[int(2.05 * SR):]).max() > 0.4
+
+
+def test_unreadable_audio_gives_no_clip(tmp_path):
+    assert DeIdentifier(PATIENT).deidentify_audio(str(tmp_path / "missing.wav"), [], tmp_path, "s1") is None
