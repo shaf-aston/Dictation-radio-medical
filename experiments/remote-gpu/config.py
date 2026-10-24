@@ -1,15 +1,16 @@
-"""Paths and the one place this experiment reads secrets from .env."""
+"""Paths, settings.json, and the one place this experiment reads .env."""
+import json
 import os
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 MODELS = HERE / "models"
-KAGGLE_USER = "shafeinhashmi"
+SETTINGS = json.loads((HERE / "settings.json").read_text(encoding="utf-8"))
 
 
 def load_env() -> None:
-    """Put .env values into os.environ (Kaggle CLI reads KAGGLE_API_TOKEN)."""
+    """Put .env values into os.environ (the Kaggle CLI reads KAGGLE_API_TOKEN)."""
     env = HERE / ".env"
     if not env.exists():
         return

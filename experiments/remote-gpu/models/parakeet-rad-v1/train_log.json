@@ -1,0 +1,97 @@
+{
+  "settings": {
+    "kernel": "rd-parakeet",
+    "kaggle_sources": [
+      "paultimothymooney/medical-speech-transcription-and-intent"
+    ],
+    "output": "model_onnx",
+    "check_file": "encoder-model.int8.onnx",
+    "base_model": "nvidia/parakeet-tdt-0.6b-v3",
+    "onnx_repo": "istupakov/parakeet-tdt-0.6b-v3-onnx",
+    "stock_onnx_model": "nemo-parakeet-tdt-0.6b-v3",
+    "pip": [
+      "nemo_toolkit[asr]==2.7.3",
+      "onnx",
+      "onnxruntime",
+      "onnx-asr==0.12.0"
+    ],
+    "caps": {
+      "radiology_synth": 100000,
+      "kaggle_medical": 6000,
+      "edacc": 3000,
+      "hani89": 1500
+    },
+    "hani89_shards": 4,
+    "edacc_train_shards": 12,
+    "edacc_eval_shards": 4,
+    "ekacare_eval_shards": 2,
+    "eval_clips_per_set": 200,
+    "max_duration_sec": 20,
+    "min_duration_sec": 1,
+    "freeze_encoder_layers": 12,
+    "learning_rate": 0.0001,
+    "min_learning_rate": 1e-06,
+    "weight_decay": 0.001,
+    "warmup_steps": 300,
+    "max_steps": 3000,
+    "max_train_hours": 5,
+    "batch_size": 8,
+    "effective_batch": 16,
+    "precision": "16-mixed",
+    "seed": 0
+  },
+  "sources": {
+    "radiology_synth": {
+      "seen": 1500,
+      "kept": 824
+    },
+    "kaggle_medical": {
+      "seen": 6081,
+      "kept": 6000
+    },
+    "edacc": {
+      "seen": 5530,
+      "kept": 3000
+    },
+    "hani89": {
+      "seen": 1328,
+      "kept": 109
+    }
+  },
+  "eval": {
+    "stock": {
+      "kaggle_medical_validate": 22.31,
+      "edacc_test": 20.75,
+      "ekacare_en": 41.97
+    },
+    "tuned": {
+      "kaggle_medical_validate": 17.89,
+      "edacc_test": 20.7,
+      "ekacare_en": 37.13
+    }
+  },
+  "train_clips": 9933,
+  "train_hours": 15.52,
+  "eval_clips": {
+    "kaggle_medical_validate": 200,
+    "edacc_test": 200,
+    "ekacare_en": 200
+  },
+  "elapsed_min": 59.0,
+  "loss_every_50_steps": [
+    1.4453,
+    0.3848,
+    0.2907
+  ],
+  "batch_size": 2,
+  "accumulate": 8,
+  "steps_done": 169,
+  "training": "out of memory part-way; exported what it had learned so far",
+  "exported": [
+    "config.json",
+    "decoder_joint-model.int8.onnx",
+    "encoder-model.int8.onnx",
+    "vocab.txt"
+  ],
+  "max_change": null
+}

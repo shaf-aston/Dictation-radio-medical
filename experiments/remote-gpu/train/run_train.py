@@ -1,28 +1,50 @@
 """One command trains a new model version on free Kaggle GPU.
 
-    python train/run_train.py --name small-en-rad [--note "why this run"]
+    python train/run_train.py --engine parakeet --name parakeet-rad [--note "why"] [--data data/train] [--smoke]
 
-Packs data/train + train/config.json into a private Kaggle dataset, runs
-train_kernel.py on a GPU, waits, then downloads the result into a NEW folder
-models/<name>-vN/. An existing version folder is never touched.
+pack.py bundles the clips, kaggle_io.py runs them through train/<engine>_kernel.py on a GPU
+with the settings in train/<engine>.json, and the result lands in a NEW folder
+models/<name>-vN/. An existing version is never touched. --smoke runs a few steps to prove
+the kernel works end to end; its output stays in train/_out and no version is saved.
 """
-import argparse, json, os, shutil, subprocess, sys, time
+import argparse
+import json
+import shutil
+import sys
 from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common import HERE, KAGGLE_USER, MODELS, load_env  # noqa: E402
+from config import HERE, MODELS, SETTINGS, load_env  # noqa: E402
+from kaggle_io import fetch_output, push_dataset, run_kernel  # noqa: E402
+from pack import PACK, pack_data  # noqa: E402
 
-DATASET, KERNEL = "rd-train-data", "rd-train"
-PACK, KDIR = HERE / "train" / "_pack", HERE / "train" / "_kernel"
+OUT = HERE / "train" / "_out"
+LOAD_LINE = {
+    "whisper": "FasterWhisperEngine(model_path=r'{model}')",
+    "parakeet": "onnx_asr.load_model('nemo-conformer-tdt', r'{model}', quantization='int8')",
+}
+# score label -> the label it must match on a smoke run
+SMOKE_PAIRS = {"untouched_int8": "stock", "tuned_fp32": "untouched_fp32"}
 
 
-def kaggle(*args, check=True):
-    r = subprocess.run(["kaggle", *args], capture_output=True, text=True, encoding="utf-8",
-                       env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
-    if check and r.returncode:
-        raise SystemExit(f"kaggle {' '.join(args)} failed:\n{r.stdout}{r.stderr}")
-    return r.stdout + r.stderr
+def check_smoke(log: dict) -> None:
+    """A smoke run learns almost nothing, so our export must match the published model, the trained model
+    must match the untouched one at full precision, and the BatchNorm averages must not have moved.
+    The tuned int8 score is printed, not gated: rounding magnifies even a 1e-7 change on 24 clips."""
+    if log.get("training", "finished") != "finished":
+        raise SystemExit(f"smoke run failed: training {log['training']}")
+    scores, gap = log.get("eval", {}), SETTINGS["smoke_max_wer_gap_pp"]
+    for label, got in scores.items():
+        print(label, got)
+    print("max change", log.get("max_change"))
+    for label, ref in SMOKE_PAIRS.items():
+        off = {s: scores[label][s] for s in scores[ref] if abs(scores[label][s] - scores[ref][s]) > gap}
+        if off:
+            raise SystemExit(f"smoke run failed: {label} differs from {ref} by more than {gap} pp: {off}")
+    moved = log.get("max_change", {}).get("buffers")
+    if moved != 0.0:
+        raise SystemExit(f"smoke run failed: BatchNorm averages moved by {moved} (None = not measured)")
 
 
 def next_version(name: str) -> Path:
@@ -32,110 +54,47 @@ def next_version(name: str) -> Path:
     return MODELS / f"{name}-v{n}"
 
 
-def pack_data() -> int:
-    import soundfile as sf
-    from scipy.signal import resample_poly
-    src = HERE / "data" / "train"
-    rows = [json.loads(l) for l in (src / "manifest.jsonl").read_text().splitlines() if l.strip()]
-    shutil.rmtree(PACK, ignore_errors=True); (PACK / "_flac").mkdir(parents=True)
-    for r in rows:
-        a, sr = sf.read(src / r["audio"], dtype="float32")
-        if a.ndim > 1:
-            a = a.mean(axis=1)
-        if sr != 16000:
-            a = resample_poly(a, 16000, sr)
-        r["audio"] = r["audio"].replace(".wav", ".flac")
-        sf.write(PACK / "_flac" / r["audio"], a, 16000)
-    # One archive, not 900 files: the Kaggle CLI uploads files one request at a time.
-    import tarfile
-    with tarfile.open(PACK / "audio.tar", "w") as tf:
-        tf.add(PACK / "_flac", arcname=".")
-    shutil.rmtree(PACK / "_flac")
-    (PACK / "manifest.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
-    shutil.copy(HERE / "train" / "config.json", PACK / "config.json")
-    (PACK / "dataset-metadata.json").write_text(json.dumps({
-        "title": DATASET, "id": f"{KAGGLE_USER}/{DATASET}", "licenses": [{"name": "CC0-1.0"}]}))
-    return len(rows)
-
-
-def _windows_upload_state_dir() -> None:
-    """Kaggle CLI on Windows fails ("No such file") unless its resume-state folder
-    for the uploaded path already exists. Make it, or the upload hangs."""
-    import os
-    if os.name != "nt":
-        return
-    tail = str(PACK.resolve()).replace(":", "_").replace("\\", "/")
-    base = Path(os.environ.get("TEMP", "")) / ".kaggle" / "uploads" / tail
-    base.mkdir(parents=True, exist_ok=True)
-
-
-def push_dataset() -> None:
-    _windows_upload_state_dir()
-    exists = "rd-train-data" in kaggle("datasets", "list", "--mine", check=False)
-    if exists:
-        kaggle("datasets", "version", "-p", str(PACK), "-m", f"data {date.today()}", "--dir-mode", "zip")
-    else:
-        kaggle("datasets", "create", "-p", str(PACK), "--dir-mode", "zip")
-    for _ in range(40):  # dataset must finish processing before the kernel can mount it
-        if "ready" in kaggle("datasets", "status", f"{KAGGLE_USER}/{DATASET}", check=False).lower():
-            return
-        time.sleep(15)
-    raise SystemExit("dataset never became ready")
-
-
-def run_kernel() -> None:
-    shutil.rmtree(KDIR, ignore_errors=True); KDIR.mkdir(parents=True)
-    shutil.copy(HERE / "train" / "train_kernel.py", KDIR)
-    (KDIR / "kernel-metadata.json").write_text(json.dumps({
-        "id": f"{KAGGLE_USER}/{KERNEL}", "title": KERNEL, "code_file": "train_kernel.py",
-        "language": "python", "kernel_type": "script", "is_private": "true",
-        "enable_gpu": "true", "enable_internet": "true",
-        "dataset_sources": [f"{KAGGLE_USER}/{DATASET}"]}))
-    kaggle("kernels", "push", "-p", str(KDIR))
-    started = time.time()
-    time.sleep(90)  # right after a push the status still shows the PREVIOUS run's result
-    while True:
-        s = kaggle("kernels", "status", f"{KAGGLE_USER}/{KERNEL}", check=False)
-        if "COMPLETE" in s:
-            return
-        if "ERROR" in s or "CANCEL" in s:
-            raise SystemExit(f"Kaggle run failed: {s.strip()}\nlog: kaggle kernels output {KAGGLE_USER}/{KERNEL}")
-        if time.time() - started > 6 * 3600:
-            raise SystemExit("gave up after 6 hours")
-        time.sleep(30)
+def save_version(dest: Path, engine: str, cfg: dict, clips: int, data: Path, note: str) -> None:
+    dest.mkdir(parents=True)  # fails loudly if it somehow exists: never overwrite
+    shutil.move(str(OUT / cfg["output"]), str(dest / "model"))
+    if (OUT / "train_log.json").exists():
+        shutil.move(str(OUT / "train_log.json"), dest / "train_log.json")
+    (dest / f"{engine}.json").write_text(json.dumps(cfg, indent=2))
+    shutil.copy(PACK / "manifest.jsonl", dest / "train_manifest.jsonl")
+    (dest / "README.md").write_text(
+        f"# {dest.name}\n\n- date: {date.today()}\n- engine: {engine}\n- base model: {cfg['base_model']}\n"
+        f"- data: {clips} local clips from {data.relative_to(HERE)} (list: train_manifest.jsonl)"
+        f" plus Kaggle sources {cfg['kaggle_sources'] or 'none'}\n"
+        f"- settings: {engine}.json\n- note: {note}\n"
+        f"- measured error rate: not yet. Run `python compare.py` and paste the table here.\n"
+        f"\nLoad with: {LOAD_LINE[engine].format(model=dest / 'model')}\n", encoding="utf-8")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--engine", choices=sorted(LOAD_LINE), required=True)
     ap.add_argument("--name", required=True)
     ap.add_argument("--note", default="")
+    ap.add_argument("--data", type=Path, default=HERE / "data" / "train")
+    ap.add_argument("--smoke", action="store_true")
     a = ap.parse_args()
+    cfg = json.loads((HERE / "train" / f"{a.engine}.json").read_text())
+    smoke = cfg.pop("smoke", {})
+    if a.smoke:
+        cfg.update(smoke)
     load_env()
     dest = next_version(a.name)
-    n = pack_data()
-    print(f"packed {n} clips -> {dest.name}", flush=True)
-    push_dataset()
-    run_kernel()
-    tmp = HERE / "train" / "_out"
-    shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir()
-    kaggle("kernels", "output", f"{KAGGLE_USER}/{KERNEL}", "-p", str(tmp))
-    if not (tmp / "model_ct2" / "model.bin").exists():
-        raise SystemExit(f"no model_ct2/model.bin in output {tmp} (see rd-train.log there)")
-    dest.mkdir(parents=True)  # fails loudly if it somehow exists: never overwrite
-    shutil.move(str(tmp / "model_ct2"), str(dest / "model"))
-    for f in ("train_log.json",):
-        if (tmp / f).exists():
-            shutil.move(str(tmp / f), dest / f)
-    shutil.copy(HERE / "train" / "config.json", dest / "config.json")
-    shutil.copy(PACK / "manifest.jsonl", dest / "train_manifest.jsonl")
-    cfg = json.loads((HERE / "train" / "config.json").read_text())
-    (dest / "README.md").write_text(
-        f"# {dest.name}\n\n- date: {date.today()}\n- base model: {cfg['base_model']}\n"
-        f"- data: {n} synthetic clips (Windows David + Zira voices; Hazel held out), "
-        f"see train_manifest.jsonl\n- settings: config.json\n- note: {a.note}\n"
-        f"- measured error rate: not yet. Run `python compare.py` and paste the table here.\n"
-        f"\nLoad with: FasterWhisperEngine(model_path=r'{dest / 'model'}')\n", encoding="utf-8")
-    shutil.rmtree(tmp, ignore_errors=True)
+    clips = pack_data(a.data.resolve())
+    print(f"packed {clips} clips -> {'smoke run' if a.smoke else dest.name}", flush=True)
+    push_dataset(PACK)
+    run_kernel(a.engine, cfg)
+    fetch_output(OUT, cfg)
+    if a.smoke:
+        check_smoke(json.loads((OUT / "train_log.json").read_text()))
+        print("smoke run passed; output in", OUT)
+        return
+    save_version(dest, a.engine, cfg, clips, a.data.resolve(), a.note)
+    shutil.rmtree(OUT, ignore_errors=True)
     print("saved", dest)
 
 

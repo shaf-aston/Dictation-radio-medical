@@ -1,7 +1,11 @@
 {
+  "kernel": "rd-train",
+  "kaggle_sources": [],
+  "output": "model_ct2",
+  "check_file": "model.bin",
   "base_model": "openai/whisper-small.en",
   "epochs": 3,
-  "learning_rate": 1e-5,
+  "learning_rate": 1e-05,
   "batch_size": 8,
   "freeze_encoder": true,
   "val_fraction": 0.05,

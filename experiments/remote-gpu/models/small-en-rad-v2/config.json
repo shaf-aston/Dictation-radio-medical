@@ -1,0 +1,10 @@
+{
+  "base_model": "openai/whisper-small.en",
+  "epochs": 3,
+  "learning_rate": 1e-5,
+  "batch_size": 8,
+  "freeze_encoder": true,
+  "val_fraction": 0.05,
+  "max_clip_sec": 29,
+  "quantization": "float16"
+}
