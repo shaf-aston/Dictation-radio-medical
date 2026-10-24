@@ -162,3 +162,8 @@ def test_audio_around_a_spoken_name_is_silenced_and_nothing_else(tmp_path, chann
 
 def test_unreadable_audio_gives_no_clip(tmp_path):
     assert DeIdentifier(PATIENT).deidentify_audio(str(tmp_path / "missing.wav"), [], tmp_path, "s1") is None
+
+
+@pytest.mark.parametrize("date", ["January 2, 2024", "September 14 2023", "Dec 1, 2022", "jul 4, 2021"])
+def test_month_name_dates_are_scrubbed(date):
+    assert date not in DeIdentifier(PATIENT).deidentify_text(f"Compared with {date}.")

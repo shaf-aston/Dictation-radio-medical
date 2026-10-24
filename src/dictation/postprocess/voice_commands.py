@@ -124,9 +124,11 @@ _SPOKEN_PATTERNS: List[Tuple[Pattern, Union[str, Callable[[re.Match], str]]]] = 
     (re.compile(r"\bclose\s+bracket\b", re.IGNORECASE), ")"),
     (re.compile(r"\bquestion\s+mark\b", re.IGNORECASE), "?"),
     (re.compile(r"\bexclamation\s+mark\b", re.IGNORECASE), "!"),
-    (re.compile(r"\bcolon\b", re.IGNORECASE), _replace_colon),
+    # Before "colon", which would otherwise turn "semi-colon" into "semi-:".
     (re.compile(r"\bsemi[- ]?colon\b", re.IGNORECASE), ";"),
-    (re.compile(r"\bhyphen\b", re.IGNORECASE), "-"),
+    (re.compile(r"\bcolon\b", re.IGNORECASE), _replace_colon),
+    # Joins the words either side: "ultrasound hyphen guided" is one word.
+    (re.compile(r"\s*\bhyphen\b\s*", re.IGNORECASE), "-"),
     (re.compile(r"\bdash\b", re.IGNORECASE), " – "),
     (re.compile(r"\b(?:new|next)\s+section\b", re.IGNORECASE), "\n\n"),
 ]

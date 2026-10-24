@@ -416,7 +416,8 @@ there.
 python -m src.ui            # desktop GUI
 python -m src.ui.web_app    # web app on 127.0.0.1:8005
 ruff check src tests scripts
-python -m pytest -q          # safety tables + streaming rules; CI runs both
+python -m pytest -q          # safety tables, properties + streaming rules; CI runs both
+scripts/mutation_test.sh     # would the tests notice a bug? (docs/testing.md)
 npx pyright src              # type check (optional-dep import warnings expected)
 
 # Accuracy + speed measurement: see scripts/eval/CLAUDE.md

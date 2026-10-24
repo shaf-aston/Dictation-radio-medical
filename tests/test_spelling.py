@@ -83,7 +83,9 @@ def test_ize_inside_a_word_is_left_alone(text):
 @pytest.mark.parametrize(
     "uk, us",
     [("analyse", "analyze"), ("colour", "color"), ("centre", "center"),
-     ("haematoma", "hematoma"), ("oedema", "edema"), ("favouring", "favoring"), ("grey", "gray")],
+     ("haematoma", "hematoma"), ("oedema", "edema"), ("favouring", "favoring"), ("grey", "gray"),
+     # Not in the word list: only the rules can know these.
+     ("labour", "labor"), ("litre", "liter"), ("anaesthesia", "anesthesia"), ("foetal", "fetal")],
 )
 def test_a_british_word_knows_its_us_spelling(uk, us):
     from src.medical.spelling import us_variants

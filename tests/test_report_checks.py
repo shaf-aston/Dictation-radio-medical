@@ -126,3 +126,16 @@ def test_sex_warning_names_the_patient_and_the_word(sex, body, message):
 )
 def test_impression_warning_wording(text, message):
     assert _messages(text) == [message]
+
+
+def test_each_wrong_sex_word_is_named_once():
+    assert _messages("The uterus and the ovary. The uterus again.", "M") == [
+        'Patient is male, but the report describes "uterus"',
+        'Patient is male, but the report describes "ovary"',
+    ]
+
+
+def test_a_long_sentence_is_quoted_to_eighty_characters():
+    sentence = "The left " + "very " * 30 + "long sentence."
+    (message,) = _messages("EXAMINATION: MRI Right Knee\n" + sentence)
+    assert message == f'Exam is RIGHT, but this says left: "{sentence[:80]}"'

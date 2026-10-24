@@ -281,8 +281,6 @@ def format_findings_for_dialog(findings: List[CriticalFinding]) -> str:
         qualifier = ""
         if f.uncertain:
             qualifier = " [UNCERTAIN, cannot exclude]"
-        elif f.negated:
-            qualifier = " [negated, verify context]"
         severity = "⚠ LIFE-THREATENING" if f.level == 1 else "⚠ URGENT"
         lines.extend(
             (

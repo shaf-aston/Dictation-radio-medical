@@ -159,3 +159,13 @@ def test_the_dialog_summary_names_severity_term_and_hedge():
     assert lines[1].startswith("   Context: …") and lines[2] == ""
     assert lines[3] == "⚠ URGENT: APPENDICITIS [UNCERTAIN, cannot exclude]"
     assert not summary.endswith("\n")
+
+
+def test_a_separate_mention_after_a_longer_finding_still_counts():
+    found = _terms("Tension pneumothorax on the right. Small pneumothorax on the left.")
+    assert found == [("tension pneumothorax", 1, False), ("pneumothorax", 1, False)]
+
+
+def test_context_at_the_very_start_of_the_report():
+    (f,) = scan_for_critical_findings("Pneumothorax.")
+    assert f.context == "…Pneumothorax.…"
