@@ -27,9 +27,10 @@ are pre-built at startup (``src/dictation/warmup.py``).
 from __future__ import annotations
 
 import logging
-from typing import Callable, List
+from typing import Callable, List, cast
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -125,7 +126,7 @@ class TermPopup(QFrame):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Escape closes it; so does moving, resizing or leaving the window."""
         kind = event.type()
-        if kind == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+        if kind == QEvent.Type.KeyPress and cast(QKeyEvent, event).key() == Qt.Key.Key_Escape:
             if self.isVisible():
                 self.hide()
                 return True
@@ -164,7 +165,8 @@ class TermPopup(QFrame):
 
     def _fill(self, grid: QGridLayout, items: List[Suggestion], quiet: bool) -> None:
         while grid.count():
-            widget = grid.takeAt(0).widget()
+            item = grid.takeAt(0)
+            widget = item.widget() if item is not None else None
             if widget is not None:
                 widget.deleteLater()
         for row, item in enumerate(items):

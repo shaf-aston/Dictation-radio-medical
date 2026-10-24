@@ -31,7 +31,7 @@ import logging
 import pickle
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Set
+from typing import TYPE_CHECKING, Any, List, Optional, Set, Tuple, Union
 
 if TYPE_CHECKING:
     from symspellpy import SymSpell
@@ -55,10 +55,10 @@ logger = logging.getLogger(__name__)
 # at every cold start (its C-extension pulls in a large module tree) for a path
 # that never executes in the fully-installed config: so it is loaded lazily on
 # first use. `_rapidfuzz()` caches the result; None means "not installed".
-_RAPIDFUZZ: "Optional[object]" = None  # (process, fuzz) once loaded; False if absent
+_RAPIDFUZZ: "Optional[Union[Tuple[Any, Any], bool]]" = None  # (process, fuzz) once loaded; False if absent
 
 
-def _rapidfuzz():  # type: ignore[no-untyped-def]
+def _rapidfuzz() -> Optional[Tuple[Any, Any]]:
     """Lazy-load rapidfuzz. Returns (process, fuzz) or None if not installed."""
     global _RAPIDFUZZ
     if _RAPIDFUZZ is None:
@@ -67,7 +67,7 @@ def _rapidfuzz():  # type: ignore[no-untyped-def]
             _RAPIDFUZZ = (process, fuzz)
         except ImportError:
             _RAPIDFUZZ = False
-    return _RAPIDFUZZ or None
+    return _RAPIDFUZZ if isinstance(_RAPIDFUZZ, tuple) else None
 
 # Lazy-loaded singleton state
 _TERMS: Optional[Set[str]] = None                # Membership: generic ∪ lexicon

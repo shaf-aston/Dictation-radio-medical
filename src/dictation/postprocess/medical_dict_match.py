@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Optional, Set
+from typing import Any, Optional, Set
 
 from src.medical import medical_dict
 from src.medical.medical_dict import is_english_word
@@ -64,7 +64,7 @@ def _max_edits(n: int) -> int:
     return 1 if n <= 9 else 2
 
 
-def _nearest_term(word: str, max_distance: int, sym: Optional[object] = None) -> Optional[str]:
+def _nearest_term(word: str, max_distance: int, sym: Optional[Any] = None) -> Optional[str]:
     """Closest known medical term to *word* within *max_distance* edits, or None.
 
     Looks up the SymSpell index (:func:`medical_dict.get_symspell`), which
@@ -315,7 +315,7 @@ def _four_letter_decision(wl: str) -> Optional[str]:
     return candidates[0] if len(candidates) == 1 else None
 
 
-def _compute_decision(wl: str, terms: Set[str], sym: Optional[object]) -> Optional[str]:
+def _compute_decision(wl: str, terms: Set[str], sym: Optional[Any]) -> Optional[str]:
     """Correction for already-lowercased non-word *wl*, or None to leave it alone.
 
     Pure function of *wl* and the load-once term sets (that is what makes the

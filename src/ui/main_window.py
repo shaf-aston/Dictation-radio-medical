@@ -45,7 +45,7 @@ from src.medical import macros
 from src.medical.macros import reload_macros
 from src.core.paths import startup_cleanup, autosave_dir, macros_file, templates_dir
 from src.features.adaptive_learning import get_adaptive_learning, learn_from_edit
-from src.features import audit_log
+from src.features import audit_log, run_log
 
 # View construction
 from src.ui.views import (
@@ -145,8 +145,13 @@ class MainWindow(QMainWindow):
     _autosave_label: QLabel
     recent_menu: QMenu
     _level_timer: QTimer
+    _info_marks: QLabel
     _active_accent: str
     _active_cleanup_level: str
+    # Set per recording by recording_session.
+    _record_started: float
+    _run_record: Optional[run_log.RunRecord]
+    _audio_stopped_at: Optional[float]
 
     def __init__(self) -> None:
         super().__init__()
