@@ -1,8 +1,9 @@
 """Background pre-warming of the heavy dictation singletons.
 
-Two things dominate first-use latency, and both are built lazily on the *first*
-spoken chunk: so the app feels frozen at exactly the moment the radiologist
-starts talking:
+Several things are built lazily on the *first* spoken chunk (the slowest
+listed below; ``postprocess_warmers`` has the full set: spelling index,
+terminology, context model, English guard, term lookup, VAD), so the app would
+feel frozen at exactly the moment the radiologist starts talking:
 
 * the SymSpell medical-spelling index: ~1.3 s to build (or unpickle) on every
   launch, paid inside the fuzzy-match post-process stage;
@@ -17,7 +18,7 @@ Design notes (loose coupling / SRP):
 
 * A **warmer** is just ``(name, callable)``. The set is data, not hard-coded
   control flow: front-ends compose the list they need (see
-  :func:`postprocess_warmers` and :func:`transcriber_warmer`).
+  :func:`postprocess_warmers` and :func:`asr_warmer`).
 * No Qt, no ``settings`` import here. The caller resolves the model size and
   passes it in, so this module stays a pure, testable utility usable from the
   desktop GUI, the web app, or the CLI benchmark alike.
@@ -102,7 +103,7 @@ def postprocess_warmers() -> List[Warmer]:
     ]
 
 
-def transcriber_warmer(model_size: str, model_path: Optional[str] = None) -> Warmer:
+def asr_warmer(model_size: str, model_path: Optional[str] = None) -> Warmer:
     """A warmer that loads the speech engine for *model_size* ahead of first use.
 
     Whichever engine the ``asr_engine`` setting names; *model_size* only sizes

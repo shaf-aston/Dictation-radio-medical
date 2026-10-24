@@ -14,7 +14,7 @@ python -m src.ui.web_app             # web app on http://127.0.0.1:8005, verifie
 
 **A. Dictation (live, both front-ends)**
 
-1. **Record (F5, or F2 to start and stop) captures the microphone**: the desktop writes a growing WAV (`src/dictation/audio.py`), the browser streams 16 kHz PCM over `/ws/dictate`. Both feed the same loop, `src/dictation/stream/live_session.py`.
+1. **Record (F2 to start and stop; F5/F6 on the desktop) captures the microphone**: the desktop writes a growing WAV (`src/dictation/audio.py`), the browser streams 16 kHz PCM over `/ws/dictate`. Both feed the same loop, `src/dictation/stream/live_session.py`.
 2. **The still-open tail is VAD-cut into chunks and each is decoded exactly once** by Parakeet, with Whisper behind it (engine behind `src/dictation/asr/`). Exists so a long dictation doesn't cost multiples of its own length in redundant re-decoding.
 3. **The new (uncommitted) text runs through the correction chain**: `src/dictation/postprocess/pipeline.py`. Raw recogniser output contains hallucinations, spoken punctuation and commands ("scratch that", "insert <phrase>"), and medical mis-hearings that must become a clean report.
 4. **The text goes in at the caret, or over a selected template field**: `src/ui/recording_session.py` (desktop), `src/ui/frontends/app.js` (web). Text after the caret is never rewritten. Saying one option of a selected pick-list (`[Right / Left]`) answers it (`src/features/template_fields.py`). Tab / Shift+Tab move between fields.
@@ -24,17 +24,17 @@ python -m src.ui.web_app             # web app on http://127.0.0.1:8005, verifie
 
 ## Glossary
 
-- **Chunk-once ledger**: the point behind which live text is frozen and never re-decoded; each chunk closes at a VAD silence boundary (`src/dictation/stream/ledger.py`, `ChunkPolicy.min_sec`/`soft_max_sec`/`force_cut_sec`).
-- **Postprocess pipeline**: the ordered 10-stage cleanup chain (`src/dictation/postprocess/pipeline.py`) that turns raw Whisper text into a formatted report.
+- **Chunk-once ledger**: the point behind which live text is frozen and never re-decoded; each chunk closes at a VAD silence boundary (`src/dictation/stream/ledger.py`; lengths from `ChunkPolicy` in `stream/segmenter.py`).
+- **Postprocess pipeline**: the ordered cleanup chain (`pipeline.pipeline_stages()` in `src/dictation/postprocess/pipeline.py`) that turns raw recogniser text into a formatted report.
 - **Open tail**: the still-growing slice of audio re-decoded each cycle for a stable live preview only (never committed), instead of the whole growing recording.
-- **Medical dictionary (fuzzy match)**: corrects mis-heard medical terms by snapping close matches to a curated term list (`src/medical/medical_dict.py`).
-- **Radiology lexicon vs. medical terms list**: two wordlists: one just recognizes real words (leave alone), the other is what a typo gets corrected *to* (`src/resources/`).
+- **Medical dictionary (fuzzy match)**: corrects a mis-heard non-word by snapping it to the nearest known term (SymSpell over the full list), preferring the curated radiology lexicon on ties (`src/medical/medical_dict.py`).
+- **Radiology lexicon vs. medical terms list**: two wordlists: the broad one recognises real words (leave alone); the curated lexicon is the preferred spelling a typo is corrected to (`src/resources/`).
 - **Macros**: short phrases that expand into boilerplate report text, hot-reloaded from `data/macros.json`.
 - **Critical findings**: a rule-based (NegEx) scan that flags urgent results before sign-off (`src/medical/critical_findings.py`). The gate that runs it on every exit is `src/features/report_release.py`; both front-ends call that one, so they cannot drift.
 - **De-identification (PHI scrub)**: stripping patient-identifying info before anything leaves the device; only exercised if cloud training is opted in (`src/medical/deid.py`).
 - **Templates**: starter report text per exam type (chest, MSK, etc.), in `src/templates/`.
 - **Template field**: any bracketed span on one line of a template, `[Right / Left]` or `[X]`; declared once in `src/features/template_fields.py` for the release gate, Tab navigation and pick-list answers.
-- **Design tokens**: the 11 named colours in `src/ui/tokens.json`. Both front-ends render their stylesheets from this one file (`src/ui/theme.py`), so the desktop app and the web app always look like the same product. Red means recording or clinical severity; cyan is the machine's voice; nothing else is coloured.
+- **Design tokens**: the 12 named colours in `src/ui/tokens.json`. Both front-ends render their stylesheets from this one file (`src/ui/theme.py`), so the desktop app and the web app always look like the same product. Red means recording or clinical severity; cyan (glow) is the machine's voice; amber is a warning; green is done.
 - **Abstention**: the optional X-ray assistant's rule to stay silent unless confident and able to localize a finding (`src/imaging/abstention.py`).
 
 ## Where things live

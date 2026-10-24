@@ -1,9 +1,8 @@
 """The AsrEngine swap-seam: everything downstream depends on this, not on any
 concrete recognition engine.
 
-Adding a second engine (M3: an ONNX/Parakeet CTC model) means writing one new
-class satisfying this Protocol: nothing in ``worker.py`` or ``web_app.py``
-changes. A ``Protocol`` rather than an ABC on purpose: it lets the eval
+Adding an engine means writing one new class satisfying this Protocol: nothing
+in the live loop or either front-end changes. A ``Protocol`` rather than an ABC on purpose: it lets the eval
 harness's ``WhisperRunner`` and any future test double satisfy the interface
 structurally, with no inheritance and no import of this module required.
 """

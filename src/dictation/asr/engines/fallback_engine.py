@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Providers rejected with ProviderUnavailable this process (dead API key, auth
 # failure): permanent until restart, and shared across every ChainEngine
-# instance. web_app builds one ChainEngine per model name (live + polish), so
+# instance. ui/web/state.get_engine builds one ChainEngine per model name (live + polish), so
 # without this each instance paid its own 401 round trip on every decode --
 # the per-instance drop below only ever helped the instance that had already
 # eaten the cost once. Keyed by provider name, not by instance.

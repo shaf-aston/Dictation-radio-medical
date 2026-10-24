@@ -243,7 +243,7 @@ def on_start_recording(window: MainWindow) -> None:
     # Begin capturing corrections for cloud training (no-op without consent).
     training_capture.start_training_capture(window, path, model_size)
 
-    # Post-processing runs on its own thread so the ten-stage pipeline can never
+    # Post-processing runs on its own thread so the correction pipeline can never
     # block the UI (see postprocess_worker). Fresh per recording: no stale
     # incremental cache can survive into the next report.
     perf.reset()

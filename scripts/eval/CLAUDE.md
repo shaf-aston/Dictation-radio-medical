@@ -43,12 +43,19 @@ by inserting real silence at VAD-confirmed mark ends; silence carries no
 words, so the source reference stays exactly correct. It measures chunk
 *policy*, never acoustics, and is not a substitute for the `own` set.
 
-Four gold sets, each measuring something different: never blend them into one
+Five gold sets, each measuring something different: never blend them into one
 figure. `own` (the user's own voice: the only set that measures real acoustics)
 · `tts` (synthesised radiology reports: medical *vocabulary* under
-unrealistically clean audio) · `libri` (public-domain read speech: general
-English regression + per-engine RTF) · `bench` (the existing `data/bench_audio/`
-clips, once hand-corrected).
+unrealistically clean audio) · `piper` (the tts reports read by Piper neural
+voices, UK + US: more realistic synthetic acoustics; `build_sets --set piper
+--voices <dir>`) · `libri` (public-domain read speech: general English
+regression + per-engine RTF) · `bench` (the existing `data/bench_audio/` clips,
+once hand-corrected).
+
+Three tools judge a post-processing change without decoding again:
+`rescore.py` re-runs the current pipeline on a stored run's raw decodes (seconds,
+not minutes), `stage_attribution.py` scores each stage on its own, and
+`report_checks_corpus.py` scores the side / sex / impression checks.
 
 What the harness has actually decided so far, including the two changes that
 moved the false-correction rate and the one that was measured and switched back

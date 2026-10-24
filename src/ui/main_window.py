@@ -324,7 +324,7 @@ class MainWindow(QMainWindow):
         try:
             from src.dictation.warmup import (
                 postprocess_warmers,
-                transcriber_warmer,
+                asr_warmer,
                 warm_up_async,
             )
 
@@ -341,7 +341,7 @@ class MainWindow(QMainWindow):
 
             active_model = active_model_path()
             warmers = postprocess_warmers() + [
-                transcriber_warmer(
+                asr_warmer(
                     model_size,
                     model_path=str(active_model) if active_model else None,
                 )
@@ -350,7 +350,7 @@ class MainWindow(QMainWindow):
             # makes the first dictation after every launch stall on its load.
             live_model_size = resolve_model(self.settings.get("live_model_size"))
             if live_model_size != model_size or active_model:
-                warmers.append(transcriber_warmer(live_model_size))
+                warmers.append(asr_warmer(live_model_size))
             warm_up_async(warmers)
         except Exception as exc:  # warm-up is an optimisation, never fatal
             logger.debug("Could not start dictation warm-up: %s", exc)

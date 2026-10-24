@@ -4,10 +4,9 @@ Turns VAD speech marks (relative to some audio range) into a list of chunk
 boundaries. Every non-final boundary sits at a VAD-confirmed silence gap,
 never at an arbitrary sample offset, so a closed chunk is never cut mid-word
 except via the ``force_cut_sec`` safety valve, which exists only for a single
-unbroken speech run with no silence at all (a long monologue). That is the
-plan's known accepted risk for this milestone (see the M2 pre-mortem in
-CLAUDE.md's linked plan); the confidence-targeted polish after recording
-stops is the safety net for it.
+unbroken speech run with no silence at all (a long monologue). That is an
+accepted risk: a forced cut is marked (``Chunk.forced``), and the polish
+always re-decodes both sides of it.
 
 Trivially unit-testable: feed it marks, check the returned cut points. Takes
 sample counts relative to whatever range the caller is segmenting (the ledger

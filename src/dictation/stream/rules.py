@@ -1,11 +1,7 @@
-"""Pure decisions both live loops make: no state, no I/O, no Qt, no sockets.
+"""Pure decisions the live loop makes: no state, no I/O, no Qt, no sockets.
 
-The desktop worker and the web session each own a loop, and each has to answer
-the same four questions: what prompt do we prime the decoder with, how sure was
-the decoder, is this clip silent, and is the preview still worth its price.
-Those answers live here so neither loop is the other's dependency: the desktop
-used to import them from the web session's module, which read backwards and
-made a front-end look like core.
+What prompt to prime the decoder with, how sure the decoder was, which words to
+flag, is there speech, how loud, and is the preview worth its price.
 """
 
 from __future__ import annotations
@@ -17,7 +13,7 @@ import numpy as np
 from src.dictation.asr.types import AsrResult
 from src.dictation.stream.vad import SpeechMark
 from src.dictation.asr.prompt import RADIOLOGY_PROMPT
-from src.features.adaptive_learning import get_custom_prompt_suffix
+from src.features.adaptive_learning import get_custom_prompt_terms
 
 
 def build_context_prompt() -> str:
@@ -37,7 +33,7 @@ def build_context_prompt() -> str:
     about 216 tokens) push almost the entire shipped dictionary out of the
     decoder, which is invisible from the outside.
     """
-    if custom_terms := get_custom_prompt_suffix():
+    if custom_terms := get_custom_prompt_terms():
         return f"{custom_terms} {RADIOLOGY_PROMPT}"
     return RADIOLOGY_PROMPT
 

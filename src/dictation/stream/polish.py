@@ -39,14 +39,12 @@ OnDecoded = Callable[[AsrResult, Optional[int], int, int], None]
 #: under that pad therefore buys back whole calls, and lets the accurate model
 #: read a paragraph instead of context-free fragments.
 #:
-#: How much it buys depends entirely on how long the chunks are, which is a
-#: setting and not a constant. With the shipped defaults (``chunk_min_sec``
-#: 6.0, ``chunk_soft_max_sec`` 15.0) a chunk is most of this ceiling on its
-#: own, so a run is usually one or two chunks and the saving is small. Where
-#: the settings file lowers them (2.0 / 5.0, the policy this project's eval
-#: measured as best) chunks are a few seconds each, a run holds five to ten of
-#: them, and the saving is large: a three-minute dictation goes from tens of
-#: full encoder passes to a handful.
+#: How much it buys depends entirely on how long the chunks are. With the
+#: shipped 2 / 5 s policy (the one this project's eval measured as best) chunks
+#: are a few seconds each, a run holds five to ten of them, and the saving is
+#: large: a three-minute dictation goes from tens of full encoder passes to a
+#: handful. On old installs still pinned to 6 / 15 s a chunk is most of this
+#: ceiling on its own, so a run is one or two chunks and the saving is small.
 BATCH_MAX_SEC = 25.0
 
 #: Why :func:`_split` could not divide a batch. The first two are statements

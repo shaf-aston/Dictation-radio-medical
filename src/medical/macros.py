@@ -5,6 +5,8 @@ Loads from data/macros.json for user editability.
 Each entry is [button_label, report_text].
 """
 
+from __future__ import annotations
+
 import logging
 from typing import Dict, List, Tuple
 

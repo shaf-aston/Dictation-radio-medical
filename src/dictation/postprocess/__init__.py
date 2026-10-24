@@ -3,8 +3,8 @@
 Public entry point: :func:`postprocess_transcript`.
 
 Internally a sequence of small, pure-function stages run in fixed order
-(see :mod:`src.dictation.postprocess.pipeline`).  Each stage lives in its
-own module so the regex tables are easy to grep and extend.
+(see :func:`src.dictation.postprocess.pipeline.pipeline_stages`). Stages live
+in small modules, so the regex tables are easy to grep and extend.
 """
 
 from src.dictation.postprocess.pipeline import (

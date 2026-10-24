@@ -1,5 +1,5 @@
 """
-Adaptive Learning System for MSK Radiology Dictation.
+Adaptive learning: what the app learns from the radiologist's corrections.
 
 Lightweight, passive learning that improves accuracy over time without
 extra CPU load. All learning happens as a side-effect of normal use.
@@ -17,13 +17,15 @@ Learning Sources:
 - Frequency: commonly used terms get priority
 
 Data Structure:
-corrections.json = {
+learned_corrections.json = {
     "word_corrections": {"wrong": "right", ...},
     "custom_terms": ["userterm1", "userterm2", ...],
     "term_frequency": {"term": count, ...},
     "accent_hints": {"pattern": "correction", ...}
 }
 """
+
+from __future__ import annotations
 
 import logging
 import re
@@ -246,7 +248,7 @@ class AdaptiveLearning:
         return text
 
     def get_custom_prompt_additions(self) -> str:
-        """Get terms to add to Whisper's initial prompt.
+        """Get terms for the decoder prompt (Whisper; Parakeet takes none).
 
         Includes:
         - All user-defined custom vocabulary (always; these are what the user
@@ -502,6 +504,10 @@ def _word_fixes(before: str, after: str):
     return edits, fixes
 
 
-def get_custom_prompt_suffix() -> str:
-    """Get high-frequency terms to append to Whisper's prompt."""
+def get_custom_prompt_terms() -> str:
+    """Learned terms for the decoder prompt, placed BEFORE the radiology prompt.
+
+    Being first, they are what Whisper's 223-token slot drops when it overflows
+    (stream/rules.build_context_prompt). Parakeet takes no prompt.
+    """
     return get_adaptive_learning().get_custom_prompt_additions()

@@ -269,7 +269,7 @@ def build_settings_panel(window: MainWindow) -> QFrame:
     idx = window.accent_combo.findData(saved_accent)
     if idx >= 0:
         window.accent_combo.setCurrentIndex(idx)
-    window.accent_combo.setToolTip("Accent correction profile for Whisper error patterns")
+    window.accent_combo.setToolTip("Accent profile: fixes the words a recogniser often mishears in this accent")
     window.accent_combo.setFixedWidth(110)
 
     window.cleanup_combo = QComboBox()

@@ -1,10 +1,9 @@
 """
-Accent-specific Whisper mis-transcription correction patterns.
+Stage: accent-specific mis-transcription correction patterns.
 
-Whisper is trained on multi-accent data but still produces systematic errors
-with certain accents.  These patterns correct the *Whisper output* – they
-target the text that Whisper generates when it hears accented speech, not the
-accent itself.
+Recognisers trained on multi-accent data still produce systematic errors with
+certain accents. These patterns correct the recogniser's *output*: they target
+the text it writes when it hears accented speech, not the accent itself.
 
 Patterns are eagerly compiled at module load to ensure they're ready for use.
 A combined regex approach is used for faster matching where possible.
@@ -16,6 +15,8 @@ Supported accents:
   - west_african  : Nigerian, Ghanaian English
   - neutral       : No accent-specific corrections (default)
 """
+
+from __future__ import annotations
 
 import re
 from typing import Callable, Dict, List, Optional, Pattern, Tuple, Union

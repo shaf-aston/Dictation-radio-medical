@@ -7,6 +7,8 @@ false-positive alerts for phrases like "no pneumothorax" while still
 flagging uncertainty phrases like "cannot exclude pulmonary embolism".
 """
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass
 from typing import List, Tuple

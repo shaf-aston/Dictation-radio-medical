@@ -2,12 +2,13 @@
 
 Every constant here used to be one hard-coded answer, sized for local Whisper,
 whose every call pays ~1-4s however little audio it is handed (the 30s pad).
-Few long chunks amortise that. But the default engine became Deepgram at
+Few long chunks amortise that. But a cloud engine such as Deepgram answers in
 ~0.2s a call, and the same long chunks then only made the kept text trail the
 microphone by the chunk length: the decode was fast and the word still waited
 6 to 15 seconds for its chunk to close. So the engine declares its price
 (:class:`~src.dictation.asr.types.CostModel`) and this module turns the price
-into a shape. Pure: no settings file, no engine calls, no I/O.
+into a shape. Pure: no engine calls, no I/O; settings arrive as a ``get``
+function (:func:`session_config`).
 
 Both rows are measured starting points, not settled truths: any change is
 judged by ``scripts/eval/replay.py`` against the medical-term error veto.

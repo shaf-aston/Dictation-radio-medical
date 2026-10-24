@@ -1,7 +1,7 @@
 """Stage 7: fuzzy medical-dictionary correction.
 
 Replaces a misspelled word with the closest known medical term, any of the
-~98k terms in :func:`medical_dict.get_medical_terms`, not just the 756-term
+~98k terms in :func:`medical_dict.get_medical_terms`, not just the ~870-term
 curated radiology lexicon, when it is within a small, length-scaled **edit
 distance** of that term (via :func:`medical_dict.get_symspell`). Acronyms,
 protected terms, and short words are never touched. Curated radiology-lexicon

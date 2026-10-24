@@ -76,17 +76,15 @@ _DEFAULTS: dict = {
     # host core count when the model loads, and takes effect on the next app
     # start: the loaded model is cached and is not rebuilt on a settings write.
     "asr_cpu_threads": 8,
-    # --- Live transcription decode quality (see src/dictation/worker.py) ---
+    # --- Live transcription decode quality (stream/policy.py::LiveKnobs) ---
     "live_beam_size": 2,        # beam=1 caused repetition; beam=2 still real-time
-    # Every decode that is not the live loop: the desktop's post-stop polish and
-    # the web app's one-shot upload. Both are "transcribe this once, properly",
-    # so they share one knob: the web app used to have its own copy of it.
+    # Every decode that is not the live loop: the post-stop and background
+    # polish, in both front-ends. "Transcribe this once, properly".
     "final_beam_size": 5,
-    # The live preview of the still-open tail is dropped once that tail is
-    # longer than this AND the machine is measured to decode slower than speech
-    # (src/dictation/worker.py::should_skip_preview). The preview is never
-    # committed, so this trades early sight of a few words for the committed
-    # chunks arriving on time. 0 keeps the preview no matter how far behind.
+    # A live preview is skipped when the last preview decode took longer than
+    # this many seconds (stream/rules.py::should_skip_preview). The preview is
+    # never committed, so this trades early sight of a few words for the
+    # committed chunks arriving on time. 0 keeps the preview no matter what.
     "preview_max_lag_sec": 3.0,
     # A preview decode costs the same whatever it is handed, because Whisper
     # pads every clip to a 30-second window. So decoding a tail that is barely
@@ -116,7 +114,9 @@ _DEFAULTS: dict = {
     # Extra host names the web app answers to (it always answers loopback and
     # web_host). Only for serving it to another machine on purpose.
     "web_allowed_hosts": [],
-    "max_upload_mb": 50,        # reject audio uploads larger than this
+    # Caps one web dictation's audio, in MB of 16-bit PCM (about 26 minutes at
+    # 50). The name is from when the web app uploaded a file.
+    "max_upload_mb": 50,
     # Two models, one dictation. This small one decodes the words that appear
     # while you are still speaking; `model_size` above re-decodes after Stop,
     # where being right matters more than being quick. Whisper's model cache

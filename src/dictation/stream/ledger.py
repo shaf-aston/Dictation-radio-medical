@@ -2,8 +2,8 @@
 
 Once a chunk closes (a VAD silence boundary was found, or the segmenter's
 force-cut safety valve fired), its decoded text is frozen: nothing re-decodes
-it and nothing rewrites it, except the one-time confidence-targeted polish
-after recording stops. This is what turns "each second of audio decoded ~8
+it and nothing rewrites it, except the confidence-targeted polish (in the
+background while recording, and once more after Stop). This is what turns "each second of audio decoded ~8
 times" (the old sliding-window re-decode in window_state.py) into "each
 second decoded once": the actual fix for the slow half of this rebuild.
 

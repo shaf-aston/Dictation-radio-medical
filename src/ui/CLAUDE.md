@@ -4,14 +4,15 @@ Loads only when work touches `src/ui/`. The always-loaded rules for this
 project are in the root [CLAUDE.md](../../CLAUDE.md); this file holds the part
 that only matters when you are inside the front-end.
 
-`core/perf.py` is the evidence for all of the above: stage timings (count / mean
-/ p95 / max) plus point-in-time gauges like `stream.decode_ratio` are logged
-when a recording ends and served at `GET /api/debug/perf`. It is in-process
+`core/perf.py` is the timing evidence for the live-speed rules in the root
+CLAUDE.md: stage timings (count / mean / p95 / max) plus point-in-time gauges
+like `stream.decode_ratio` (set by both front-ends through
+`LiveSession.record_decode_ratio`) are logged when a recording ends and served at `GET /api/debug/perf`. It is in-process
 only: nothing is persisted or sent anywhere, so it does not weaken the
 offline invariant.
 
 **The developer console** (`Ctrl`+`Shift`+`D` in the browser, or the overflow
-menu) is where both of those are read while dictating. It is a drawer under the
+menu) is where perf and the event diary are read while dictating. It is a drawer under the
 app rather than a page you navigate to, because the question it answers, *why
 was that slow?*, is asked mid-dictation. It shows two clocks in one stream:
 

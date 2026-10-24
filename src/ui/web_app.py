@@ -6,6 +6,8 @@ apply lives below them in ``features/``, ``medical/`` and ``dictation/``,
 shared with the desktop.
 """
 
+from __future__ import annotations
+
 import logging
 from contextlib import asynccontextmanager
 
@@ -47,17 +49,17 @@ def warm_up_singletons() -> None:
     seconds. Warming at startup on a background thread makes the first real
     request fast. Best-effort: warm-up never blocks or fails app startup.
     """
-    from src.dictation.warmup import postprocess_warmers, transcriber_warmer, warm_up_async
+    from src.dictation.warmup import postprocess_warmers, asr_warmer, warm_up_async
 
     settings = state.settings()
     model_size = resolve_model(settings.get("model_size"))
     live_model_size = resolve_model(settings.get("live_model_size"))
-    warmers = postprocess_warmers() + [transcriber_warmer(model_size)]
+    warmers = postprocess_warmers() + [asr_warmer(model_size)]
     # The live model decodes every word shown while the radiologist is still
     # speaking: leaving it lazy means the FIRST dictation after every
     # restart pays its full model-load cost on that exact path.
     if live_model_size != model_size:
-        warmers.append(transcriber_warmer(live_model_size))
+        warmers.append(asr_warmer(live_model_size))
     warm_up_async(warmers)
 
 

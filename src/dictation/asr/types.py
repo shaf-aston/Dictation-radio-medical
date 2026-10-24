@@ -1,6 +1,6 @@
 """Engine-agnostic transcription result types: the AsrEngine contract.
 
-Every recognition engine (faster-whisper today, ONNX/Parakeet at M3) returns
+Every recognition engine (Parakeet, faster-whisper, Deepgram) returns
 these shapes regardless of its own native API. Confidence is part of the
 contract, not an optional extra: the whole point of this seam is that
 downstream post-processing (M4's token contract) can gate a correction on how
@@ -98,7 +98,7 @@ class EngineCaps:
     """What an engine can actually provide: never assume, always check.
 
     ``word_confidence``: real per-word probabilities (not a constant stand-in).
-    ``hotwords``: decoder-level vocabulary biasing (M5).
+    ``hotwords``: decoder-level vocabulary biasing.
     ``cost``: what a call costs (see :class:`CostModel`); the stream layer
     sizes chunks and preview pacing from it (``stream/policy.py``).
     ``streaming``: also implements ``open_stream()`` (a live socket that
@@ -134,9 +134,9 @@ class TranscribeContext:
     condition_on_previous_text: bool = True
     temperature: Optional[Union[float, List[float]]] = None
     # Word-level confidence costs a little extra decode time; callers that
-    # don't need it (nothing downstream reads .words yet) can skip it.
+    # don't need it can skip it (the polish and the doubt marks read .words).
     want_word_confidence: bool = False
-    # Reserved for M5 (lexicon-biased decoding); unused engines ignore it.
+    # Lexicon-biased decoding; engines that cannot do it ignore it.
     hotwords: Optional[Sequence[str]] = None
 
 

@@ -1,16 +1,16 @@
-"""Live dictation over a push-fed audio buffer: the front-end-agnostic loop.
+"""Live dictation over a push-fed audio buffer: the one loop for both front-ends.
 
-The desktop's :class:`src.dictation.worker.LiveTranscribeWorker` runs the same
-chunk rules, but it is a ``QObject`` polling a growing WAV file. A browser has
-neither Qt nor a file, so the loop lives here owning only a buffer, and both
-front-ends keep one set of rules.
+The web feeds it PCM from a WebSocket; the desktop worker
+(:class:`src.dictation.worker.LiveTranscribeWorker`) feeds it the new samples
+of its growing WAV. Both get the same chunk rules because there is one loop.
 
 Owns no thread, socket, signal, or clock: the caller decides when to call
 :meth:`cycle`. That is what makes it drivable from an async handler and
 testable with a numpy array and no I/O.
 
 Two engines: a fast one for words that appear while you are still speaking, an
-accurate one that re-decodes after Stop.
+accurate one that re-decodes weak chunks, during recording (background polish)
+and after Stop.
 """
 
 from __future__ import annotations

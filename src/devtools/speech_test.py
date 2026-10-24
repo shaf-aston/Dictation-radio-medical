@@ -9,6 +9,8 @@ installed. Synthesis runs in its own process because the engine keeps
 per-thread state that hangs when reused inside a long-running server.
 """
 
+from __future__ import annotations
+
 import subprocess
 import sys
 import tempfile

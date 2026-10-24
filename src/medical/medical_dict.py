@@ -233,12 +233,11 @@ def is_known_word(word: str) -> bool:
 
 
 def get_correction_targets() -> List[str]:
-    """Curated radiology lexicon used as the fuzzy corrector's snap targets.
+    """The curated radiology lexicon (~870 terms).
 
-    Kept separate from :func:`get_medical_terms` on purpose: a typo is only ever
-    snapped to a genuine radiology term from this clean list, never to the
-    generic wordlist's chemistry/drug/obscure-procedure entries that previously
-    caused over-correction. Loads on first use; empty if the lexicon is absent.
+    Boosted in the SymSpell index so a tie prefers a radiology spelling; the
+    four-letter gate's only targets; Parakeet's hotwords; and the eval's
+    medical-term list. Loads on first use; empty if the lexicon is absent.
     """
     global _CORRECTION_TARGETS
     if _CORRECTION_TARGETS is not None:
