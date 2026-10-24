@@ -76,6 +76,10 @@ class LiveTranscribeWorker(QObject):
     """
 
     partial = Signal(str, int)
+    # After Stop, once the open tail is closed: the complete raw text, every
+    # word spoken. The report is handed back from this, never from the last
+    # preview, which is missing whatever was said after it.
+    handback = Signal(str)
     finished = Signal()
     progress = Signal(str)
     # Absolute-timed segments for each committed decode, used by the cloud
@@ -266,17 +270,17 @@ class LiveTranscribeWorker(QObject):
     def _run_final_polish(self) -> None:
         """After Stop: re-decode only what is worth it (see stream/polish.py).
 
-        The desktop hands the live text back the moment Stop is pressed
-        (recording_session._hand_back_live_text), so this is an upgrade that
-        lands later, never a wait.
+        The report is handed back (``handback``) as soon as the open tail is
+        closed, so this is an upgrade that lands later, never a wait.
         """
         assert self._session is not None
         self._feed_new_audio()
         t0 = time.time()
         # Settle the still-open tail first (a streaming engine flushes its
         # socket; otherwise the fast model decodes it), as the web does, so the
-        # polish below only upgrades text that is already complete.
+        # handback is complete and the polish only upgrades it.
         self._session.close_open_tail_fast()
+        self.handback.emit(self._session.committed_text())
         # This pass can take seconds, after the radiologist has pressed Stop:
         # say what it is doing rather than leaving the window looking hung.
         final = self._session.finalize(

@@ -279,6 +279,7 @@ def on_start_recording(window: MainWindow) -> None:
     window.live_worker.moveToThread(window.live_thread)
     window.live_thread.started.connect(window.live_worker.run)
     window.live_worker.partial.connect(window._on_partial_text)
+    window.live_worker.handback.connect(window._on_handback)
     window.live_worker.progress.connect(window._on_worker_progress)
     window.live_worker.segments.connect(_on_segments)
     window.live_worker.finished.connect(window._on_transcription_finished)
@@ -302,28 +303,33 @@ def on_stop_recording(window: MainWindow) -> None:
         window._level_bar.setValue(0)
         set_level_state(window._level_bar, "healthy")
         window.btn_stop.setEnabled(False)
+    # The worker hands the report back (on_handback) once the last words are
+    # decoded; until then, say it is working rather than looking hung.
+    window._status.last_progress = ("Processing final pass...", "busy")
+    window._show_status("Processing final pass...", state="busy")
     if window.live_worker is not None:
         window.live_worker.finalize()
-    _hand_back_live_text(window)
 
 
-def _hand_back_live_text(window: MainWindow) -> None:
-    """Give the radiologist the text they have been reading, now.
+def on_handback(window: MainWindow, raw: str) -> None:
+    """Give the radiologist the complete report, before the polish runs.
 
-    The confidence-targeted polish runs for seconds after Stop, and the desktop
-    used to sit on the finished report until it returned. But the live text is
-    already on screen and already theirs to edit: the polish is an *upgrade*,
-    not a gate. So the whole-document pass runs on the live transcript straight
-    away, Record comes back as soon as it lands, and the polished text replaces
-    it later under a higher sequence number (the same "never rewind" rule every
-    other pass obeys). This is the web path's behaviour, brought across.
+    ``raw`` is every word spoken: the worker sends it only after the open tail
+    is closed. Handing back the last live preview instead lost whatever was
+    said after that preview, and since the polish is dropped once the report
+    is edited, an early edit lost those words for good.
+
+    The confidence-targeted polish runs for seconds after this, but it is an
+    *upgrade*, not a gate. So the whole-document pass runs on this text
+    straight away, Record comes back as soon as it lands, and the polished
+    text replaces it later under a higher sequence number (the same "never
+    rewind" rule every other pass obeys). Same order as the web path.
     """
-    raw = getattr(window, "_last_raw_transcript", "")
-    if window.pp_worker is None or not raw.strip():
-        # Nothing decoded yet: there is no text to hand back, so the ordinary
-        # wait for the worker to finish is also the short one.
-        window._status.last_progress = ("Processing final pass...", "busy")
-        window._show_status("Processing final pass...", state="busy")
+    if not raw.strip():
+        return
+    # The final pass falls back to this if the polish changes nothing.
+    window._last_raw_transcript = raw
+    if window.pp_worker is None:
         return
     window._partial_seq += 1
     window._handback_seq = window._partial_seq

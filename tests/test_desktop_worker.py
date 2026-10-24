@@ -103,3 +103,23 @@ def test_desktop_partials_are_raw_text(tmp_path, monkeypatch):
     # Raw engine output is lower-case "wN" tokens with no added punctuation.
     assert partials and partials[-1] == partials[-1].lower()
     assert "." not in partials[-1]
+
+
+def test_handback_holds_every_spoken_word(tmp_path, monkeypatch):
+    # Stop hands the report back before the polish, and the polish is dropped
+    # once the radiologist edits. So the handback itself must already hold the
+    # last words, not just what the last preview had shown.
+    audio, spoken = sim.build_dictation(8.0, seed=7)
+    engine = _engine()
+    monkeypatch.setattr(worker_mod, "create_engine", lambda **_kw: engine)
+    path = str(tmp_path / "rec.wav")
+    sf.write(path, audio, SR, subtype="PCM_16")
+    worker = worker_mod.LiveTranscribeWorker(path, "tiny.en", "en", vad_enabled=False)
+    handbacks, done = [], threading.Event()
+    worker.handback.connect(handbacks.append, DIRECT)
+    worker.finished.connect(done.set, DIRECT)
+    worker.finalize()
+    threading.Thread(target=worker.run, daemon=True).start()
+    assert done.wait(20)
+    assert len(handbacks) == 1
+    assert _words(handbacks[0]) == [w.index for w in spoken]

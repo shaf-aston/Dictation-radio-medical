@@ -173,8 +173,11 @@ both:     → stream/live_session.py (one loop: Deepgram's live socket when it
 Both front-ends use two models: `live_model_size` (fast) decodes what appears
 while you speak, and `model_size` re-decodes the low-confidence chunks after
 Stop. Both sizes are Whisper's: on the default `local` engine Parakeet answers
-in both slots, so the polish is skipped (rule 8 below). **Stop never waits on that second pass in either front-end**: the live
-text is handed back at once and the polish upgrades it in the background.
+in both slots, so the polish is skipped (rule 8 below). **Stop never waits on that second pass in either front-end**: the
+still-open tail is decoded by the fast model first, then the complete text is
+handed back and the polish upgrades it in the background. Handing back the last
+preview instead loses the last words spoken, since the polish that would add
+them is dropped once the report is edited.
 Which makes one rule load-bearing, and it is written in both places: if the
 report has been edited since it was handed over, the polished version is
 dropped rather than applied. Overwriting a clinical report someone has already

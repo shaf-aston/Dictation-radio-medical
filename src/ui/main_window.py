@@ -54,7 +54,7 @@ from src.ui.views import (
 
 # Recording control
 from src.ui.recording_session import (
-    confirm_release, on_partial_text, on_processed_text, on_start_recording,
+    confirm_release, on_handback, on_partial_text, on_processed_text, on_start_recording,
     on_stop_recording, on_transcription_finished, setup_level_timer,
 )
 
@@ -741,6 +741,10 @@ class MainWindow(QMainWindow):
     @Slot(str, int)
     def _on_partial_text(self, transcript: str, committed_len: int) -> None:
         on_partial_text(self, transcript, committed_len)
+
+    @Slot(str)
+    def _on_handback(self, raw: str) -> None:
+        on_handback(self, raw)
 
     @Slot(str, list, int)
     def _on_processed_text(self, text: str, changes: list, seq: int) -> None:
