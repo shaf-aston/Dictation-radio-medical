@@ -225,6 +225,23 @@ unfinished one: the desktop disconnects the old worker's signals before the new
 session exists (`recording_session._abandon_unfinished_session`), so a stale
 pass cannot reach the new document.
 
+**A dictation owns the report until it is handed back.** In the browser that
+is `sessionPhase` (idle → starting → recording → finishing → idle): Record
+works only from idle, the editor is read-only, and New, Clear, a template, a
+phrase, undo and every exit (Copy/Save/Word) refuse until the hand-back
+(`stopped`) arrives. A whole-report write (New, Clear, template) goes through
+`replaceReport`: it asks first, stays one undo step away, and gives the page a
+new `reportId`. The server keeps findings answers per report id
+(`web/state.findings_for`), so an acknowledgement never answers for the next
+patient. Both front-ends ask about, write and audit only the findings still
+outstanding (`OutstandingFindings.pending`).
+
+**Files the two apps share are changed under a cross-process lock**
+(`core/file_lock.py`, `json_store.update_json`): settings, the model
+registry and learned corrections each re-read the file and apply only their
+own change. Temp audio lives in one folder per running app
+(`paths.temp_dir`), and start-up clears only folders whose app has exited.
+
 Front-end files are cached in memory keyed on the file's modification time
 (`web/pages._frontend_cache`), and every page and asset is served `no-store`. Both
 halves matter: without the mtime key an edit to app.js needed a server restart,

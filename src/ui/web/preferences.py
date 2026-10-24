@@ -85,7 +85,7 @@ async def reload_macros_route():
     except Exception as exc:
         logger.error("Failed to reload macros: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to reload macros") from exc
-    return state.macros_payload()
+    return {"macros": state.macros_payload()}
 
 
 def _resolve_template_path(template_name: str) -> Path:

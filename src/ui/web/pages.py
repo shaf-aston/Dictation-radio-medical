@@ -166,8 +166,16 @@ def bootstrap_payload() -> dict:
     }
 
 
+#: JSON inside an inline <script>: the HTML parser reads it before the script
+#: does, so "</script>", "<!--" and "&" in a value (a radiologist's name is
+#: enough) can end the script or change how it is parsed. Escaped as \uXXXX,
+#: which JSON reads back as the same character.
+_SCRIPT_UNSAFE = str.maketrans({"<": "\\u003c", ">": "\\u003e", "&": "\\u0026",
+                                "\u2028": "\\u2028", "\u2029": "\\u2029"})
+
+
 def _json_for_script(payload: object) -> str:
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).translate(_SCRIPT_UNSAFE)
 
 
 def render_html(theme: str) -> str:

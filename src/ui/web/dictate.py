@@ -285,7 +285,7 @@ async def dictate_socket(ws: WebSocket) -> None:
     except Exception as exc:
         logger.error("Live dictation failed: %s", exc, exc_info=True)
         event_log.emit("live", f"dictation failed: {exc}", level="error")
-        await send({"type": "error", "message": "Dictation failed. Your audio is still in the browser: press Retry."})
+        await send({"type": "error", "message": "Dictation stopped. The text so far is kept: record again to continue."})
     finally:
         if cycle_task is not None and not cycle_task.done():
             cycle_task.cancel()

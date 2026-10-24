@@ -99,17 +99,20 @@ def check_release(text: str) -> ReleaseCheck:
     if not text.strip():
         return _CLEAR
     try:
-        findings = scan_for_critical_findings(text)
-        if not findings:
-            return _CLEAR
-        return ReleaseCheck(
-            findings=tuple(findings),
-            summary=format_findings_for_dialog(findings),
-            worst_level=min(f.level for f in findings),
-        )
+        return _release_check(scan_for_critical_findings(text))
     except Exception as exc:  # a scanner fault must not block a report
         logger.warning("Critical findings scan failed: %s", exc)
         return _CLEAR
+
+
+def _release_check(findings: Sequence[CriticalFinding]) -> ReleaseCheck:
+    if not findings:
+        return _CLEAR
+    return ReleaseCheck(
+        findings=tuple(findings),
+        summary=format_findings_for_dialog(list(findings)),
+        worst_level=min(f.level for f in findings),
+    )
 
 
 def _finding_key(finding: CriticalFinding) -> str:
@@ -172,6 +175,17 @@ class OutstandingFindings:
         return tuple(
             f for f in self.check.findings if _finding_key(f) not in self.answered
         )
+
+    @property
+    def pending(self) -> ReleaseCheck:
+        """The outstanding findings, as the question the radiologist is asked.
+
+        Only these are asked about, written into the report and audited at an
+        exit: one already communicated needs no second call, and asking again
+        appended a second "communicated" sentence whose answer was never
+        audited. A finding added since is outstanding, so it is still asked.
+        """
+        return _release_check(self.outstanding)
 
     @property
     def count(self) -> int:

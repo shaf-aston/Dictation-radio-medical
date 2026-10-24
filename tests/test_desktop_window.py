@@ -117,3 +117,35 @@ def test_closing_mid_recording_keeps_the_report(desktop, tmp_path):
     desktop.close()
     saved = list((tmp_path / "data").rglob("*.txt"))
     assert any("Tension pneumothorax" in p.read_text() for p in saved)
+
+
+def test_a_finding_already_communicated_is_not_asked_again(desktop, monkeypatch, tmp_path):
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QDialog
+
+    from src.features import audit_log
+    from src.features.report_release import Communication
+    monkeypatch.setattr(audit_log, "_log_path", tmp_path / "audit.log")
+    asked = []
+
+    class Dialog:
+        def __init__(self, _parent, check, _name):
+            asked.append([f.term for f in check.findings])
+            self.add_to_report = SimpleNamespace(isChecked=lambda: True)
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def communication(self):
+            return Communication("Dr Patel", "telephone", datetime(2026, 10, 24, 10, 0), "")
+
+    monkeypatch.setattr(rs, "CommunicationDialog", Dialog)
+    monkeypatch.setattr(rs, "confirm_report_checks", lambda _w: True)
+    desktop.editor.setPlainText("Large right pneumothorax.")
+    assert rs.confirm_release(desktop) and rs.confirm_release(desktop)
+    desktop.editor.setPlainText(desktop.editor.toPlainText() + "\nPneumoperitoneum.")
+    assert rs.confirm_release(desktop)
+    assert asked == [["pneumothorax"], ["Pneumoperitoneum"]]
+    assert desktop.editor.toPlainText().count("communicated to Dr Patel") == 2

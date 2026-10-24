@@ -2,6 +2,17 @@ const THEME_STORAGE_KEY = window.__THEME_STORAGE_KEY__;
 const BOOTSTRAP = window.__BOOTSTRAP__;
 const PATIENT_STORAGE_KEY = "radio-dictate-web-patient";
 let isRecording = false;
+// A dictation owns the report from Record until its text is handed back:
+// idle → starting → recording → finishing → idle. Only idle may start one, and
+// nothing else may write the report, or let it leave, until it is idle again.
+// Record pressed while the last one was finishing threw its hand-back away
+// (usually the impression), and any other write was overwritten by the next
+// live update.
+let sessionPhase = 'idle';
+// Which report the server's findings state belongs to (state.findings_for):
+// a new one on load, New report, Clear and a template, so an acknowledgement
+// given for one patient can never answer for the next.
+let reportId = newReportId();
 let undoStack = [''];
 let undoIndex = 0;
 let themeRequestInFlight = false;
@@ -345,17 +356,52 @@ function announceReportChanged() {
     scheduleFindings();
 }
 
-function setEditorValue(value, { moveCaretToEnd = true } = {}) {
-    editor.value = value;
-    if (moveCaretToEnd && typeof editor.setSelectionRange === 'function') {
-        const end = editor.value.length;
-        editor.setSelectionRange(end, end);
-    }
+function newReportId() {
+    return window.crypto && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function sessionOpen() {
+    return sessionPhase !== 'idle';
+}
+
+function setSessionPhase(phase) {
+    sessionPhase = phase;
+    editor.readOnly = phase !== 'idle';
+    // The button is Record when idle and Stop while recording; in between it
+    // is neither.
+    dictateBtn.disabled = phase === 'starting' || phase === 'finishing';
+    syncReportButtons();
+    syncTemplateButton();
+}
+
+function refuseWhileDictating() {
+    if (!sessionOpen()) return false;
+    showStatus('Finish dictating first', 'is-busy', 2000);
+    return true;
+}
+
+// The one way a whole new report replaces the editor: New report, Clear and a
+// template. Never while a dictation owns the editor; asks first when *ask* is
+// given; stays one undo step away; and starts a new report, so the findings
+// answered for the old one stay with it.
+function replaceReport(text, { ask = '', caret = 'end' } = {}) {
+    if (refuseWhileDictating()) return false;
+    if (ask && !confirm(ask)) return false;
+    flushLearning();
+    forgetReport(reportId);
+    reportId = newReportId();
+    editor.value = text;
+    const pos = caret === 'start' ? 0 : text.length;
+    editor.setSelectionRange(pos, pos);
     pushUndoState();
     announceReportChanged();
+    return true;
 }
 
 function insertTextAtCursor(text) {
+    if (refuseWhileDictating()) return;
     const current = editor.value;
     const start = typeof editor.selectionStart === 'number' ? editor.selectionStart : current.length;
     const end = typeof editor.selectionEnd === 'number' ? editor.selectionEnd : current.length;
@@ -417,14 +463,17 @@ function applyBootstrapState() {
 }
 
 function syncReportButtons() {
-    exportWordBtn.disabled = !BOOTSTRAP.docx_available || reportRequestInFlight;
+    // A half-dictated report must not leave the app, nor be replaced under the
+    // dictation writing it.
+    const busy = reportRequestInFlight || sessionOpen();
+    exportWordBtn.disabled = !BOOTSTRAP.docx_available || busy;
     exportWordBtn.title = BOOTSTRAP.docx_available
         ? 'Export a Word document'
         : 'Install python-docx to enable Word export';
-    saveTxtBtn.disabled = reportRequestInFlight;
-    newReportBtn.disabled = reportRequestInFlight;
-    clearBtn.disabled = reportRequestInFlight;
-    copyBtn.disabled = reportRequestInFlight;
+    saveTxtBtn.disabled = busy;
+    newReportBtn.disabled = busy;
+    clearBtn.disabled = busy;
+    copyBtn.disabled = busy;
 }
 
 function schedulePreferenceSave() {
@@ -499,9 +548,10 @@ async function reloadMacros() {
         if (!response.ok) {
             throw new Error(result.detail || 'Macro reload failed');
         }
+        // Same shape as the preferences answer: {macros: {regions, selected_region}}.
         BOOTSTRAP.macros = result.macros || BOOTSTRAP.macros;
         populateMacroRegions();
-        macroRegionSelect.value = result.selected_region || macroRegionSelect.value;
+        macroRegionSelect.value = BOOTSTRAP.macros.selected_region || macroRegionSelect.value;
         renderMacros(currentMacroRegion());
         showStatus('Phrases reloaded', 'is-ok', 1500);
     } catch (err) {
@@ -546,6 +596,7 @@ function postReport(url, answers) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             text: editor.value,
+            report_id: reportId,
             patient: collectPatientInfo(),
             acknowledged: answers.acknowledged,
             proceed_with_warnings: answers.proceed_with_warnings,
@@ -638,7 +689,7 @@ function askCommunication(gate) {
                     const response = await fetch('/api/report/communication', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ text: editor.value, communication }),
+                        body: JSON.stringify({ text: editor.value, report_id: reportId, communication }),
                     });
                     if (!response.ok) throw new Error(`HTTP ${response.status}`);
                     const { text } = await response.json();
@@ -733,7 +784,7 @@ async function downloadReport(kind) {
 }
 
 function syncTemplateButton() {
-    loadTemplateBtn.disabled = templateLoadInFlight || !templateSelect.value;
+    loadTemplateBtn.disabled = templateLoadInFlight || !templateSelect.value || sessionOpen();
     loadTemplateBtn.title = templateSelect.value
         ? `Load ${templateSelect.value}`
         : 'Select a template first';
@@ -747,7 +798,12 @@ function setTemplateLoadingState(isLoading) {
 
 async function loadSelectedTemplate() {
     const name = templateSelect.value;
-    if (!name || templateLoadInFlight) {
+    if (!name || templateLoadInFlight || refuseWhileDictating()) {
+        return;
+    }
+    // Asked before the fetch, so a slow server cannot put a question in front
+    // of a report that has meanwhile changed.
+    if (editor.value.trim() && !confirm(`Replace the current report with ${name}? Undo brings it back.`)) {
         return;
     }
 
@@ -763,19 +819,13 @@ async function loadSelectedTemplate() {
             throw new Error(result.detail || 'Template load failed');
         }
 
-        editor.value = result.content || '';
-        announceReportChanged();
         // The top of the template, not the bottom. A freshly loaded report is
         // something you read down from the first heading; dropping the caret at
         // the end scrolled the first line half out of view and left the
         // radiologist looking at "IMPRESSION: 1." before they had read anything.
-        if (typeof editor.setSelectionRange === 'function') {
-            editor.setSelectionRange(0, 0);
-        }
+        if (!replaceReport(result.content || '', { caret: 'start' })) return;
         editor.scrollTop = 0;
         editor.focus();
-        undoStack = [editor.value];
-        undoIndex = 0;
         showStatus('Template loaded', 'is-ok', 2000);
     } catch (err) {
         showError('Template load failed: ' + err.message);
@@ -795,29 +845,16 @@ editor.addEventListener('input', updateWordCount);
 
 newReportBtn.addEventListener('click', () => {
     const hasContent = editor.value.trim() !== '' || Object.values(collectPatientInfo()).some(Boolean);
-    if (hasContent && !confirm('Clear the current report and patient information?')) {
-        return;
-    }
-    flushLearning();
-    editor.value = '';
-    undoStack = [''];
-    undoIndex = 0;
+    const ask = hasContent ? 'Clear the current report and patient information?' : '';
+    if (!replaceReport('', { ask })) return;
     editor.focus();
     resetPatientInfo();
     hideStatus();
-    announceReportChanged();
-    resetFindings();
 });
 
-// Clear with confirmation
 clearBtn.addEventListener('click', () => {
     if (editor.value.trim() === '') return;
-    if (confirm('Are you sure you want to clear all text? This cannot be undone.')) {
-        flushLearning();
-        setEditorValue('');
-        hideStatus();
-        resetFindings();
-    }
+    if (replaceReport('', { ask: 'Clear all text? Undo brings it back.' })) hideStatus();
 });
 
 saveTxtBtn.addEventListener('click', () => { flushLearning(); downloadReport('txt'); });
@@ -928,7 +965,7 @@ function selectField(forward) {
 }
 
 editor.addEventListener('keydown', (e) => {
-    if (isRecording) return;
+    if (sessionOpen() || dialogOpen()) return;
     const forward = keyMatches(e, 'next_field');
     if ((forward || keyMatches(e, 'previous_field')) && selectField(forward)) {
         e.preventDefault();
@@ -954,29 +991,40 @@ editor.addEventListener('keydown', (e) => {
     hint.replaceChildren(...parts);
 })();
 
-// Keyboard shortcuts
+function dialogOpen() {
+    return Boolean(document.querySelector('.scrim:not([hidden])'));
+}
+
+// Every app shortcut, in one place, under three rules. Nothing fires behind an
+// open dialog (F2 used to start recording under the critical-findings
+// question). A key held down repeats, and a toggle must not: a held F2 started
+// and stopped a recording within 120 ms. And the report's own editing keys act
+// only in the report: Ctrl+Z in the patient's name field undid the report.
+// The buttons it presses refuse for themselves when disabled.
 document.addEventListener('keydown', (e) => {
-    if (keyMatches(e, 'record_toggle')) {
+    if (dialogOpen()) return;
+    const inReport = e.target === editor;
+    const toggle = keyMatches(e, 'record_toggle')
+        || (e.code === 'Space' && e.target === document.body && !sessionOpen());
+    if (toggle) {
         e.preventDefault();
-        dictateBtn.click();
+        if (!e.repeat) dictateBtn.click();
         return;
     }
-    if (e.ctrlKey || e.metaKey) {
-        if (e.key === 'z' && !isRecording) { e.preventDefault(); undo(); }
-        if (e.key === 'y' && !isRecording) { e.preventDefault(); redo(); }
-        if (e.key === 'n') { e.preventDefault(); newReportBtn.click(); }
-        if (e.key === 's') { e.preventDefault(); saveTxtBtn.click(); }
-        if (e.shiftKey && e.key.toLowerCase() === 'w') { e.preventDefault(); exportWordBtn.click(); }
-        if (e.key === 't') { e.preventDefault(); loadTemplateBtn.click(); }
-        if (e.key === 'r') { e.preventDefault(); reloadMacrosBtn.click(); }
-    }
-    if (e.code === 'Space' && e.target === document.body && !isRecording) {
-        e.preventDefault();
-        dictateBtn.click();
-    }
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const key = e.key.toLowerCase();
+    const press = (button) => { e.preventDefault(); if (!e.repeat) button.click(); };
+    if (key === 'z' && inReport) { e.preventDefault(); undo(); }
+    else if (key === 'y' && inReport) { e.preventDefault(); redo(); }
+    else if (key === 'n') press(newReportBtn);
+    else if (key === 's') press(saveTxtBtn);
+    else if (key === 'w' && e.shiftKey) press(exportWordBtn);
+    else if (key === 't') press(loadTemplateBtn);
+    else if (key === 'r') press(reloadMacrosBtn);
 });
 
 function undo() {
+    if (sessionOpen()) return;
     if (undoIndex > 0) {
         undoIndex--;
         editor.value = undoStack[undoIndex];
@@ -986,6 +1034,7 @@ function undo() {
 }
 
 function redo() {
+    if (sessionOpen()) return;
     if (undoIndex < undoStack.length - 1) {
         undoIndex++;
         editor.value = undoStack[undoIndex];
@@ -1533,7 +1582,7 @@ function openSocket() {
         } else if (msg.type === 'error') {
             devMark('browser', msg.message || 'dictation failed', {}, { level: 'error' });
             showError(msg.message || 'Dictation failed.');
-            finishSession(null);
+            teardownMic().then(() => finishSession(null));
         }
     };
 
@@ -1542,9 +1591,11 @@ function openSocket() {
     // and both firing on the same failure raced to set the status text.
     // Only this recording's socket may end it: the previous one closing when its
     // polish finishes used to switch off the microphone mid-dictation.
-    const current = () => isRecording && socket === liveSocket;
+    const current = () => sessionOpen() && socket === liveSocket;
     socket.onerror = () => { if (current()) showError('Lost the connection to the dictation service.'); };
-    socket.onclose = () => { if (current()) teardownMic(); };
+    // Closed before handing the report back: keep what arrived, and give the
+    // editor back rather than leaving it locked to a session that is gone.
+    socket.onclose = () => { if (current()) teardownMic().then(() => finishSession(null)); };
     return socket;
 }
 
@@ -1572,6 +1623,7 @@ async function connectDictationSocket(attemptsLeft = 2) {
 // each per partial, which would both blow the 50-entry history in seconds and
 // spend the whole machine re-scanning half-sentences.
 function finishSession(okMessage) {
+    setSessionPhase('idle');
     stopTimer();
     setRecordingUi(false);
     previewText = '';
@@ -1639,6 +1691,8 @@ async function teardownMic() {
 // -- start / stop / cancel --------------------------------------------------
 
 async function startRecording() {
+    if (sessionOpen()) return;
+    setSessionPhase('starting');
     devRecordingStarted();
     // Before this, the button, the timer and the status all stayed idle while
     // the microphone permission, the audio graph and the socket were awaited:
@@ -1654,6 +1708,7 @@ async function startRecording() {
     } catch (err) {
         console.error('Could not start live dictation:', err);
         await teardownMic();
+        setSessionPhase('idle');
         showError('Could not start dictation: ' + (err.message || 'unknown error'));
         return;
     }
@@ -1679,6 +1734,7 @@ async function startRecording() {
         console.error('Microphone access denied:', err);
         showError('Microphone access denied. Allow microphone permissions in your browser settings, then try again.');
         await teardownMic();  // closes the audio graph built above
+        setSessionPhase('idle');
         tlStep('Microphone refused');
         sessionTimeline.hidden = true;
         return;
@@ -1729,6 +1785,7 @@ async function startRecording() {
     } catch (err) {
         console.error('Could not start live dictation:', err);
         await teardownMic();
+        setSessionPhase('idle');
         showError('Could not start dictation: ' + (err.message || 'unknown error'));
         return;
     }
@@ -1740,6 +1797,7 @@ async function startRecording() {
     // report its own, and text from the last one has already been read.
     uncertainWords = new Set();
     isRecording = true;
+    setSessionPhase('recording');
     setRecordingUi(true);
     startTimer();
     devMark('browser', 'recording started', {}, { ms: performance.now() - dev.recordStart });
@@ -1762,7 +1820,7 @@ document.getElementById('speechTestForm').addEventListener('submit', async (even
     event.preventDefault();
     const text = document.getElementById('speechTestText').value.trim();
     const btn = document.getElementById('speechTestBtn');
-    if (!text || isRecording) return;
+    if (!text || sessionOpen()) return;
     btn.disabled = true;
     try {
         const response = await fetch('/api/dev/speak', {
@@ -1793,7 +1851,10 @@ document.getElementById('speechTestForm').addEventListener('submit', async (even
 });
 
 async function stopRecording() {
-    if (!isRecording) return;
+    if (sessionPhase !== 'recording') return;
+    // Owned until the hand-back ('stopped') arrives: it carries the last
+    // section, which a recording started meanwhile would have thrown away.
+    setSessionPhase('finishing');
     stopPressedAt = performance.now();
     devMark('browser', 'stop pressed', { updates: dev.updates });
     await teardownMic();
@@ -1823,6 +1884,7 @@ async function cancelRecording() {
     livePreview.hidden = true;
     stopTimer();
     setRecordingUi(false);
+    setSessionPhase('idle');
     // Discard means discard: the session it described is gone, so its timeline
     // goes with it rather than sitting under a report it no longer describes.
     sessionTimeline.hidden = true;
@@ -1831,7 +1893,8 @@ async function cancelRecording() {
 }
 
 dictateBtn.addEventListener('click', () => {
-    if (isRecording) stopRecording(); else startRecording();
+    if (sessionPhase === 'recording') stopRecording();
+    else if (sessionPhase === 'idle') startRecording();
 });
 cancelBtn.addEventListener('click', cancelRecording);
 
@@ -2076,18 +2139,26 @@ function placeTermPop() {
     termPop.style.top = `${Math.round(top)}px`;
 }
 
+// Is the word a suggestion was looked up for still where it was? Script writes
+// (the polish, undo, the communication sentence) move text without an input
+// event, and replacing by stale offsets rewrites the wrong characters.
+function stillThere(range) {
+    return Boolean(range) && !sessionOpen()
+        && editor.value.slice(range.start, range.end) === range.word;
+}
+
 function applyTermSuggestion(term) {
     const range = termPopSelection;
     hideTermPop();
-    if (!range) return;
-    learnChoice(editor.value.slice(range.start, range.end), term);
+    if (!stillThere(range)) return;
+    learnChoice(range.word, term);
     editor.value = editor.value.slice(0, range.start) + term + editor.value.slice(range.end);
     const caret = range.start + term.length;
     editor.setSelectionRange(caret, caret);
     editor.focus();
     pushUndoState();
     noteLookupUsed();
-    scheduleMarks();
+    announceReportChanged();
 }
 
 // ---------------------------------------------------------------------------
@@ -2201,7 +2272,7 @@ function syncMarksScroll() {
 async function rescanMarks() {
     // Recording rewrites the report every second; marks under moving text are
     // noise, and the spans would be stale before they were painted.
-    if (isRecording) {
+    if (sessionOpen()) {
         clearMarks();
         return;
     }
@@ -2319,14 +2390,14 @@ async function rescanFindings() {
     // stale before they were drawn. Stand down: and leave the last answer on
     // screen rather than replacing it with "No findings", which would claim a
     // report is clear at the exact moment nothing is re-checking it.
-    if (isRecording) return;
+    if (sessionOpen()) return;
     findingsRequest += 1;
     const request = findingsRequest;
     try {
         const response = await fetch('/api/report/findings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: editor.value }),
+            body: JSON.stringify({ text: editor.value, report_id: reportId }),
         });
         if (request !== findingsRequest) return;   // a newer edit won
         if (!response.ok) return;
@@ -2343,12 +2414,17 @@ function scheduleFindings() {
     findingsTimer = setTimeout(rescanFindings, FINDINGS_DELAY_MS);
 }
 
-async function resetFindings() {
-    // A new report: the previous patient's acknowledgements must not answer for
-    // this one's identical finding.
+// The report was replaced: the server can forget its findings and answers.
+// The page has already moved to a new report id, so this is housekeeping, not
+// what keeps one patient's answers from the next.
+async function forgetReport(id) {
     findingsRequest += 1;
     try {
-        const response = await fetch('/api/report/findings/reset', { method: 'POST' });
+        const response = await fetch('/api/report/findings/reset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ report_id: id }),
+        });
         if (response.ok) paintFindings(await response.json());
     } catch (err) {
         console.warn('Could not reset findings:', err);
@@ -2400,7 +2476,7 @@ function showTermPop(result, range) {
 async function lookupSelectedTerm() {
     // Recording rewrites the report every second; a panel pinned to text that
     // is moving underneath it is noise. Lookups are for reviewing.
-    if (isRecording || document.activeElement !== editor) {
+    if (sessionOpen() || document.activeElement !== editor) {
         hideTermPop();
         return;
     }
@@ -2413,8 +2489,8 @@ async function lookupSelectedTerm() {
     let end = editor.selectionEnd;
     while (start < end && /\s/.test(raw[start])) start += 1;
     while (end > start && /\s/.test(raw[end - 1])) end -= 1;
-    const range = { start, end, marked: markedSpans.some((m) => m.start === start && m.end === end) };
     const selected = raw.slice(start, end);
+    const range = { start, end, word: selected, marked: markedSpans.some((m) => m.start === start && m.end === end) };
     if (!selected) {
         hideTermPop();
         return;
@@ -2446,7 +2522,7 @@ function initTermPop() {
     // One click on an underlined word selects it, which opens its fixes. The
     // marks sit behind the textarea, so the click is matched by caret offset.
     editor.addEventListener('click', () => {
-        if (isRecording || editor.selectionStart !== editor.selectionEnd) return;
+        if (sessionOpen() || editor.selectionStart !== editor.selectionEnd) return;
         const at = editor.selectionStart;
         const hit = markedSpans.find((m) => at >= m.start && at <= m.end);
         if (hit) editor.setSelectionRange(hit.start, hit.end);
@@ -2454,8 +2530,8 @@ function initTermPop() {
     document.getElementById('tpKeep').addEventListener('click', () => {
         const range = termPopSelection;
         hideTermPop();
-        if (!range) return;
-        const word = editor.value.slice(range.start, range.end);
+        if (!stillThere(range)) return;
+        const word = range.word;
         uncertainWords.delete(word.toLowerCase());
         learnChoice(word, null).then(scheduleMarks);
         editor.setSelectionRange(range.end, range.end);

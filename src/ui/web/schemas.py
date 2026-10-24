@@ -46,10 +46,20 @@ if tuple(PatientInfo.model_fields) != PATIENT_KEYS:
     )
 
 
+#: Which open report a request is about (state.findings_for); the page makes
+#: one per report. Blank for a client that does not send one.
+ReportId = Field(default="", max_length=64)
+
+
 class TextRequest(BaseModel):
     """Just the report text, for the endpoints that only read it."""
 
     text: str = ""
+    report_id: str = ReportId
+
+
+class ReportRef(BaseModel):
+    report_id: str = ReportId
 
 
 class SessionEditsRequest(BaseModel):
@@ -87,11 +97,13 @@ class CommunicationIn(BaseModel):
 
 class StatementRequest(BaseModel):
     text: str = ""
+    report_id: str = ReportId
     communication: CommunicationIn
 
 
 class ReportRequest(BaseModel):
     text: str = ""
+    report_id: str = ReportId
     patient: PatientInfo = Field(default_factory=PatientInfo)
     #: None = the client has not yet been shown the critical-findings warning.
     #: True = radiologist confirmed verbal communication; False = proceeded anyway.

@@ -751,8 +751,9 @@ def confirm_release(window: MainWindow) -> bool:
     The scan runs through ``window.findings`` so the answer given here is the
     same state the gutter marks and the count pill show: acknowledging settles
     the pill, and a finding typed in afterwards puts it back to outstanding.
-    The dialog itself still appears at every exit, answered or not: asking
-    twice costs a click, and not asking could cost a phone call.
+    Only outstanding findings are asked about (``OutstandingFindings.pending``):
+    one already communicated needs no second call, and a second answer used to
+    append a second "communicated" sentence that was never audited.
     """
     if window.recorder.is_recording:
         # The live loop is still rewriting the end of the report.
@@ -762,12 +763,11 @@ def confirm_release(window: MainWindow) -> bool:
         return False
 
     window.findings.update(window.editor.toPlainText())
-    check = window.findings.check
     # Captured before the dialog: msg.exec() runs a nested event loop, and the
     # gutter's debounced re-scan can fire inside it and replace window.findings
-    # .check. Answering and auditing from these locals means the radiologist's
+    # .check. Answering and auditing from this local means the radiologist's
     # answer always applies to exactly what they were shown.
-    outstanding = window.findings.outstanding
+    check = window.findings.pending
     if not check.needs_acknowledgement:
         window.finding_gutter.show_state()
         yield_document(window)
@@ -793,10 +793,8 @@ def confirm_release(window: MainWindow) -> bool:
                 cursor.movePosition(cursor.MoveOperation.Start, cursor.MoveMode.KeepAnchor)
                 cursor.insertText(updated)
                 cursor.endEditBlock()
-    # Only what was still outstanding is audited: re-exporting a report whose
-    # findings were already communicated must not log a second phone call.
     record_release(
-        outstanding, window._get_patient_info().get("id", ""), acknowledged, comm
+        check.findings, window._get_patient_info().get("id", ""), acknowledged, comm
     )
     if acknowledged:
         window.findings.acknowledge(check)
