@@ -388,9 +388,11 @@ def build_libri(clip_count: int = _LIBRI_CLIPS) -> int:
 
     if not archive.exists():
         logger.info("Downloading LibriSpeech test-clean (~346 MB) from %s", _LIBRI_URL)
+        # Closed before the move: Windows refuses to move a file that is still open.
         with tempfile.NamedTemporaryFile(delete=False, suffix=".tar.gz") as tmp:
-            urllib.request.urlretrieve(_LIBRI_URL, tmp.name)  # noqa: S310 - fixed https URL
-            shutil.move(tmp.name, archive)
+            pass
+        urllib.request.urlretrieve(_LIBRI_URL, tmp.name)  # noqa: S310 - fixed https URL
+        shutil.move(tmp.name, archive)
     logger.info("Extracting %d utterances", clip_count)
 
     import soundfile as sf

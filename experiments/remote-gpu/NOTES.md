@@ -69,12 +69,13 @@ Two halves, kept apart. Run commands, file-by-file flow and glossary: [CORE-FLOW
 | parakeet-rad-v2 (int8) | 30.94% | 24.32% | 7.4 |
 
   On real accented voices int8 rounding is far worse than on the tts set: it nearly triples term error (11.35% -> 32.43%). At the same precision, v2's training cuts term error by a quarter (32.43% -> 24.32%), so the training does help real voices, but the rounding still swamps it. v3 (fp32 export) is the test that decides it. These numbers are not comparable with `replay.py`'s on the same clips: the two average differently.
-- Parakeet v3 `parakeet-rad-v3` (2026-10-24): v2's recipe, fp32 export kept. compare.py, raw text, against stock fp32 (what the app runs):
+- Parakeet v3 `parakeet-rad-v3` (2026-10-24): v2's recipe, fp32 export kept. Judged on real voices only (the tts sets overlap the training lines), every clip through both models, paired 95% ranges over clips. Full table, leak check and the words it fixed and broke: `models/parakeet-rad-v3/README.md`.
 
-| Set | Stock term err | v3 term err | Stock WER | v3 WER |
-|---|---|---|---|---|
-| tts clean | 11.72% | 9.81% | 8.06% | 7.34% |
-| tts noise | 16.35% | 13.35% | 9.68% | 8.84% |
-| eka real voices | 11.35% | 7.03% | 22.90% | 19.70% |
+| Set | WER change (95% range) | Term err stock -> v3 (95% range of change) |
+|---|---|---|
+| eka clean | -3.20 (-5.03 to -1.49) | 11.35% -> 7.03%, 21 -> 13 of 185 missed (-8.84 to 0.00) |
+| eka noise | -1.00 (-2.59 to +0.56) | 18.38% -> 18.92% (-4.00 to +4.84) |
+| eka quiet | -1.07 (-2.71 to +0.54) | 22.70% -> 20.54% (-6.12 to +1.75) |
+| libri | +0.33 (-0.06 to +0.77) | no medical terms |
 
-  Wins: the first version to beat what the app runs. Term error falls on every set, by 38% on the real voices; WER never rises. So the training did help, and int8 rounding was what hid it in v2. Speed is the same network at the same precision; the measured s/min gap flips sign between sets, so it is machine load. Caveats: Eka labels are noisy and its speakers are all Indian-English. Next: one optional setting pointing Parakeet at `models/parakeet-rad-v3/model`, default off, then a click-through in the app.
+  Promising, not proven; not adopted. The only change that beats luck is WER on clean real voices. The medical-word gain there is 8 words and its range reaches zero; noise and quiet show nothing; general English is 0.33 points worse, a tie at best and just over the 0.3 allowed. No leak: 0 Eka phrases or four-word runs in training, 0 shared EdAcc speakers. Caveat: the synthetic training text came from the app's own word list, the same one term error counts. Next: more real medical words decide it, the user's own voice (`own` set) reading reports; wiring v3 in (one setting, default off) is the user's call after that.

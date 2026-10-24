@@ -6,17 +6,42 @@
 - data: 1500 local clips from data\train (list: train_manifest.jsonl) plus Kaggle sources ['paultimothymooney/medical-speech-transcription-and-intent']
 - settings: parakeet.json
 - note: v2 recipe, fp32 export kept (rerun after Kaggle session error with no log)
-- measured error rate (compare.py, 2026-10-24, raw model text; tts sets 30 clips each, eka 140 real Indian-English dictations never seen in training):
 
-| Set | Model | WER | Unseen-voice WER | Term err | s/min |
-|---|---|---|---|---|---|
-| tts (clean) | stock fp32 (what the app runs) | 8.06% | 11.49% | 11.72% | 5.9 |
-| tts (clean) | parakeet-rad-v3 | 7.34% | 11.30% | 9.81% | 6.7 |
-| tts_noise | stock fp32 | 9.68% | 13.41% | 16.35% | 5.7 |
-| tts_noise | parakeet-rad-v3 | 8.84% | 13.41% | 13.35% | 8.2 |
-| eka (real voices) | stock fp32 | 22.90% | 22.90% | 11.35% | 7.3 |
-| eka (real voices) | parakeet-rad-v3 | 19.70% | 19.70% | 7.03% | 6.1 |
+## Measured on real voices only (2026-10-24)
 
-- verdict: wins. First version to beat what the app runs. Term error falls on every set (clean 16%, noise 18%, real voices 38%: 11.35% -> 7.03%), and WER never rises (unseen-voice WER ties in noise, falls elsewhere). Real voices are the honest set and clear the bar there (a quarter AND 2 points); the tts sets clear it only partly, and they overlap the training lines anyway. Speed: same network at the same precision, so same work per clip; the measured gap flips sign between sets (slower on tts, faster on eka), which is load on this machine, not the model. Limits: Eka labels are noisy, and all its speakers are Indian-English. Next: one optional setting that points Parakeet at this folder, default off.
+Stock fp32 (what the app runs) against v3, the same clips through both, raw model text.
+"95% range" is a paired bootstrap over clips (10,000 resamples): if it crosses zero, the change could be luck.
+The synthetic tts sets are left out: their voices and vocabulary overlap the training lines.
+
+| Set | WER stock | WER v3 | WER change (95% range) | Term err stock | Term err v3 | Term change (95% range) |
+|---|---|---|---|---|---|---|
+| eka (140 real Indian-English clips) | 22.90% | 19.70% | -3.20 (-5.03 to -1.49) | 11.35% (21 of 185 missed) | 7.03% (13 missed) | -4.32 (-8.84 to 0.00) |
+| eka_noise (same voices, added noise) | 28.88% | 27.88% | -1.00 (-2.59 to +0.56) | 18.38% (34 missed) | 18.92% (35 missed) | +0.54 (-4.00 to +4.84) |
+| eka_quiet (same voices, turned down) | 31.47% | 30.41% | -1.07 (-2.71 to +0.54) | 22.70% (42 missed) | 20.54% (38 missed) | -2.16 (-6.12 to +1.75) |
+| libri (100 clips, general English) | 1.85% | 2.18% | +0.33 (-0.06 to +0.77) | no medical terms | | |
+
+Medical words v3 got right that stock missed, and the reverse (eka, clean):
+- fixed 12: popliteal, cholelithiasis, renal, metatarsal, iliac, ankylosing, chondromalacia, lumbar, spondylolisthesis, malleolus, fissure, venous
+- broke 4: rectal, ischemia, spinal, inflammatory
+
+In noise it fixed 7 and broke 8; quiet, fixed 9 and broke 5.
+
+## Leak check
+
+- Test sentences: 0 of 723 distinct Eka phrases appear in the training text, and 0 of 878 four-word runs. The same check on two-word runs finds 85 shared pairs, so the method does catch overlap when it exists.
+- Speakers: EdAcc trained on its validation split and was held out on test; 0 of 54 test speakers are among the 56 training speakers. Eka was never trained on.
+- The Kaggle "validate" score is not used: its phrases overlap the training phrases.
+- Not checked line by line: Hani89 (38 synthetic clips, 0.4% of training).
+- Caveat: the synthetic training sentences were written from the app's own medical word list, which is the same list term error counts. That is the vocabulary the app needs, but it favours v3 on exactly that score.
+
+## Verdict: promising, not proven. Not adopted.
+
+- Clear gain: overall accuracy on clean real voices (WER down 3.2 points; the range stays below zero).
+- Medical words on clean real voices look better (21 missed down to 13), but that is 8 words out of 185, and the range reaches zero. It does not clear the bar (a quarter AND 2 points) with confidence.
+- Noisy and quiet audio: no change that beats luck.
+- General English: 0.33 points worse, just over the 0.3 allowed; the range includes zero, so it is a tie at best.
+- Speed: same network at the same precision; decode time on libri was 86s stock vs 80s v3, which is machine load, not the model.
+- Limits: Eka labels are noisy, all its speakers are Indian-English, and it is short phrases, not reports.
+- What would decide it: more real medical words. The user's own recorded voice (`own` set) reading real reports is the test; wiring v3 in as an optional setting (default off) is the user's call after that.
 
 Load with: onnx_asr.load_model('nemo-conformer-tdt', r'C:\Users\Shaf\Downloads\vibe-code-projs\radio-dictate\experiments\remote-gpu\models\parakeet-rad-v3\model', quantization=None)
