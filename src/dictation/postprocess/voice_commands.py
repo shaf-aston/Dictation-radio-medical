@@ -172,6 +172,12 @@ _SPOKEN_PATTERNS: List[Tuple[Pattern, Callable[[re.Match], str]]] = [
 ]
 
 
+#: Every spoken punctuation command, as one pattern. What a command writes
+#: (a break, a stop) joins with the text on either side, so the live
+#: post-processor never splits its text beside one (incremental.py).
+SPOKEN_COMMANDS = "|".join(f"(?:{pattern.pattern})" for pattern, _ in _SPOKEN_PATTERNS)
+
+
 def apply_spoken_commands(text: str) -> str:
     """Replace spoken punctuation tokens with their symbol equivalents."""
     for pattern, repl in _SPOKEN_PATTERNS:

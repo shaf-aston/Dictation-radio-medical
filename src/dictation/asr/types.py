@@ -22,7 +22,17 @@ class Word:
     text: str
     start: float
     end: float
-    confidence: float  # 0..1, e.g. faster-whisper's exp(Word.probability)
+    #: A probability in [0, 1] (faster-whisper's exp(Word.probability)), or
+    #: None when the engine cannot measure one. Checked here, so no engine can
+    #: hand on a score that is not a probability: the hotword decoder's scores
+    #: carry the hotword bonus (up to 2.7), which made every boosted word look
+    #: the most certain of all and switched the confidence polish off.
+    confidence: Optional[float]
+
+    def __post_init__(self) -> None:
+        c = self.confidence
+        if c is not None and not 0.0 <= c <= 1.0 + 1e-6:
+            raise ValueError(f"word confidence {c!r} for {self.text!r} is not a probability")
 
 
 @dataclass(frozen=True)
@@ -43,9 +53,8 @@ class AsrSegment:
         the two would make the M4 correction gate either over- or under-fire
         for every engine that lacks word timestamps.
         """
-        if not self.words:
-            return None
-        return sum(w.confidence for w in self.words) / len(self.words)
+        known = [w.confidence for w in self.words if w.confidence is not None]
+        return sum(known) / len(known) if known else None
 
 
 @dataclass(frozen=True)

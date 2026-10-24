@@ -74,3 +74,24 @@ def test_engine_label_names_what_actually_answers(monkeypatch, tmp_path):
     assert factory.describe_engine(_Settings({**base, "asr_hotwords": False})) == "Parakeet"
     assert factory.describe_engine(_Settings({**base, "parakeet_model_dir": str(tmp_path)})) == "Parakeet (your fine-tune)"
     assert factory.describe_engine(_Settings({**base, "asr_engine": "deepgram"})) == "Deepgram (cloud)"
+
+
+def test_a_word_confidence_must_be_a_probability():
+    from src.dictation.asr.types import Word
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        Word("pneumothorax", 0.0, 1.0, 1.67)       # a hotword-boosted beam score
+    assert Word("pneumothorax", 0.0, 1.0, None).confidence is None
+
+
+def test_pieces_without_probabilities_give_words_without_confidence():
+    from src.dictation.asr.engines.parakeet_engine import merge_pieces
+    from src.dictation.asr.types import AsrSegment
+    words = merge_pieces([" no", " eff", "usion"], [0.0, 0.4, 0.6], None)
+    assert [w.text for w in words] == ["no", "effusion"]
+    assert all(w.confidence is None for w in words)
+    assert AsrSegment("no effusion", 0.0, 1.0, words).confidence is None
+
+
+def test_the_hotword_engine_claims_no_word_confidence():
+    assert ParakeetHotwordEngine().capabilities().word_confidence is False

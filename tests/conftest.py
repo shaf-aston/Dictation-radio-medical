@@ -103,3 +103,7 @@ def desktop(tmp_path, monkeypatch):
     yield window
     window.close()
     pump()
+    # Destroyed here, while Qt is running, not whenever Python's collector
+    # gets to it in some later test.
+    window.deleteLater()
+    pump()

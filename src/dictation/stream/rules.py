@@ -70,7 +70,7 @@ def low_confidence_words(result: AsrResult, ceiling: float) -> set:
     out = set()
     for seg in result.segments:
         for word in seg.words:
-            if word.confidence >= ceiling:
+            if word.confidence is None or word.confidence >= ceiling:
                 continue
             cleaned = word.text.strip().strip(".,;:!?()[]{}\"'").lower()
             if cleaned:
