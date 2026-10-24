@@ -11,10 +11,9 @@ import logging
 from dataclasses import asdict
 
 import anyio
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException
 
 from src.core import event_log
-from src.devtools import speech_test
 from src.features import audit_log
 from src.features.adaptive_learning import get_adaptive_learning, learn_from_session
 from src.features.edit_tracking import record_session_edits
@@ -114,20 +113,3 @@ async def learn_choice_endpoint(payload: TermChoiceRequest):
         event_log.emit("learn", "accepted a fix" if payload.replacement else "kept a word",
                        word=payload.word, replacement=payload.replacement)
     return {"learned": learned}
-
-
-@router.post("/api/dev/speak")
-async def dev_speak_endpoint(payload: TextRequest):
-    """Typed text spoken as a WAV, for testing dictation without a voice.
-
-    Developer tool (src/devtools/speech_test.py); the page plays the WAV into
-    the normal recording path in place of the microphone.
-    """
-    try:
-        wav = await anyio.to_thread.run_sync(speech_test.speak_to_wav, payload.text)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.error("Test voice failed: %s", exc)
-        raise HTTPException(status_code=500, detail="Speech synthesis failed") from exc
-    return Response(content=wav, media_type="audio/wav")

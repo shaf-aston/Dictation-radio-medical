@@ -36,6 +36,8 @@ FRONTEND_FILES = {
     "app.html": "text/html; charset=utf-8",
     "app.css": "text/css; charset=utf-8",
     "app.js": "text/javascript; charset=utf-8",
+    # The developer Test voice (src/devtools), separate so it can be removed.
+    "speechtest.js": "text/javascript; charset=utf-8",
     # Loaded into the AudioWorklet only when the browser cannot give a 16 kHz
     # context on the microphone (Firefox).
     "resampler.js": "text/javascript; charset=utf-8",

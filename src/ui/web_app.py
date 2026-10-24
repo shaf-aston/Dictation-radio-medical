@@ -65,6 +65,13 @@ def create_app() -> FastAPI:
     application = FastAPI(title="Radio Dictate Web", lifespan=lifespan)
     for module in (pages, preferences, report, terms, diagnostics, dictate):
         application.include_router(module.router)
+    # The developer Test voice, when its folder is there (src/devtools).
+    try:
+        from src.ui.web import devtools
+    except ImportError:
+        logger.info("No developer tools installed")
+    else:
+        application.include_router(devtools.router)
     application.add_middleware(LocalOnlyMiddleware, hosts=allowed_hosts(state.settings().get))
     return application
 
