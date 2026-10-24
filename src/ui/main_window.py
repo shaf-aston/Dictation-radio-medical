@@ -122,6 +122,7 @@ class MainWindow(QMainWindow):
     patient_referrer: QLineEdit
     patient_accession: QLineEdit
     patient_sex: QComboBox
+    patient_inputs: dict
     splitter: QSplitter
     macros_panel: QFrame
     macro_region_combo: QComboBox
@@ -634,13 +635,11 @@ class MainWindow(QMainWindow):
         self.flush_dictation_edits()
         self.replace_report("")
         self._start_new_report_findings()
-        self.patient_name.clear()
-        self.patient_id.clear()
-        self.patient_dob.clear()
-        self.patient_study_date.clear()
-        self.patient_referrer.clear()
-        self.patient_accession.clear()
-        self.patient_sex.setCurrentIndex(0)
+        for widget in self.patient_inputs.values():
+            if isinstance(widget, QComboBox):
+                widget.setCurrentIndex(0)
+            else:
+                widget.clear()
         self._show_status("New report started.")
 
     def _load_report_from_path(self, path: str) -> None:
@@ -801,17 +800,10 @@ class MainWindow(QMainWindow):
 
     def _get_patient_info(self) -> dict:
         """Read the patient form into the shared patient-info dict."""
-        fields = {
-            "name": self.patient_name,
-            "id": self.patient_id,
-            "dob": self.patient_dob,
-            "study_date": self.patient_study_date,
-            "referring": self.patient_referrer,
-            "accession": self.patient_accession,
-        }
-        info: dict[str, object] = {key: widget.text() for key, widget in fields.items()}
-        info["sex"] = self.patient_sex.currentText()
-        return normalize_patient_info(info)
+        return normalize_patient_info({
+            key: widget.currentText() if isinstance(widget, QComboBox) else widget.text()
+            for key, widget in self.patient_inputs.items()
+        })
 
     def _default_filename(self, ext: str) -> str:
         return report_filename(self._get_patient_info(), ext)

@@ -816,7 +816,9 @@ def update_level_display(window: MainWindow) -> None:
     if clipping:
         set_level_state(window._level_bar, "clipping")
         window._show_status("Microphone clipping: reduce input gain", 1500, state="warn")
-    elif level < 0.03:
+    elif getattr(window.recorder, "is_quiet", False):
         set_level_state(window._level_bar, "low")
+        window._show_status("Microphone is very quiet: check it is the right one, and its level",
+                            1500, state="warn")
     else:
         set_level_state(window._level_bar, "healthy")

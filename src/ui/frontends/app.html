@@ -221,33 +221,33 @@
                     <div class="grid">
                         <p class="field">
                             <label for="patientName">Name</label>
-                            <input id="patientName" type="text" autocomplete="off">
+                            <input id="patientName" data-patient="name" type="text" autocomplete="off">
                         </p>
                         <p class="field">
                             <label for="patientId">Patient ID</label>
-                            <input id="patientId" type="text" autocomplete="off">
+                            <input id="patientId" data-patient="id" type="text" autocomplete="off">
                         </p>
                         <p class="field">
                             <label for="patientDob">Date of birth</label>
-                            <input id="patientDob" type="text" placeholder="dd/mm/yyyy" autocomplete="off">
+                            <input id="patientDob" data-patient="dob" type="text" placeholder="dd/mm/yyyy" autocomplete="off">
                         </p>
                         <p class="field">
                             <label for="patientStudyDate">Study date</label>
-                            <input id="patientStudyDate" type="text" autocomplete="off">
+                            <input id="patientStudyDate" data-patient="study_date" type="text" autocomplete="off">
                         </p>
                         <p class="field">
                             <label for="patientReferrer">Referring clinician</label>
-                            <input id="patientReferrer" type="text" autocomplete="off">
+                            <input id="patientReferrer" data-patient="referring" type="text" autocomplete="off">
                         </p>
                         <p class="field">
                             <label for="patientAccession">Accession number</label>
-                            <input id="patientAccession" type="text" autocomplete="off">
+                            <input id="patientAccession" data-patient="accession" type="text" autocomplete="off">
                         </p>
                         <!-- Optional. Only F and M are checked against the
                              report; blank or X and the sex check is skipped. -->
                         <p class="field">
                             <label for="patientSex">Sex</label>
-                            <select id="patientSex">
+                            <select id="patientSex" data-patient="sex">
                                 <option value="">Not recorded</option>
                                 <option value="F">Female</option>
                                 <option value="M">Male</option>

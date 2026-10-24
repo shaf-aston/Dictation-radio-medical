@@ -206,3 +206,12 @@ def test_the_marks_hint_retires_after_the_set_number_of_uses():
     assert note_lookup_used(settings) is True
     assert note_lookup_used(settings) is False
     assert note_lookup_used(settings) is False and settings["term_lookup_uses"] == 2
+
+
+def test_the_web_patient_form_has_exactly_the_schemas_fields():
+    import re
+
+    from src.core.patient_schema import PATIENT_KEYS
+    from src.ui.web.pages import frontend_file
+    keys = tuple(re.findall(r'data-patient="([a-z_]+)"', frontend_file("app.html")))
+    assert keys == PATIENT_KEYS

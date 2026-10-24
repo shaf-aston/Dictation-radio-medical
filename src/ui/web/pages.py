@@ -12,6 +12,7 @@ from src.core.paths import templates_dir
 from src.core.patient_schema import empty_patient_info
 from src.core.settings import get_default
 from src.dictation.asr.factory import describe_engine
+from src.dictation import mic
 from src.dictation.asr.models import SUPPORTED_MODELS
 from src.dictation.postprocess.pipeline import CLEANUP_LEVEL_LABELS
 from src.features import template_fields
@@ -148,6 +149,7 @@ def bootstrap_payload() -> dict:
         # lives in settings rather than the browser so using the feature on the
         # desktop also retires the hint here.
         "lookup_hint_active": term_lookup.lookup_hint_active(settings.get),
+        "mic": mic.as_payload(),
         # The developer console's scroll-back is the server's ring, not a copy.
         "event_log_max": int(settings.get("event_log_max")),
         # The first-launch clinical disclaimer, shipped with the rest of the

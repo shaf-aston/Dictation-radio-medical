@@ -46,13 +46,9 @@ const exportWordBtn = document.getElementById('exportWordBtn');
 const templateSelect = document.getElementById('templateSelect');
 const loadTemplateBtn = document.getElementById('loadTemplateBtn');
 const loadTemplateText = document.getElementById('loadTemplateText');
-const patientName = document.getElementById('patientName');
-const patientId = document.getElementById('patientId');
-const patientDob = document.getElementById('patientDob');
-const patientStudyDate = document.getElementById('patientStudyDate');
-const patientReferrer = document.getElementById('patientReferrer');
-const patientAccession = document.getElementById('patientAccession');
-const patientSex = document.getElementById('patientSex');
+// One input per field of core/patient_schema.py, each naming its key, so a new
+// field is markup only (a test checks the keys match the schema).
+const patientInputs = [...document.querySelectorAll('[data-patient]')];
 const modelSelect = document.getElementById('modelSelect');
 const languageInput = document.getElementById('languageInput');
 const accentSelect = document.getElementById('accentSelect');
@@ -198,26 +194,12 @@ function savePatientDraft() {
 }
 
 function collectPatientInfo() {
-    return {
-        name: patientName.value.trim(),
-        id: patientId.value.trim(),
-        dob: patientDob.value.trim(),
-        study_date: patientStudyDate.value.trim(),
-        referring: patientReferrer.value.trim(),
-        accession: patientAccession.value.trim(),
-        sex: patientSex.value,
-    };
+    return Object.fromEntries(patientInputs.map((el) => [el.dataset.patient, el.value.trim()]));
 }
 
 function applyPatientInfo(info) {
     const data = Object.assign({}, BOOTSTRAP.patient_defaults || {}, info || {});
-    patientName.value = data.name || '';
-    patientId.value = data.id || '';
-    patientDob.value = data.dob || '';
-    patientStudyDate.value = data.study_date || '';
-    patientReferrer.value = data.referring || '';
-    patientAccession.value = data.accession || '';
-    patientSex.value = data.sex || '';
+    patientInputs.forEach((el) => { el.value = data[el.dataset.patient] || ''; });
 }
 
 function populateModelOptions() {
@@ -825,7 +807,7 @@ async function loadSelectedTemplate() {
 // Track text changes for undo and persist patient fields locally.
 editor.addEventListener('input', pushUndoState);
 editor.addEventListener('input', updateWordCount);
-[patientName, patientId, patientDob, patientStudyDate, patientReferrer, patientAccession, patientSex].forEach((field) => {
+patientInputs.forEach((field) => {
     field.addEventListener('input', () => {
         savePatientDraft();
     });
@@ -1185,9 +1167,10 @@ function peakLevel(frame) {
 // level themselves, and software gain raises the noise between words as much
 // as the speech. What cannot be fixed afterwards is clipping (lost waveform)
 // and a level so low it sits in the microphone's own hiss, so those are said.
-const CLIP_PEAK = 0.99;
-const QUIET_PEAK = 0.03;          // about -30 dBFS
-const QUIET_AFTER_SEC = 4;
+// The thresholds are the server's (dictation/mic.py), the desktop's too.
+const CLIP_PEAK = BOOTSTRAP.mic.clip_peak;
+const QUIET_PEAK = BOOTSTRAP.mic.quiet_peak;
+const QUIET_AFTER_SEC = BOOTSTRAP.mic.quiet_after_sec;
 const mic = { loudest: 0, samples: 0, clipped: 0, warned: false };
 
 function watchLevel(frame, peak) {

@@ -19,6 +19,7 @@ from src.dictation.postprocess import CLEANUP_LEVEL_LABELS
 from src.dictation.postprocess.accent import ACCENT_LABELS
 from src.medical import macros
 from src.core.paths import templates_dir
+from src.core.patient_schema import PATIENT_KEYS
 from src.ui.collapsible import Section
 from src.ui.report_editor import ReportEditor
 from src.ui.finding_marks import FindingGutter
@@ -133,6 +134,14 @@ def build_patient_panel(window: MainWindow) -> QFrame:
     window.patient_sex = QComboBox()
     window.patient_sex.addItems(["", "F", "M", "X"])
     window.patient_sex.setToolTip("Sex: used to check for organs of the other sex")
+    # The form by schema key: what reads, clears and fills it iterates this.
+    window.patient_inputs = {
+        "name": window.patient_name, "id": window.patient_id, "dob": window.patient_dob,
+        "study_date": window.patient_study_date, "referring": window.patient_referrer,
+        "accession": window.patient_accession, "sex": window.patient_sex,
+    }
+    if tuple(window.patient_inputs) != PATIENT_KEYS:
+        raise RuntimeError(f"Patient form {tuple(window.patient_inputs)} != schema {PATIENT_KEYS}")
 
     row1.addWidget(QLabel("Name:"))
     row1.addWidget(window.patient_name)
