@@ -33,7 +33,7 @@ import argparse
 import json
 import statistics
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -43,9 +43,10 @@ from scripts.eval import corpus
 from scripts.eval.metrics import term_error_rate, word_error_rate
 from src.core.settings import Settings
 from src.dictation.asr.factory import DEFAULT_ENGINE, create_engine, model_kwargs
+from src.dictation.asr.types import EngineCaps
 from src.dictation.stream.live_session import LiveSession
+from src.dictation.stream.policy import SessionConfig, session_config
 from src.dictation.stream.rules import build_context_prompt
-from src.dictation.stream.segmenter import ChunkPolicy
 from src.dictation.stream.vad import SAMPLE_RATE
 
 
@@ -103,21 +104,22 @@ def load_audio(path: Path) -> np.ndarray:
     return decode_audio(str(path), sampling_rate=SAMPLE_RATE)
 
 
-def _policy_from(settings: Settings, overrides: Optional[Dict[str, float]] = None) -> ChunkPolicy:
-    """The shipped policy, with any --chunk-* override applied on top.
+def config_for(
+    settings: Settings, live_caps: EngineCaps,
+    chunk: Optional[Dict[str, Optional[float]]] = None,
+    polish_ceiling: Optional[float] = None,
+) -> SessionConfig:
+    """What the app would run (policy.session_config), with any override on top.
 
     Overriding here rather than by editing dictation_settings.json keeps an
     A/B run from mutating the user's own configuration, and keeps the two arms
     of a comparison in one command each.
     """
-    values = {
-        "min_sec": float(settings.get("chunk_min_sec")),
-        "soft_max_sec": float(settings.get("chunk_soft_max_sec")),
-        "force_cut_sec": float(settings.get("chunk_force_cut_sec")),
-        "trailing_silence_sec": float(settings.get("chunk_trailing_silence_sec")),
-    }
-    values.update({k: v for k, v in (overrides or {}).items() if v is not None})
-    return ChunkPolicy(**values)
+    config = session_config(settings.get, live_caps)
+    policy = replace(config.plan.policy, **{k: v for k, v in (chunk or {}).items() if v is not None})
+    knobs = (config.knobs if polish_ceiling is None
+             else replace(config.knobs, polish_confidence_ceiling=polish_ceiling))
+    return replace(config, plan=replace(config.plan, policy=policy), knobs=knobs)
 
 
 def replay(
@@ -129,35 +131,25 @@ def replay(
     live_model: str = "",
     final_model: str = "",
     final_engine_name: str = "",
-    polish_ceiling: Optional[float] = None,
     realtime: bool = False,
-    policy: Optional[ChunkPolicy] = None,
+    config: Optional[SessionConfig] = None,
 ) -> ReplayResult:
     """Drive one recording through the live loop exactly as the socket does."""
     sr = SAMPLE_RATE
-    cycle_sec = float(settings.get("live_cycle_sec"))
-    block = max(1, int(cycle_sec * sr))
+    live_engine = create_engine(engine_name, **model_kwargs(engine_name, live_model))
+    config = config or config_for(settings, live_engine.capabilities())
+    block = max(1, int(config.cycle_sec * sr))
 
     session = LiveSession(
-        create_engine(engine_name, **model_kwargs(engine_name, live_model)),
+        live_engine,
         create_engine(final_engine_name or engine_name,
                       **model_kwargs(final_engine_name or engine_name, final_model)),
         language=str(settings.get("language")),
         accent=str(settings.get("accent")),
         cleanup_level=str(settings.get("cleanup_level")),
-        policy=policy or _policy_from(settings),
-        pause_threshold=float(settings.get("pause_threshold")),
-        live_beam_size=int(settings.get("live_beam_size")),
-        final_beam_size=int(settings.get("final_beam_size")),
-        preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
-        preview_min_tail_sec=float(settings.get("preview_min_tail_sec")),
-        polish_confidence_ceiling=(
-            polish_ceiling if polish_ceiling is not None
-            else float(settings.get("polish_confidence_ceiling"))
-        ),
-        uncertain_word_confidence=float(settings.get("uncertain_word_confidence")),
         initial_prompt=build_context_prompt(),
         sr=sr,
+        **config.session_kwargs(),
     )
 
     result = ReplayResult(name=name, audio_sec=len(audio) / sr, chunks=0, final_text="")
@@ -276,19 +268,19 @@ def main() -> None:
         "" if args.engine == "parakeet" else str(settings.get("live_model_size")))
     final_model = args.final_model or (
         "" if final_engine == "parakeet" else str(settings.get("model_size")))
-    policy = _policy_from(settings, {
+    live_caps = create_engine(args.engine, **model_kwargs(args.engine, live_model)).capabilities()
+    config = config_for(settings, live_caps, {
         "min_sec": args.chunk_min,
         "soft_max_sec": args.chunk_soft_max,
         "force_cut_sec": args.chunk_force_cut,
         "trailing_silence_sec": args.trailing_silence,
-    })
-
-    ceiling = (args.polish_ceiling if args.polish_ceiling is not None
-               else float(settings.get("polish_confidence_ceiling")))
+    }, args.polish_ceiling)
+    policy = config.plan.policy
     print(f"engine={args.engine} live={live_model} final_engine={final_engine} "
-          f"final={final_model} polish_ceiling={ceiling}")
-    print(f"policy min={policy.min_sec} soft={policy.soft_max_sec} "
-          f"force={policy.force_cut_sec} trailing={policy.trailing_silence_sec}")
+          f"final={final_model} polish_ceiling={config.knobs.polish_confidence_ceiling}")
+    print(f"policy ({config.plan.row}) min={policy.min_sec} soft={policy.soft_max_sec} "
+          f"force={policy.force_cut_sec} trailing={policy.trailing_silence_sec} "
+          f"preview_min_tail={config.plan.preview_min_tail_sec}")
     print(f"mode={'realtime' if args.realtime else 'flat out (audio-seconds lag)'}\n")
 
     references = {} if args.audio else _references(args.set)
@@ -303,7 +295,7 @@ def main() -> None:
             load_audio(clip), clip.stem, settings,
             engine_name=args.engine, live_model=live_model,
             final_model=final_model, final_engine_name=final_engine,
-            polish_ceiling=ceiling, realtime=args.realtime, policy=policy,
+            realtime=args.realtime, config=config,
         )
         results.append(res)
         s = res.summary()
@@ -344,7 +336,7 @@ def main() -> None:
         "label": label,
         "engine": args.engine,
         "final_engine": final_engine,
-        "polish_ceiling": ceiling,
+        "polish_ceiling": config.knobs.polish_confidence_ceiling,
         "live_model": live_model,
         "final_model": final_model,
         "realtime": args.realtime,

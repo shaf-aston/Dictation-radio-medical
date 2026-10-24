@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Optional
 
+from src.core import event_log
 from src.core.settings import get_default
 from src.dictation.asr.types import EngineCaps
 from src.dictation.stream.segmenter import ChunkPolicy
@@ -65,10 +66,12 @@ def is_cheap(caps: EngineCaps) -> bool:
     return caps.cost.fixed_sec < CHEAP_CALL_SEC
 
 
-def plan_for(caps: EngineCaps, trailing_silence_sec: float = 0.6) -> LivePlan:
+def plan_for(caps: EngineCaps, trailing_silence_sec: Optional[float] = None) -> LivePlan:
     """The live shape for an engine with these capabilities."""
     cheap = is_cheap(caps)
     lo, soft, force = CHEAP_POLICY if cheap else LOCAL_POLICY
+    if trailing_silence_sec is None:
+        trailing_silence_sec = float(get_default("chunk_trailing_silence_sec"))
     return LivePlan(
         policy=ChunkPolicy(
             min_sec=lo, soft_max_sec=soft, force_cut_sec=force,
@@ -145,3 +148,52 @@ class LiveKnobs:
 
     def as_kwargs(self) -> dict:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class SessionConfig:
+    """Everything one live dictation reads from settings, decided in one place.
+
+    The web socket, the desktop worker and the replay harness each used to
+    build a LiveSession from settings their own way, and they disagreed: the
+    desktop re-made the manual-or-auto choice and polled at its own pace, and
+    the harness never applied the auto plan, so it measured a session neither
+    front-end runs.
+    """
+
+    plan: LivePlan
+    knobs: LiveKnobs
+    #: How often the live loop looks for new audio (``live_cycle_sec``).
+    cycle_sec: float
+
+    def session_kwargs(self) -> dict:
+        """The LiveSession keyword arguments these settings decide."""
+        return {
+            "policy": self.plan.policy,
+            "preview_min_tail_sec": self.plan.preview_min_tail_sec,
+            **self.knobs.as_kwargs(),
+        }
+
+    def log(self, **context: Any) -> None:
+        """Say in the developer console what this recording runs with."""
+        event_log.emit(
+            "live", "dictation session configured", **context,
+            chunk_plan=self.plan.row,
+            chunk_min_sec=self.plan.policy.min_sec,
+            chunk_soft_max_sec=self.plan.policy.soft_max_sec,
+            chunk_force_cut_sec=self.plan.policy.force_cut_sec,
+            live_beam_size=self.knobs.live_beam_size,
+            final_beam_size=self.knobs.final_beam_size,
+            preview_max_lag_sec=self.knobs.preview_max_lag_sec,
+            preview_min_tail_sec=self.plan.preview_min_tail_sec,
+            cycle_sec=self.cycle_sec,
+        )
+
+
+def session_config(get: Callable[[str], Any], live_caps: Optional[EngineCaps]) -> SessionConfig:
+    """The one recipe: *get* is ``Settings.get``, *live_caps* the live engine's."""
+    return SessionConfig(
+        plan=plan_from_settings(get, live_caps),
+        knobs=LiveKnobs.from_settings(get),
+        cycle_sec=float(get("live_cycle_sec")),
+    )

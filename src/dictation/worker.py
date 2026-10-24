@@ -30,19 +30,19 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Any, Callable, Optional, Tuple, Union
 
 import numpy as np
 import soundfile as sf
 from PySide6.QtCore import QObject, Signal
 
 from src.core import perf
+from src.core.settings import get_default
 from src.dictation.asr import AsrResult, create_engine
 from src.dictation.stream import live_session
 from src.dictation.stream.live_session import LiveSession
-from src.dictation.stream.policy import LiveKnobs, plan_for
+from src.dictation.stream.policy import session_config
 from src.dictation.stream.rules import build_context_prompt
-from src.dictation.stream.segmenter import ChunkPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,6 @@ logger = logging.getLogger(__name__)
 # Tuning constants
 # ---------------------------------------------------------------------------
 _MIN_AUDIO_SEC = 0.8     # ignore audio shorter than this
-_POLL_SEC = 0.25         # how often to look for new audio when nothing changed
 
 # Progress states the UI shows while the live loop runs. Public: the desktop
 # window maps them onto the colour of its state pill (ui/main_window.py).
@@ -89,11 +88,9 @@ class LiveTranscribeWorker(QObject):
         model_size: str,
         language: str,
         vad_enabled: bool,
-        knobs: LiveKnobs = LiveKnobs.shipped(),
+        settings_get: Callable[[str], Any] = get_default,
         live_model_size: Optional[str] = None,
         model_path: Optional[Union[str, Path]] = None,
-        chunk_policy: Optional[ChunkPolicy] = None,
-        trailing_silence_sec: float = 0.6,
     ) -> None:
         super().__init__()
         self.audio_path = audio_path
@@ -105,12 +102,12 @@ class LiveTranscribeWorker(QObject):
         # VAD is load-bearing for chunk cutting, so it is always on; this flag
         # only gates the engine's own VAD inside the polish decodes.
         self.vad_enabled = vad_enabled
-        self.knobs = knobs
         self.model_path = model_path
-        # None means "size chunks from the live engine's cost", which is only
-        # known once run() has built the engine.
-        self._chunk_policy = chunk_policy
-        self._trailing_silence_sec = float(trailing_silence_sec)
+        # Read through stream/policy.session_config once run() has built the
+        # live engine: an "auto" chunk plan depends on what its calls cost.
+        self._settings_get = settings_get
+        # How often to look for new audio; the setting, once the session is built.
+        self._cycle_sec = float(settings_get("live_cycle_sec"))
         self._session: Optional[LiveSession] = None
         self._keep_running = True
         self._final_requested = False
@@ -181,7 +178,7 @@ class LiveTranscribeWorker(QObject):
                                 "skipping final polish", self._fed,
                             )
                             break
-                    time.sleep(0.5)
+                    time.sleep(self._cycle_sec)
                     continue
 
                 if self._final_requested:
@@ -191,11 +188,11 @@ class LiveTranscribeWorker(QObject):
                     break
 
                 if not grew:
-                    time.sleep(_POLL_SEC)
+                    time.sleep(self._cycle_sec)
                     continue
                 update = self._session.cycle()
                 if update is None:
-                    time.sleep(_POLL_SEC)
+                    time.sleep(self._cycle_sec)
                     continue
                 self._emit_state(_SESSION_STATES.get(update.state, STATE_LIVE))
                 if self._emit_partial(update.committed, update.preview):
@@ -229,20 +226,19 @@ class LiveTranscribeWorker(QObject):
             final_engine = create_engine(
                 model_size=self.model_size, device="auto", model_path=self.model_path
             )
-        plan = plan_for(live_engine.capabilities(), self._trailing_silence_sec)
-        policy = self._chunk_policy or plan.policy
-        logger.info("Chunk plan %s: %s", "manual" if self._chunk_policy else plan.row, policy)
+        config = session_config(self._settings_get, live_engine.capabilities())
+        config.log(front_end="desktop", live_model=self.live_model_size,
+                   final_model=self.model_size, language=self.language)
+        self._cycle_sec = config.cycle_sec
         return LiveSession(
             live_engine,
             final_engine,
             language=self.language,
-            policy=policy,
-            preview_min_tail_sec=plan.preview_min_tail_sec,
             initial_prompt=build_context_prompt(),
             postprocess=False,
             polish_vad_filter=self.vad_enabled,
             on_decoded=self._emit_absolute_segments,
-            **self.knobs.as_kwargs(),
+            **config.session_kwargs(),
         )
 
     def _run_final_polish(self) -> None:

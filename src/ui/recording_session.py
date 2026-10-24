@@ -12,7 +12,6 @@ from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QDialog, QMessageBox
 
 from src.core import perf
-from src.dictation.stream.policy import MANUAL, LiveKnobs, plan_from_settings
 from src.dictation.asr.models import resolve_model
 from src.dictation.worker import LiveTranscribeWorker
 from src.core.paths import create_temp_wav
@@ -358,16 +357,9 @@ def on_start_recording(window: MainWindow) -> None:
     window.live_thread = QThread(window)
     window.live_worker = LiveTranscribeWorker(
         path, model_size, language, vad_enabled,
-        knobs=LiveKnobs.from_settings(window.settings.get),
+        settings_get=window.settings.get,
         live_model_size=resolve_model(window.settings.get("live_model_size")),
         model_path=active_model_path,
-        # None = "auto": the worker sizes chunks from its live engine's cost
-        # once the engine exists (stream/policy.py). Manual numbers verbatim.
-        chunk_policy=(
-            plan_from_settings(window.settings.get, None).policy
-            if window.settings.get("chunk_policy") == MANUAL else None
-        ),
-        trailing_silence_sec=float(window.settings.get("chunk_trailing_silence_sec")),
     )
     window.live_worker.moveToThread(window.live_thread)
     window.live_thread.started.connect(window.live_worker.run)
