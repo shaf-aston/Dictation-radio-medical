@@ -621,22 +621,11 @@ async function readReleaseGate(response) {
     }
 }
 
-// Cancellable: No means the report does not leave. What is listed comes from
-// the server, so the browser holds no copy of the rules (report_release.py).
+// Cancellable: No means the report does not leave. The question, wording
+// included, comes from the server (report_release.ReportWarnings.message), so
+// the browser holds no copy of the rules or of how they are put.
 function confirmReportChecks(gate) {
-    const short = (line) => (line.length > 90 ? line.slice(0, 89) + '…' : line);
-    const issues = gate.issues || [];
-    const fields = gate.fields || [];
-    const parts = [];
-    if (issues.length) {
-        parts.push('Worth a second look:\n' + issues.slice(0, 8).map((i) => `  • ${short(i)}`).join('\n'));
-    }
-    if (fields.length) {
-        parts.push(`${fields.length} unfilled template field(s):\n`
-            + fields.slice(0, 10).map((f) => `  • ${short(f)}`).join('\n')
-            + (fields.length > 10 ? '\n  …' : ''));
-    }
-    return window.confirm(parts.join('\n\n') + '\n\nRelease the report anyway?');
+    return window.confirm(gate.message);
 }
 
 // Never cancellable: the report is not withheld, only the audit entry differs.
@@ -661,8 +650,7 @@ function localMinute(date) {
 }
 
 function askCommunication(gate) {
-    document.getElementById('commTitle').textContent =
-        gate.worst_level === 1 ? 'Life-threatening finding' : 'Urgent finding';
+    document.getElementById('commTitle').textContent = gate.title;
     document.getElementById('commSummary').textContent = gate.summary
         + '\n\nConfirm it was communicated to the referring clinician.';
     document.getElementById('commAt').value = localMinute(new Date());
@@ -2185,8 +2173,8 @@ let marksRequest = 0;
 let uncertainWords = new Set();
 // The spans painted last, so a click on an underlined word can open its fixes.
 let markedSpans = [];
-let lookupUses = BOOTSTRAP.term_lookup_uses || 0;
-const lookupHintUses = BOOTSTRAP.term_lookup_hint_uses || 3;
+// Whether the marks still explain themselves (term_lookup.lookup_hint_active).
+let lookupHintActive = Boolean(BOOTSTRAP.lookup_hint_active);
 
 function clearMarks() {
     if (marksTimer) {
@@ -2252,7 +2240,7 @@ function paintMarks(spans) {
     const parts = [];
     if (spans.length) {
         parts.push(`${spans.length} ${spans.length === 1 ? 'word' : 'words'} to check`
-            + (lookupUses < lookupHintUses ? ': highlight one to see alternatives' : ''));
+            + (lookupHintActive ? ': highlight one to see alternatives' : ''));
     }
     if (unsure) {
         // A whole phrase, not a tail. When there are no suspect terms this is
@@ -2303,10 +2291,10 @@ function scheduleMarks() {
 }
 
 async function noteLookupUsed() {
-    if (lookupUses >= lookupHintUses) return;
-    lookupUses += 1;
+    if (!lookupHintActive) return;
     try {
-        await fetch('/api/terms/used', { method: 'POST' });
+        const response = await fetch('/api/terms/used', { method: 'POST' });
+        if (response.ok) lookupHintActive = Boolean((await response.json()).hint_active);
     } catch (err) {
         console.warn('Could not record lookup use:', err);
     }
@@ -2363,26 +2351,15 @@ function paintFindings(data) {
     });
 
     findingsPill.dataset.findings = data.state || 'clear';
+    // The words are the server's (OutstandingFindings.label), the same the
+    // desktop pill shows.
+    findingsPill.textContent = data.label || '';
     const count = data.count || 0;
-    if (!count) {
-        // "No findings", never a red zero: a warning shown on every clear
-        // report is one that stops being read on the report that has one.
-        findingsPill.textContent = 'No findings';
-        // A phone bar has no room for the sentence, so the pill carries a
-        // count the stylesheet can show instead. The full wording stays as the
-        // tooltip -- a number nobody can expand is not a warning.
-        findingsPill.dataset.short = '0';
-        findingsPill.title = 'No critical or urgent findings in this report';
-        return;
-    }
     const outstanding = findings.filter((f) => f.outstanding).length;
-    const shown = outstanding || count;
-    const noun = shown === 1 ? 'finding' : 'findings';
-    findingsPill.textContent = outstanding
-        ? `${shown} ${noun} to communicate`
-        : `${shown} ${noun} acknowledged`;
-    findingsPill.dataset.short = String(shown);
-    findingsPill.title = findingsPill.textContent;
+    // A phone bar has no room for the sentence, so the pill carries a count the
+    // stylesheet can show instead; the full wording stays as the tooltip.
+    findingsPill.dataset.short = String(outstanding || count);
+    findingsPill.title = count ? findingsPill.textContent : 'No critical or urgent findings in this report';
 }
 
 async function rescanFindings() {

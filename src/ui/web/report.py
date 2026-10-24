@@ -16,6 +16,7 @@ from src.core.paths import report_filename
 from src.features import audit_log
 from src.features.report_manager import DOCX_AVAILABLE, export_to_word_bytes, format_plain_text_report
 from src.features.report_release import (
+    OutstandingFindings,
     add_communication_statement,
     communication_statement,
     record_release,
@@ -44,6 +45,7 @@ async def report_findings_endpoint(payload: TextRequest):
     return {
         "count": findings.count,
         "state": findings.state,
+        "label": findings.label,
         "findings": [
             {
                 "term": f.term,
@@ -66,7 +68,7 @@ async def reset_findings_endpoint(payload: ReportRef):
     """
     state.forget_report(payload.report_id)
     audit_log.log_report_cleared("")
-    return {"count": 0, "state": "clear", "findings": []}
+    return {"count": 0, "state": "clear", "label": OutstandingFindings().label, "findings": []}
 
 
 def confirm_release(payload: ReportRequest) -> None:
@@ -89,6 +91,7 @@ def confirm_release(payload: ReportRequest) -> None:
                 "reason": "report_checks",
                 "fields": list(found.fields),
                 "issues": list(found.issues),
+                "message": found.message(),
             },
         )
 
@@ -109,6 +112,7 @@ def confirm_release(payload: ReportRequest) -> None:
             status_code=409,
             detail={
                 "reason": "critical_findings",
+                "title": pending.title,
                 "summary": pending.summary,
                 "worst_level": pending.worst_level,
             },

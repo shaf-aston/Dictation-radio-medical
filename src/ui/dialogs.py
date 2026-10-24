@@ -515,26 +515,7 @@ def confirm_report_checks(window: MainWindow) -> bool:
     )
     if not found:
         return True
-
-    def short(line: str) -> str:
-        return line if len(line) <= 90 else line[:89] + "…"
-
-    parts = []
-    if found.issues:
-        parts.append("Worth a second look:\n" + "\n".join(f"  • {short(i)}" for i in found.issues[:8]))
-    if found.fields:
-        parts.append(
-            f"{len(found.fields)} unfilled template field(s):\n"
-            + "\n".join(f"  • {short(f)}" for f in found.fields[:10])
-            + ("\n  …" if len(found.fields) > 10 else "")
-        )
-    reply = QMessageBox.warning(
-        window,
-        "Check the report",
-        "\n\n".join(parts) + "\n\nRelease the report anyway?",
-        _Yes | _No,
-        _No,
-    )
+    reply = QMessageBox.warning(window, "Check the report", found.message(), _Yes | _No, _No)
     return reply == _Yes
 
 
@@ -548,9 +529,7 @@ class CommunicationDialog(QDialog):
 
     def __init__(self, parent: QWidget, check: ReleaseCheck, radiologist: str) -> None:
         super().__init__(parent)
-        self.setWindowTitle(
-            "Life-threatening finding" if check.worst_level == 1 else "Urgent finding"
-        )
+        self.setWindowTitle(check.title)
         layout = QVBoxLayout(self)
         summary = QLabel(
             check.summary + "\n\nConfirm it was communicated to the referring clinician."

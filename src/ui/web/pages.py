@@ -18,6 +18,7 @@ from src.features import template_fields
 from src.features.accent_corrections import ACCENT_LABELS
 from src.features.clinical_disclaimer import DISCLAIMER_TEXT, DISCLAIMER_TITLE, needs_showing
 from src.features.report_manager import DOCX_AVAILABLE
+from src.medical import term_lookup
 from src.features.report_release import COMMUNICATION_METHODS
 from src.ui.theme import css_variables
 from src.ui.web import state
@@ -146,8 +147,7 @@ def bootstrap_payload() -> dict:
         # The marks hint stops explaining itself past the ceiling; the count
         # lives in settings rather than the browser so using the feature on the
         # desktop also retires the hint here.
-        "term_lookup_uses": int(settings.get("term_lookup_uses") or 0),
-        "term_lookup_hint_uses": int(settings.get("term_lookup_hint_uses") or 3),
+        "lookup_hint_active": term_lookup.lookup_hint_active(settings.get),
         # The developer console's scroll-back is the server's ring, not a copy.
         "event_log_max": int(settings.get("event_log_max")),
         # The first-launch clinical disclaimer, shipped with the rest of the

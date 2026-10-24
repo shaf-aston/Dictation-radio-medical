@@ -182,3 +182,27 @@ def test_page_data_cannot_end_the_inline_script(client, monkeypatch):
     injected = html[start:html.index(";", start)]
     assert "<" not in injected and ">" not in injected and "&" not in injected
     assert json.loads(injected) == {"name": name}
+
+
+def test_both_front_ends_show_the_servers_words(client):
+    checks = _check(client, CLEAN + "\n[Right / Left]").json()["detail"]
+    assert checks["message"].endswith("Release the report anyway?")
+    assert "1 unfilled template field(s)" in checks["message"]
+    assert _check(client, LEVEL_1).json()["detail"]["title"] == "Life-threatening finding"
+    strip = client.post("/api/report/findings", json={"text": LEVEL_1, "report_id": "r"}).json()
+    assert strip["label"] == "1 finding to communicate"
+    assert client.post("/api/report/findings", json={"text": CLEAN}).json()["label"] == "No findings"
+
+
+def test_the_marks_hint_retires_after_the_set_number_of_uses():
+    from src.medical.term_lookup import lookup_hint_active, note_lookup_used
+
+    class Store(dict):
+        def set(self, key, value):
+            self[key] = value
+
+    settings = Store(term_lookup_uses=0, term_lookup_hint_uses=2)
+    assert lookup_hint_active(settings.get)
+    assert note_lookup_used(settings) is True
+    assert note_lookup_used(settings) is False
+    assert note_lookup_used(settings) is False and settings["term_lookup_uses"] == 2

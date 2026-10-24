@@ -44,6 +44,7 @@ from src.features.report_manager import (
 )
 from src.medical import macros
 from src.medical.macros import reload_macros
+from src.medical.term_lookup import lookup_hint_active, note_lookup_used
 from src.core.paths import startup_cleanup, autosave_dir, macros_file, templates_dir
 from src.features.adaptive_learning import get_adaptive_learning, learn_from_edit
 from src.features import audit_log, run_log
@@ -430,7 +431,7 @@ class MainWindow(QMainWindow):
             self._info_marks.hide()
             return
         noun = "word" if count == 1 else "words"
-        if self.settings.get("term_lookup_uses") < self._hint_ceiling():
+        if lookup_hint_active(self.settings.get):
             text = f"{count} {noun} to check: highlight one to see alternatives"
         else:
             text = f"{count} {noun} to check"
@@ -444,28 +445,12 @@ class MainWindow(QMainWindow):
         "No findings" rather than a red zero, because a warning shown every
         session is a warning nobody reads by the time it matters.
         """
-        state = self.findings.state
-        if count == 0:
-            text = "No findings"
-        else:
-            outstanding = len(self.findings.outstanding)
-            shown = outstanding or count
-            noun = "finding" if shown == 1 else "findings"
-            text = (
-                f"{shown} {noun} to communicate" if outstanding
-                else f"{shown} {noun} acknowledged"
-            )
-        self._findings_pill.setText(text)
-        set_findings_state(self._findings_pill, state)
-
-    def _hint_ceiling(self) -> int:
-        return int(self.settings.get("term_lookup_hint_uses") or 3)
+        self._findings_pill.setText(self.findings.label)
+        set_findings_state(self._findings_pill, self.findings.state)
 
     def _on_lookup_used(self) -> None:
         """One more taken suggestion; the hint stops explaining after a few."""
-        used = self.settings.get("term_lookup_uses")
-        if used < self._hint_ceiling():
-            self.settings.set("term_lookup_uses", used + 1)
+        note_lookup_used(self.settings)
 
     # ------------------------------------------------------------------
     # Panel toggles

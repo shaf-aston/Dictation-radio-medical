@@ -60,13 +60,7 @@ async def term_used_endpoint():
     counts the same takes into the same key: learning the feature in one
     front-end should not leave the other still explaining it.
     """
-    settings = state.settings()
-    ceiling = int(settings.get("term_lookup_hint_uses") or 3)
-    used = int(settings.get("term_lookup_uses") or 0)
-    if used < ceiling:
-        used += 1
-        settings.set("term_lookup_uses", used)
-    return {"term_lookup_uses": used, "term_lookup_hint_uses": ceiling}
+    return {"hint_active": term_lookup.note_lookup_used(state.settings())}
 
 
 @router.post("/api/learn/consent")

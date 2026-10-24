@@ -47,6 +47,16 @@ def unfilled_fields(text: str) -> Tuple[str, ...]:
     return template_fields.unfilled_fields(text)
 
 
+#: How much of the report-checks question fits in a dialog.
+_LINE_MAX = 90
+_ISSUES_SHOWN = 8
+_FIELDS_SHOWN = 10
+
+
+def _short(line: str) -> str:
+    return line if len(line) <= _LINE_MAX else line[: _LINE_MAX - 1] + "…"
+
+
 @dataclass(frozen=True)
 class ReportWarnings:
     """What the radiologist is asked about before release; may cancel."""
@@ -56,6 +66,20 @@ class ReportWarnings:
 
     def __bool__(self) -> bool:
         return bool(self.fields or self.issues)
+
+    def message(self) -> str:
+        """The question itself, worded once for both front-ends."""
+        parts = []
+        if self.issues:
+            parts.append("Worth a second look:\n" + "\n".join(
+                f"  • {_short(i)}" for i in self.issues[:_ISSUES_SHOWN]))
+        if self.fields:
+            parts.append(
+                f"{len(self.fields)} unfilled template field(s):\n"
+                + "\n".join(f"  • {_short(f)}" for f in self.fields[:_FIELDS_SHOWN])
+                + ("\n  …" if len(self.fields) > _FIELDS_SHOWN else "")
+            )
+        return "\n\n".join(parts) + "\n\nRelease the report anyway?"
 
 
 def report_warnings(text: str, sex: str = "") -> ReportWarnings:
@@ -85,6 +109,11 @@ class ReleaseCheck:
     @property
     def needs_acknowledgement(self) -> bool:
         return bool(self.findings)
+
+    @property
+    def title(self) -> str:
+        """What the communication question is headed with."""
+        return "Life-threatening finding" if self.worst_level == 1 else "Urgent finding"
 
 
 _CLEAR = ReleaseCheck()
@@ -191,6 +220,20 @@ class OutstandingFindings:
     def count(self) -> int:
         """How many findings the report contains, answered or not."""
         return len(self.check.findings)
+
+    @property
+    def label(self) -> str:
+        """The count display's words: quiet when clear, never a red zero.
+
+        A warning shown on every clean report is one nobody reads by the time
+        a report has a finding, so a clear report says "No findings".
+        """
+        if not self.check.findings:
+            return "No findings"
+        outstanding = len(self.outstanding)
+        shown = outstanding or self.count
+        noun = "finding" if shown == 1 else "findings"
+        return f"{shown} {noun} {'to communicate' if outstanding else 'acknowledged'}"
 
     @property
     def state(self) -> str:

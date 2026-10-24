@@ -463,3 +463,24 @@ def _suspect_terms(text: str, keep: frozenset) -> List[Span]:
         if verdict:
             spans.append(Span(match.start(), match.end(), word))
     return spans
+
+
+# -- the hint under the marks ------------------------------------------------
+# Counted in settings, not per front-end: learning the feature on the desktop
+# retires the hint in the browser too.
+
+def lookup_hint_active(get) -> bool:
+    """Do the marks still explain how to use them? *get* is ``Settings.get``.
+
+    Yes until a suggestion has been taken ``term_lookup_hint_uses`` times: a
+    permanent "how to use this" line teaches once and then costs a row on every
+    report for ever.
+    """
+    return int(get("term_lookup_uses") or 0) < int(get("term_lookup_hint_uses"))
+
+
+def note_lookup_used(settings) -> bool:
+    """Count one taken suggestion; return whether the hint is still shown."""
+    if lookup_hint_active(settings.get):
+        settings.set("term_lookup_uses", int(settings.get("term_lookup_uses") or 0) + 1)
+    return lookup_hint_active(settings.get)
