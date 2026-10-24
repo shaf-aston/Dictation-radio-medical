@@ -57,13 +57,14 @@ from src.ui.views import (
 # Recording control
 from src.ui.field_navigation import FieldKeys
 from src.ui.recording_session import (
-    _abandon_unfinished_session, confirm_release, insert_before_dictation, on_partial_text,
+    _abandon_unfinished_session, insert_before_dictation, on_partial_text,
     on_processed_text, on_start_recording, on_stop_recording, on_transcription_finished,
     setup_level_timer,
 )
 
 # Dialog handling
 from src.ui.dialogs import show_learning_consent_if_needed, show_disclaimer_if_needed
+from src.ui.release_gate import confirm_release
 
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="pkg_resources")
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
@@ -336,9 +337,9 @@ class MainWindow(QMainWindow):
             # cache is keyed on that reference: warming the stock model while
             # a fine-tune is active would miss the cache AND pin an unused
             # model in RAM.
-            from src.ui.recording_session import _active_model_path
+            from src.ui.training_capture import active_model_path
 
-            active_model = _active_model_path()
+            active_model = active_model_path()
             warmers = postprocess_warmers() + [
                 transcriber_warmer(
                     model_size,
@@ -934,7 +935,7 @@ class MainWindow(QMainWindow):
 
         # Persist any open training-capture session (review-time corrections).
         with contextlib.suppress(Exception):
-            from src.ui.recording_session import finalize_training_capture
+            from src.ui.training_capture import finalize_training_capture
             finalize_training_capture()
         with contextlib.suppress(Exception):
             get_adaptive_learning().force_save()

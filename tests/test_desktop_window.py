@@ -141,11 +141,12 @@ def test_a_finding_already_communicated_is_not_asked_again(desktop, monkeypatch,
         def communication(self):
             return Communication("Dr Patel", "telephone", datetime(2026, 10, 24, 10, 0), "")
 
-    monkeypatch.setattr(rs, "CommunicationDialog", Dialog)
-    monkeypatch.setattr(rs, "confirm_report_checks", lambda _w: True)
+    from src.ui import release_gate
+    monkeypatch.setattr(release_gate, "CommunicationDialog", Dialog)
+    monkeypatch.setattr(release_gate, "confirm_report_checks", lambda _w: True)
     desktop.editor.setPlainText("Large right pneumothorax.")
-    assert rs.confirm_release(desktop) and rs.confirm_release(desktop)
+    assert release_gate.confirm_release(desktop) and release_gate.confirm_release(desktop)
     desktop.editor.setPlainText(desktop.editor.toPlainText() + "\nPneumoperitoneum.")
-    assert rs.confirm_release(desktop)
+    assert release_gate.confirm_release(desktop)
     assert asked == [["pneumothorax"], ["Pneumoperitoneum"]]
     assert desktop.editor.toPlainText().count("communicated to Dr Patel") == 2

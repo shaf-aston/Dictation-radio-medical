@@ -83,6 +83,8 @@ src/
 │   └── resources/        radiology_prompt.txt (Whisper priming prompt, ~200 terms)
 ├── ui/          main_window.py · views.py · recording_session.py · dialogs.py
 │   ├── postprocess_worker.py  runs the pipeline OFF the UI thread, latest-only
+│   ├── release_gate.py   the desktop dialogs every exit asks (rules: features/report_release)
+│   ├── training_capture.py  what a recording tells the (opt-in) training collector
 │   ├── web_app.py        assembles the FastAPI app (start-up, routers);
 │   │                       `python -m src.ui.web_app` (host/port from settings)
 │   ├── web/              one router per job, all thin over features/:

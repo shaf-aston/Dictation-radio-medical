@@ -123,7 +123,7 @@ class FindingGutter(QWidget):
         """Repaint and re-announce the count, for a change made elsewhere.
 
         The release gate scans and acknowledges through the same state object
-        (``recording_session.confirm_release``); this is how that answer reaches
+        (``release_gate.confirm_release``); this is how that answer reaches
         the marks and the count without scanning the report a second time.
         """
         self.update()

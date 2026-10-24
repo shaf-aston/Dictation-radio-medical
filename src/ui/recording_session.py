@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QThread, QTimer
 from PySide6.QtGui import QTextCursor
-from PySide6.QtWidgets import QDialog, QMessageBox
+from PySide6.QtWidgets import QMessageBox
 
 from src.core import perf
 from src.dictation.asr.models import resolve_model
@@ -18,97 +18,15 @@ from src.core.paths import create_temp_wav
 from src.features import run_log
 from src.ui.postprocess_worker import PostprocessWorker, build_changes
 from src.dictation.postprocess.accent import ACCENT_LABELS, suggest_accent
-from src.features.report_release import (
-    add_communication_statement,
-    communication_statement,
-    record_release,
-)
 from src.features.template_fields import find_fields, resolve_choice
-from src.ui.dialogs import CommunicationDialog, confirm_report_checks, offer_ai_cleanup
+from src.ui.dialogs import offer_ai_cleanup
+from src.ui import training_capture
 from src.ui.styles import set_level_state
 
 if TYPE_CHECKING:
     from src.ui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Cloud training capture helpers (all no-ops unless the user has opted in)
-# ---------------------------------------------------------------------------
-
-def _active_model_path():
-    """Return the active fine-tuned model directory, or None for the base model."""
-    try:
-        from src.cloud.framework.registry import ModelRegistry
-        from src.training.schemas import TASK_WHISPER_VOICE
-        return ModelRegistry().get_active_model_path(TASK_WHISPER_VOICE)
-    except Exception as exc:
-        logger.debug("Model registry lookup failed: %s", exc)
-        return None
-
-
-def _start_training_capture(window: MainWindow, wav_path: str, model_size: str) -> None:
-    """Start a collector session and route voice corrections into it."""
-    try:
-        from src.training.collector import get_correction_collector
-        from src.dictation.postprocess.voice_commands import set_correction_hook
-
-        collector = get_correction_collector()
-        # Persist any previous session still open for review before reusing it.
-        collector.finalize_session()
-        accent = getattr(window, "_active_accent", "neutral")
-        version = window.settings.get("active_model_version") or model_size
-        collector.start_session(
-            session_id=os.path.basename(wav_path),
-            wav_path=wav_path,
-            patient_info=window._get_patient_info(),
-            model_version=version,
-            accent_profile=accent,
-        )
-        # Explicit "X correct word Y" voice edits feed the collector too.
-        set_correction_hook(collector.record_text_correction)
-    except Exception as exc:
-        logger.debug("Training capture not started: %s", exc)
-
-
-def _on_segments(abs_segments: list) -> None:
-    """Forward worker segments to the training collector for timing/PHI scrub."""
-    try:
-        from src.training.collector import get_correction_collector
-        get_correction_collector().update_segments(abs_segments)
-    except Exception as exc:
-        logger.debug("Segment forwarding to collector failed: %s", exc)
-
-
-def _prepare_training_audio() -> None:
-    """De-identify the session audio while the temp WAV still exists.
-
-    Runs when transcription ends but *before* the WAV is deleted. The session
-    stays open so spelling fixes made during review are still captured; the
-    voice-command hook is detached since voice edits only occur while recording.
-    """
-    try:
-        from src.training.collector import get_correction_collector
-        from src.dictation.postprocess.voice_commands import set_correction_hook
-        get_correction_collector().prepare_audio()
-        set_correction_hook(None)
-    except Exception as exc:
-        logger.debug("Training audio prepare failed: %s", exc)
-
-
-def finalize_training_capture() -> None:
-    """Persist captured corrections and close the open collector session.
-
-    Called at the next natural boundary, a new recording (see
-    ``_start_training_capture``) or window close, so review-time corrections
-    are included.
-    """
-    try:
-        from src.training.collector import get_correction_collector
-        get_correction_collector().finalize_session()
-    except Exception as exc:
-        logger.debug("Training capture finalize failed: %s", exc)
 
 
 def _abandon_unfinished_session(window: MainWindow) -> None:
@@ -136,7 +54,7 @@ def _abandon_unfinished_session(window: MainWindow) -> None:
                 (worker.partial, window._on_partial_text),
                 (worker.progress, window._on_worker_progress),
                 (worker.finished, window._on_transcription_finished),
-                (worker.segments, _on_segments),
+                (worker.segments, training_capture.on_segments),
             ):
                 try:
                     signal.disconnect(slot)
@@ -166,7 +84,7 @@ def _abandon_unfinished_session(window: MainWindow) -> None:
     window._handback_seq = None
     window._final_seq = None
     window._post_dictation_snapshot = window.editor.toPlainText()
-    _prepare_training_audio()
+    training_capture.prepare_training_audio()
     _record_the_run(window)   # reads live_worker for its chunk count: before the clear
     cleanup_temp_audio(window)
     window.live_worker = None
@@ -320,10 +238,10 @@ def on_start_recording(window: MainWindow) -> None:
     })
 
     # Use an active fine-tuned model if one has been downloaded and activated.
-    active_model_path = _active_model_path()
+    active_model_path = training_capture.active_model_path()
 
     # Begin capturing corrections for cloud training (no-op without consent).
-    _start_training_capture(window, path, model_size)
+    training_capture.start_training_capture(window, path, model_size)
 
     # Post-processing runs on its own thread so the ten-stage pipeline can never
     # block the UI (see postprocess_worker). Fresh per recording: no stale
@@ -365,7 +283,7 @@ def on_start_recording(window: MainWindow) -> None:
     window.live_thread.started.connect(window.live_worker.run)
     window.live_worker.partial.connect(window._on_partial_text)
     window.live_worker.progress.connect(window._on_worker_progress)
-    window.live_worker.segments.connect(_on_segments)
+    window.live_worker.segments.connect(training_capture.on_segments)
     window.live_worker.finished.connect(window._on_transcription_finished)
     # Direct: QThread.quit is thread-safe, and queued it would wait for the UI
     # thread, which on close is the one blocked waiting for this thread.
@@ -652,7 +570,7 @@ def _complete_finish(window: MainWindow) -> None:
     _close_dictation_region(window)
     # De-identify the session audio while the WAV still exists; the collector
     # session stays open so spelling fixes made during review are captured too.
-    _prepare_training_audio()
+    training_capture.prepare_training_audio()
     _record_the_run(window)
     cleanup_temp_audio(window)
     check_accent_suggestion(window)
@@ -724,77 +642,6 @@ def show_corrections_banner(window: MainWindow) -> None:
     window._show_status(f"Applied {n} correction(s): {examples}{suffix}", 8000, state="ok")
     window._corrections_pending = []
     window._corrections_seen = set()
-
-
-def confirm_release(window: MainWindow) -> bool:
-    """Run both release rules and return True if the report may leave.
-
-    The desktop shape of the shared gate in ``features/report_release.py``: the
-    rules and the audit trail live there, alongside the web app's 409. Called
-    from every exit (copy / save / export) immediately before the text leaves,
-    so a field or finding typed in after dictation ended is still caught.
-
-    Unfilled fields are asked about first, because that is the only answer that
-    can cancel: cancelling must never leave a findings acknowledgement in the
-    audit log for a report that then did not leave. The findings answer itself
-    never withholds the report, both answers proceed and only the audit entry
-    differs, so False here always means "the radiologist cancelled".
-
-    The scan runs through ``window.findings`` so the answer given here is the
-    same state the gutter marks and the count pill show: acknowledging settles
-    the pill, and a finding typed in afterwards puts it back to outstanding.
-    Only outstanding findings are asked about (``OutstandingFindings.pending``):
-    one already communicated needs no second call, and a second answer used to
-    append a second "communicated" sentence that was never audited.
-    """
-    if window.recorder.is_recording:
-        # The live loop is still rewriting the end of the report.
-        window._show_status("Stop recording before the report leaves", 3000, state="warn")
-        return False
-    if not confirm_report_checks(window):
-        return False
-
-    window.findings.update(window.editor.toPlainText())
-    # Captured before the dialog: msg.exec() runs a nested event loop, and the
-    # gutter's debounced re-scan can fire inside it and replace window.findings
-    # .check. Answering and auditing from this local means the radiologist's
-    # answer always applies to exactly what they were shown.
-    check = window.findings.pending
-    if not check.needs_acknowledgement:
-        window.finding_gutter.show_state()
-        yield_document(window)
-        return True
-
-    dialog = CommunicationDialog(window, check, str(window.settings.get("radiologist_name") or ""))
-    acknowledged = dialog.exec() == QDialog.DialogCode.Accepted
-    comm = dialog.communication() if acknowledged else None
-    if comm is not None:
-        if comm.radiologist:
-            window.settings.set("radiologist_name", comm.radiologist)
-        if dialog.add_to_report.isChecked():
-            # Before the caller reads the text, so the sentence leaves with it.
-            # One undoable edit at the end of the report.
-            text = window.editor.toPlainText()
-            updated = add_communication_statement(
-                text, communication_statement(check.findings, comm)
-            )
-            if updated != text:
-                cursor = window.editor.textCursor()
-                cursor.beginEditBlock()
-                cursor.movePosition(cursor.MoveOperation.End)
-                cursor.movePosition(cursor.MoveOperation.Start, cursor.MoveMode.KeepAnchor)
-                cursor.insertText(updated)
-                cursor.endEditBlock()
-    record_release(
-        check.findings, window._get_patient_info().get("id", ""), acknowledged, comm
-    )
-    if acknowledged:
-        window.findings.acknowledge(check)
-    window.finding_gutter.show_state()
-    # What leaves is what the radiologist answered for: a polish landing now
-    # would make the screen and the released copy different reports.
-    yield_document(window)
-    return True
 
 
 def setup_level_timer(window: MainWindow) -> None:
