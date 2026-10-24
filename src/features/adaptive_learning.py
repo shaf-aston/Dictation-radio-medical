@@ -106,17 +106,22 @@ class AdaptiveLearning:
     # Learning API
     # ------------------------------------------------------------------
 
-    def learn_correction(self, wrong: str, correct: str) -> None:
-        """Learn a word correction from user input."""
+    def learn_correction(self, wrong: str, correct: str) -> bool:
+        """Learn a word correction from user input; False when it was refused."""
         if not wrong or not correct:
-            return
+            return False
         wrong = wrong.lower().strip()
         correct = correct.lower().strip()
 
         if wrong == correct:
-            return
+            return False
         if len(wrong) < _MIN_WORD_LENGTH or len(correct) < _MIN_WORD_LENGTH:
-            return
+            return False
+        if not _may_rewrite(wrong):
+            # "medial" -> "lateral" in one report is a change of mind, not a
+            # mishearing; learned, it would rewrite every later patient.
+            logger.debug("Not learned: '%s' is a real word", wrong)
+            return False
 
         with self._data_lock:
             if len(self._word_corrections) >= _MAX_CORRECTIONS and self._word_corrections:
@@ -138,6 +143,7 @@ class AdaptiveLearning:
             get_correction_collector().record_text_correction(wrong, correct)
         except Exception:
             pass
+        return True
 
     def learn_term(self, term: str) -> None:
         """Add a term to the custom vocabulary (protects from 'correction')."""
@@ -329,6 +335,8 @@ class AdaptiveLearning:
         patterns = []
 
         for wrong, correct in self._word_corrections.items():
+            if not _may_rewrite(wrong):  # learned before this rule existed
+                continue
             try:
                 # Word boundary match, case insensitive
                 pat = re.compile(rf"\b{re.escape(wrong)}\b", re.IGNORECASE)
@@ -337,6 +345,8 @@ class AdaptiveLearning:
                 continue
 
         for wrong, correct in self._accent_hints.items():
+            if not _may_rewrite(wrong):
+                continue
             try:
                 pat = re.compile(rf"\b{re.escape(wrong)}\b", re.IGNORECASE)
                 patterns.append((wrong.lower(), pat, correct))
@@ -442,6 +452,14 @@ def get_adaptive_learning() -> AdaptiveLearning:
     return _adaptive_learning
 
 
+def _may_rewrite(word: str) -> bool:
+    """A learned rule applies everywhere, blind to context, so it may only fix
+    a word that is not real: a mishearing. Real-word confusions need context
+    (dictation/postprocess/confusion_sets.yaml)."""
+    from src.medical.medical_dict import is_known_word  # noqa: PLC0415 - heavy wordlists, lazy
+    return not is_known_word(word)
+
+
 def apply_learned_corrections(text: str) -> str:
     """Shortcut to apply learned corrections to text."""
     return get_adaptive_learning().apply_learned_corrections(text)
@@ -481,8 +499,7 @@ def learn_from_session(dictated: str, final: str) -> int:
         wrong = before.strip(_PUNCTUATION).lower()
         right = after.strip(_PUNCTUATION).lower()
         if wrong != right and learning._is_valid_correction(wrong, right):
-            learning.learn_correction(wrong, right)
-            learned += 1
+            learned += learning.learn_correction(wrong, right)
     return learned
 
 

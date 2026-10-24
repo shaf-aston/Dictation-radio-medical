@@ -22,7 +22,7 @@ CLEAN = "EXAMINATION: MRI Right Knee\nFINDINGS:\nNormal.\nIMPRESSION:\n1. Normal
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(audit_log, "_log_path", tmp_path / "audit.log")
     state.findings.reset()
-    return fastapi_testclient.TestClient(web_app.app)
+    return fastapi_testclient.TestClient(web_app.app, base_url="http://127.0.0.1:8005")
 
 
 def _audit(tmp_path):
@@ -101,3 +101,24 @@ def test_every_exit_is_audited(client, tmp_path):
         {"report_exported"} if report.DOCX_AVAILABLE else set()
     )
     assert expected <= actions
+
+
+# -- only this machine's own page is answered (DNS rebinding, cross-site socket) --
+
+@pytest.mark.parametrize("headers, status", [
+    ({}, 200),
+    ({"host": "localhost:8005"}, 200),
+    ({"origin": "http://127.0.0.1:8005"}, 200),
+    ({"host": "evil.example:8005"}, 403),               # rebinding: the page's own name
+    ({"origin": "https://evil.example"}, 403),          # another site's page
+    ({"origin": "null"}, 403),
+])
+def test_only_this_machines_own_page_is_answered(client, headers, status):
+    assert client.get("/api/runs", headers=headers).status_code == status
+
+
+def test_another_sites_page_cannot_open_the_dictation_socket(client):
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("ws://127.0.0.1:8005/ws/dictate", headers={"origin": "https://evil.example"}) as ws:
+            ws.receive_json()

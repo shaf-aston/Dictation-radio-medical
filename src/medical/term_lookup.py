@@ -40,9 +40,9 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 from src.core.paths import related_terms_path
 from src.medical.medical_dict import (
     get_correction_targets,
-    get_medical_terms,
     get_symspell,
     is_english_word,
+    is_known_word,
 )
 
 logger = logging.getLogger(__name__)
@@ -442,7 +442,6 @@ def _suspect_terms(text: str, keep: frozenset) -> List[Span]:
         return []
 
     index = _index()
-    known = get_medical_terms()
     floor = index.tuning["min_suspect_chars"]
     ceiling = index.tuning["max_marks"]
 
@@ -455,14 +454,11 @@ def _suspect_terms(text: str, keep: frozenset) -> List[Span]:
             break
         word = match.group()
         lowered = word.lower()
-        if len(lowered) < floor or lowered in known or lowered in keep:
+        if len(lowered) < floor or lowered in keep:
             continue
         verdict = verdicts.get(lowered)
         if verdict is None:
-            verdict = (
-                not is_english_word(lowered)
-                and bool(_similar_spelling(lowered, index))
-            )
+            verdict = not is_known_word(lowered) and bool(_similar_spelling(lowered, index))
             verdicts[lowered] = verdict
         if verdict:
             spans.append(Span(match.start(), match.end(), word))

@@ -112,12 +112,14 @@ async def learn_choice_endpoint(payload: TermChoiceRequest):
         return {"learned": False}
     learning = get_adaptive_learning()
     if payload.replacement:
-        learning.learn_correction(payload.word, payload.replacement)
+        learned = learning.learn_correction(payload.word, payload.replacement)
     else:
         learning.learn_term(payload.word)
-    event_log.emit("learn", "accepted a fix" if payload.replacement else "kept a word",
-                   word=payload.word, replacement=payload.replacement)
-    return {"learned": True}
+        learned = True
+    if learned:
+        event_log.emit("learn", "accepted a fix" if payload.replacement else "kept a word",
+                       word=payload.word, replacement=payload.replacement)
+    return {"learned": learned}
 
 
 @router.post("/api/dev/speak")

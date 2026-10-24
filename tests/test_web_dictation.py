@@ -50,12 +50,12 @@ class _FakeSession:
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(dictate, "record_web_run", lambda *a, **k: None)
-    return fastapi_testclient.TestClient(web_app.app)
+    return fastapi_testclient.TestClient(web_app.app, base_url="http://127.0.0.1:8005")
 
 
 def _dictate(client, monkeypatch, spoken: str, field=None) -> dict:
     monkeypatch.setattr(dictate, "build_live_session", lambda *_: _FakeSession(spoken))
-    with client.websocket_connect("/ws/dictate") as ws:
+    with client.websocket_connect("ws://127.0.0.1:8005/ws/dictate") as ws:
         if field:
             ws.send_json({"command": "field", "text": field})
         ws.send_json({"command": "stop"})

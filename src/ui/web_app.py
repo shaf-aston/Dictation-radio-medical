@@ -16,6 +16,7 @@ from src.core.logging_setup import setup_logging
 from src.core.paths import startup_cleanup
 from src.dictation.asr.models import resolve_model
 from src.ui.web import diagnostics, dictate, pages, preferences, report, state, terms
+from src.ui.web.local_only import LocalOnlyMiddleware, allowed_hosts
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     application = FastAPI(title="Radio Dictate Web", lifespan=lifespan)
     for module in (pages, preferences, report, terms, diagnostics, dictate):
         application.include_router(module.router)
+    application.add_middleware(LocalOnlyMiddleware, hosts=allowed_hosts(state.settings().get))
     return application
 
 

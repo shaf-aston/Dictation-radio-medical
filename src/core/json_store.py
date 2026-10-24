@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -22,14 +23,30 @@ logger = logging.getLogger(__name__)
 
 
 def read_json(path: Path, default: Any) -> Any:
-    """Return the JSON contents of *path*, or *default* if missing/unreadable."""
+    """Return the JSON contents of *path*, or *default* if missing/unreadable.
+
+    A file that exists but does not parse is moved aside first, to
+    ``<name>.corrupt-<time>``. Every caller writes back what it read, so
+    returning *default* with the file left in place meant the next save
+    replaced someone's whole settings file with one key (a single trailing
+    comma was enough). Moved aside, the only copy survives to be repaired.
+    """
     path = Path(path)
     if not path.is_file():
         return default
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except OSError as exc:  # unreadable right now (locked, permissions): leave it be
         logger.warning("Could not read %s: %s", path, exc)
+        return default
+    except json.JSONDecodeError as exc:
+        kept = path.with_name(f"{path.name}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}")
+        try:
+            os.replace(path, kept)
+            logger.error("%s is not valid JSON (%s); moved to %s, using defaults", path, exc, kept)
+        except OSError as move_exc:
+            logger.error("%s is not valid JSON (%s) and could not be moved aside: %s",
+                         path, exc, move_exc)
         return default
 
 

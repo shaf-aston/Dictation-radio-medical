@@ -111,6 +111,9 @@ _DEFAULTS: dict = {
     # --- Web front-end (src/ui/web_app.py) ---
     "web_host": "127.0.0.1",    # loopback only: the app is offline by default
     "web_port": 8005,
+    # Extra host names the web app answers to (it always answers loopback and
+    # web_host). Only for serving it to another machine on purpose.
+    "web_allowed_hosts": [],
     "max_upload_mb": 50,        # reject audio uploads larger than this
     # Two models, one dictation. This small one decodes the words that appear
     # while you are still speaking; `model_size` above re-decodes after Stop,

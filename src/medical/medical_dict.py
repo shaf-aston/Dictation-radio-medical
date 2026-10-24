@@ -216,6 +216,22 @@ def is_english_word(word: str) -> Optional[bool]:
     return bool(any(_ENGLISH.known([v]) for v in us_variants(word)))
 
 
+def is_known_word(word: str) -> bool:
+    """True when *word* is a real word: standard English or a known medical term.
+
+    The one answer to "may this word be rewritten?". A word that is real must
+    not be rewritten by a rule that cannot see its context (a learned
+    correction, a mark), because swapping one real word for another is a
+    change of meaning, not a fix. Without the English checker the answer is
+    True: the safe choice is to leave a word alone.
+    """
+    lowered = word.lower()
+    if lowered in get_medical_terms():
+        return True
+    english = is_english_word(lowered)
+    return True if english is None else english
+
+
 def get_correction_targets() -> List[str]:
     """Curated radiology lexicon used as the fuzzy corrector's snap targets.
 
