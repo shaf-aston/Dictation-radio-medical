@@ -2608,7 +2608,7 @@ initFindingMarks();
 const DEV_STORAGE_KEY = 'radio-dictate-web-dev';
 const DEV_POLL_MS = 700;          // how often the server diary is drained
 const DEV_PERF_MS = 2500;         // the rolling averages move slowly
-const DEV_MAX_LINES = 800;        // scroll-back, matched to the server's ring
+const DEV_MAX_LINES = BOOTSTRAP.event_log_max || 1000;  // scroll-back: the server's ring
 const DEV_SLOW_MS = 1500;         // a decode over this is worth the eye landing on
 const DEV_LONG_CHARS = 220;       // past this a line is folded until clicked
 

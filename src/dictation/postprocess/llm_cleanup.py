@@ -27,11 +27,11 @@ import logging
 from typing import Any, List, Optional, Tuple, cast
 
 from src.core.keychain import clear_secret, get_secret, store_secret
+from src.core.settings import get_default
 
 logger = logging.getLogger(__name__)
 
 _KEYRING_KEY = "groq_api_key"
-_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 _TIMEOUT = 30.0
 
 _SYSTEM_PROMPT = (
@@ -142,9 +142,9 @@ def clean_with_llm(
 
     try:
         from src.core.settings import Settings
-        model = Settings().get("groq_model", _DEFAULT_MODEL) or _DEFAULT_MODEL
+        model = Settings().get("groq_model") or get_default("groq_model")
     except Exception:
-        model = _DEFAULT_MODEL
+        model = get_default("groq_model")
 
     try:
         from groq import Groq

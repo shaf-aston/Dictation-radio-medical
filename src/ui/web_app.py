@@ -34,7 +34,7 @@ async def lifespan(_: FastAPI):
     state.drop_engine()
     # Same startup housekeeping as the desktop GUI (temp files, old
     # autosaves, legacy cache locations): a web-only user must not miss it.
-    startup_cleanup(settings.get("autosave_retention_days", 30))
+    startup_cleanup(settings.get("autosave_retention_days"))
     warm_up_singletons()
     yield
     logger.info("Shutting down")

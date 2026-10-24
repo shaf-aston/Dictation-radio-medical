@@ -237,16 +237,6 @@ def _stems(word: str) -> Set[str]:
     return stems
 
 
-def _is_inflected_form(word: str, terms: Set[str]) -> bool:
-    """True when *word* is an inflected form of a term that is in *terms*.
-
-    e.g. "findings" → strip "s" → "finding" is in the medical dict.
-    This means the word is already correct, just in a form the dict
-    doesn't store, so the fuzzy stage must leave it alone.
-    """
-    return bool(_stems(word) & terms)
-
-
 def _only_inflection_differs(a: str, b: str) -> bool:
     """True when *a* and *b* share a stem but differ only by an inflectional
     suffix with no other character changes.

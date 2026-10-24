@@ -20,16 +20,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional
 
+from src.core.settings import get_default
 from src.dictation.stream.vad import SAMPLE_RATE, SpeechMark
 
 
 @dataclass(frozen=True)
 class ChunkPolicy:
-    """Tunable chunk-length targets, in seconds."""
+    """Tunable chunk-length targets, in seconds; the defaults are the shipped settings."""
 
-    min_sec: float = 6.0          # never cut a chunk shorter than this at a pause
-    soft_max_sec: float = 15.0    # prefer cutting by here if a pause is available
-    force_cut_sec: float = 20.0   # hard ceiling: cut here even mid-speech
+    #: Never cut a chunk shorter than this at a pause.
+    min_sec: float = float(get_default("chunk_min_sec"))
+    #: Prefer cutting by here if a pause is available.
+    soft_max_sec: float = float(get_default("chunk_soft_max_sec"))
+    #: Hard ceiling: cut here even mid-speech.
+    force_cut_sec: float = float(get_default("chunk_force_cut_sec"))
     # How much silence must sit after the LAST speech mark before that mark's
     # end counts as a cut point. Without this the final mark can never be a
     # cut (there is no following mark to prove the silence is real), so a
@@ -39,7 +43,7 @@ class ChunkPolicy:
     # 0.6s, not the 0.3s the VAD splits on: detect_speech pads every mark end
     # by speech_pad_ms, so apparent trailing silence understates the real gap,
     # and a breath mid-sentence must not read as the end of a thought.
-    trailing_silence_sec: float = 0.6
+    trailing_silence_sec: float = float(get_default("chunk_trailing_silence_sec"))
 
     def __post_init__(self) -> None:
         """Reject lengths that are out of order or not positive.

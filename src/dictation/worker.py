@@ -89,7 +89,7 @@ class LiveTranscribeWorker(QObject):
         model_size: str,
         language: str,
         vad_enabled: bool,
-        knobs: LiveKnobs = LiveKnobs(),
+        knobs: LiveKnobs = LiveKnobs.shipped(),
         live_model_size: Optional[str] = None,
         model_path: Optional[Union[str, Path]] = None,
         chunk_policy: Optional[ChunkPolicy] = None,

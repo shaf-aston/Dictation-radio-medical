@@ -333,7 +333,7 @@ def on_start_recording(window: MainWindow) -> None:
     # Open the run record beside perf.reset(): both mark "a new dictation starts
     # here", and the record is what survives the next reset (see run_log).
     window._run_record = run_log.start(
-        "desktop", model=model_size, engine=str(window.settings.get("asr_engine", "")),
+        "desktop", model=model_size, engine=str(window.settings.get("asr_engine")),
     )
     window._audio_stopped_at = None
     window._partial_seq = 0

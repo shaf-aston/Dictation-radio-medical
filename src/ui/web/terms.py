@@ -61,8 +61,8 @@ async def term_used_endpoint():
     front-end should not leave the other still explaining it.
     """
     settings = state.settings()
-    ceiling = int(settings.get("term_lookup_hint_uses", 3) or 3)
-    used = int(settings.get("term_lookup_uses", 0) or 0)
+    ceiling = int(settings.get("term_lookup_hint_uses") or 3)
+    used = int(settings.get("term_lookup_uses") or 0)
     if used < ceiling:
         used += 1
         settings.set("term_lookup_uses", used)
@@ -87,7 +87,7 @@ async def learn_session_endpoint(payload: SessionEditsRequest):
     recording). The diff and the learning rules live in features/; this only
     checks consent.
     """
-    if not state.settings().get("learning_enabled", True):
+    if not state.settings().get("learning_enabled"):
         return {"learned": 0}
 
     def work() -> int:
@@ -108,7 +108,7 @@ async def learn_choice_endpoint(payload: TermChoiceRequest):
     Keep adds the word to the radiologist's own vocabulary, so it is never
     marked again.
     """
-    if not state.settings().get("learning_enabled", True):
+    if not state.settings().get("learning_enabled"):
         return {"learned": False}
     learning = get_adaptive_learning()
     if payload.replacement:

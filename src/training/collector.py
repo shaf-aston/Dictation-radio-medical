@@ -139,18 +139,6 @@ class CorrectionCollector:
                 by_start[round(float(s.get("start", 0)), 1)] = s
             self._session.segments = [by_start[k] for k in sorted(by_start)]
 
-    def is_session_captured(self, wav_path: Optional[str]) -> bool:
-        """True if *wav_path* belongs to the active capture session.
-
-        ``recording_session`` consults this to decide whether to preserve the
-        temp WAV (needed for audio de-identification) instead of deleting it.
-        """
-        with self._session_lock:
-            return (
-                self._session is not None
-                and wav_path is not None
-                and self._session.wav_path == wav_path
-            )
 
     # ------------------------------------------------------------------
     # Correction capture

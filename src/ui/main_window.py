@@ -240,20 +240,20 @@ class MainWindow(QMainWindow):
         self.editor.set_release_gate(self._release_selection)
         self._setup_autosave_timer()
         setup_level_timer(self)
-        self._apply_theme(self.settings.get("theme", "dark"))
+        self._apply_theme(self.settings.get("theme"))
 
         self.setWindowTitle("MSK Radiology Dictation")
-        width = self.settings.get("window_width", 1200)
-        height = self.settings.get("window_height", 760)
+        width = self.settings.get("window_width")
+        height = self.settings.get("window_height")
         self.resize(width, height)
 
         # Restore splitter sizes
-        sizes = self.settings.get("splitter_sizes", [220, 980])
+        sizes = self.settings.get("splitter_sizes")
         self.splitter.setSizes(sizes)
 
         # Restore panel visibility
-        self._set_patient_panel_visible(self.settings.get("patient_info_visible", True))
-        self._set_macros_panel_visible(self.settings.get("macros_panel_visible", True))
+        self._set_patient_panel_visible(self.settings.get("patient_info_visible"))
+        self._set_macros_panel_visible(self.settings.get("macros_panel_visible"))
 
         # First-launch consent and disclaimer (after UI is built)
         show_learning_consent_if_needed(self)
@@ -265,14 +265,14 @@ class MainWindow(QMainWindow):
         self._start_background_services()
 
         # Load macro region from settings
-        region = self.settings.get("last_macro_region", "Knee")
+        region = self.settings.get("last_macro_region")
         if region in macros.REGION_ORDER:
             self.macro_region_combo.setCurrentText(region)
         rebuild_macro_buttons(self, region)
 
         # Load templates
         load_templates(self)
-        if last_template := self.settings.get("last_template", ""):
+        if last_template := self.settings.get("last_template"):
             idx = self.template_combo.findText(last_template)
             if idx >= 0:
                 self.template_combo.setCurrentIndex(idx)
@@ -352,7 +352,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # warm-up is an optimisation, never fatal
             logger.debug("Could not start dictation warm-up: %s", exc)
 
-        if self.settings.get("cloud_enabled", False):
+        if self.settings.get("cloud_enabled"):
             try:
                 from PySide6.QtCore import QThread
                 from src.cloud.framework.job_monitor import CloudJobMonitor
@@ -378,7 +378,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _setup_autosave_timer(self) -> None:
-        interval_seconds = self.settings.get("auto_save_interval", 60)
+        interval_seconds = self.settings.get("auto_save_interval")
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setInterval(interval_seconds * 1000)
         self._autosave_timer.timeout.connect(self._do_autosave)
@@ -411,7 +411,7 @@ class MainWindow(QMainWindow):
             self.settings.set("theme", theme)
 
     def on_toggle_theme(self) -> None:
-        current = self.settings.get("theme", "dark")
+        current = self.settings.get("theme")
         self._apply_theme("light" if current == "dark" else "dark")
 
     # ------------------------------------------------------------------
@@ -430,7 +430,7 @@ class MainWindow(QMainWindow):
             self._info_marks.hide()
             return
         noun = "word" if count == 1 else "words"
-        if self.settings.get("term_lookup_uses", 0) < self._hint_ceiling():
+        if self.settings.get("term_lookup_uses") < self._hint_ceiling():
             text = f"{count} {noun} to check: highlight one to see alternatives"
         else:
             text = f"{count} {noun} to check"
@@ -459,11 +459,11 @@ class MainWindow(QMainWindow):
         set_findings_state(self._findings_pill, state)
 
     def _hint_ceiling(self) -> int:
-        return int(self.settings.get("term_lookup_hint_uses", 3) or 3)
+        return int(self.settings.get("term_lookup_hint_uses") or 3)
 
     def _on_lookup_used(self) -> None:
         """One more taken suggestion; the hint stops explaining after a few."""
-        used = self.settings.get("term_lookup_uses", 0)
+        used = self.settings.get("term_lookup_uses")
         if used < self._hint_ceiling():
             self.settings.set("term_lookup_uses", used + 1)
 
@@ -500,10 +500,10 @@ class MainWindow(QMainWindow):
     # inverts the wrong value before the window is first shown: and the setting
     # is the single writer for this state anyway.
     def on_toggle_patient_panel(self) -> None:
-        self._set_patient_panel_visible(not self.settings.get("patient_info_visible", True))
+        self._set_patient_panel_visible(not self.settings.get("patient_info_visible"))
 
     def on_toggle_macros_panel(self) -> None:
-        self._set_macros_panel_visible(not self.settings.get("macros_panel_visible", True))
+        self._set_macros_panel_visible(not self.settings.get("macros_panel_visible"))
 
     # ------------------------------------------------------------------
     # Font size
@@ -516,7 +516,7 @@ class MainWindow(QMainWindow):
         self._change_font_size(-1)
 
     def _change_font_size(self, delta: int) -> None:
-        size = self.settings.get("font_size", 13) + delta
+        size = self.settings.get("font_size") + delta
         size = max(8, min(size, 28))
         self.settings.set("font_size", size)
         font = self.editor.font()
@@ -887,7 +887,7 @@ class MainWindow(QMainWindow):
         # polish's own corrections.
         if (not by_dictation and not self.recorder.is_recording
                         and self._last_editor_text
-                        and self.settings.get("learning_enabled", True)) and text != self._last_editor_text:
+                        and self.settings.get("learning_enabled")) and text != self._last_editor_text:
             self._learn_prev_text = self._last_editor_text
             self._learn_curr_text = text
             self._learn_timer.start()
@@ -909,7 +909,7 @@ class MainWindow(QMainWindow):
         if snapshot is None:
             return
         self._post_dictation_snapshot = None
-        if not self.settings.get("learning_enabled", True):
+        if not self.settings.get("learning_enabled"):
             return
         with contextlib.suppress(Exception):
             from src.features.edit_tracking import record_session_edits
@@ -967,7 +967,7 @@ class MainWindow(QMainWindow):
 def main() -> None:
     """Application entry point."""
     settings = Settings()
-    retention_days = settings.get("autosave_retention_days", 30)
+    retention_days = settings.get("autosave_retention_days")
     startup_cleanup(retention_days)
 
     app = QApplication(sys.argv)

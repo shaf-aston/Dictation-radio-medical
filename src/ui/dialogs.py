@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.core.settings import get_default
 from src.features import clinical_disclaimer
 from src.features.adaptive_learning import get_adaptive_learning
 from src.features.report_release import (
@@ -40,7 +41,7 @@ _No = QMessageBox.StandardButton.No
 
 def show_learning_consent_if_needed(window: MainWindow) -> None:
     """Show adaptive learning consent dialog on first launch."""
-    if window.settings.get("learning_consent_shown", False):
+    if window.settings.get("learning_consent_shown"):
         return
     reply = QMessageBox.question(
         window,
@@ -90,8 +91,8 @@ def show_cloud_training_dialog(window: MainWindow) -> None:
     layout.addWidget(blurb)
 
     enable_box = QCheckBox("Enable cloud voice training (upload my corrections)")
-    enable_box.setChecked(bool(s.get("cloud_enabled", False))
-                          and bool(s.get("cloud_training_consent", False)))
+    enable_box.setChecked(bool(s.get("cloud_enabled"))
+                          and bool(s.get("cloud_training_consent")))
     layout.addWidget(enable_box)
 
     form = QFormLayout()
@@ -101,7 +102,7 @@ def show_cloud_training_dialog(window: MainWindow) -> None:
         "•••• stored in OS keychain" if get_api_key() else "Lightning AI API key")
     form.addRow("API key:", key_edit)
 
-    project_edit = QLineEdit(s.get("lightning_project_id", "") or "")
+    project_edit = QLineEdit(s.get("lightning_project_id") or "")
     project_edit.setPlaceholderText("Lightning AI project ID")
     form.addRow("Project ID:", project_edit)
     layout.addLayout(form)
@@ -208,7 +209,7 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
         QLineEdit, QVBoxLayout,
     )
     from src.dictation.postprocess.llm_cleanup import (
-        clear_groq_key, get_groq_key, store_groq_key, _DEFAULT_MODEL,
+        clear_groq_key, get_groq_key, store_groq_key,
     )
 
     s = window.settings
@@ -228,7 +229,7 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
     layout.addWidget(blurb)
 
     enable_box = QCheckBox("Enable AI cleanup (sends de-identified report text to Groq)")
-    enable_box.setChecked(bool(s.get("groq_cleanup_enabled", False)))
+    enable_box.setChecked(bool(s.get("groq_cleanup_enabled")))
     layout.addWidget(enable_box)
 
     form = QFormLayout()
@@ -238,7 +239,7 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
         "•••• stored in OS keychain" if get_groq_key() else "Groq API key")
     form.addRow("API key:", key_edit)
 
-    model_edit = QLineEdit(s.get("groq_model", _DEFAULT_MODEL) or _DEFAULT_MODEL)
+    model_edit = QLineEdit(s.get("groq_model") or get_default("groq_model"))
     form.addRow("Model:", model_edit)
     layout.addLayout(form)
 
@@ -254,7 +255,7 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
     enabled = enable_box.isChecked()
     s.batch_set({
         "groq_cleanup_enabled": enabled,
-        "groq_model": model_edit.text().strip() or _DEFAULT_MODEL,
+        "groq_model": model_edit.text().strip() or get_default("groq_model"),
     })
     if new_key := key_edit.text().strip():
         store_groq_key(new_key)

@@ -88,14 +88,14 @@ def build_panels(window: MainWindow) -> QWidget:
 
     window.template_section = Section(
         "Template and text size", build_template_panel(window),
-        window.settings.get("panel_template_open", True),
+        window.settings.get("panel_template_open"),
     )
     window.patient_panel = build_patient_panel(window)
     window.patient_section = Section("Patient details", window.patient_panel)
     window.patient_section.header.setToolTip("Show or hide the patient fields (Ctrl+P)")
     window.settings_section = Section(
         "Dictation settings", build_settings_panel(window),
-        window.settings.get("panel_settings_open", False),
+        window.settings.get("panel_settings_open"),
     )
 
     for section in (window.template_section, window.patient_section, window.settings_section):
@@ -249,14 +249,14 @@ def build_settings_panel(window: MainWindow) -> QFrame:
     )
     window.model_combo.setFixedWidth(104)
 
-    window.language_input = QLineEdit(window.settings.get("language", "en"))
+    window.language_input = QLineEdit(window.settings.get("language"))
     window.language_input.setFixedWidth(44)
     window.language_input.setToolTip("ISO language code, e.g. 'en'")
 
     window.accent_combo = QComboBox()
     for key, label in ACCENT_LABELS.items():
         window.accent_combo.addItem(label, key)
-    saved_accent = window.settings.get("accent", "neutral")
+    saved_accent = window.settings.get("accent")
     idx = window.accent_combo.findData(saved_accent)
     if idx >= 0:
         window.accent_combo.setCurrentIndex(idx)
@@ -266,7 +266,7 @@ def build_settings_panel(window: MainWindow) -> QFrame:
     window.cleanup_combo = QComboBox()
     for key, label in CLEANUP_LEVEL_LABELS.items():
         window.cleanup_combo.addItem(label, key)
-    saved_cleanup = window.settings.get("cleanup_level", "medium")
+    saved_cleanup = window.settings.get("cleanup_level")
     idx = window.cleanup_combo.findData(saved_cleanup)
     if idx >= 0:
         window.cleanup_combo.setCurrentIndex(idx)
@@ -279,7 +279,7 @@ def build_settings_panel(window: MainWindow) -> QFrame:
 
     window.vad_checkbox = QCheckBox("Filter silence (VAD)")
     window.vad_checkbox.setToolTip("Voice activity detection - filters silence (recommended)")
-    window.vad_checkbox.setChecked(window.settings.get("vad_filter", True))
+    window.vad_checkbox.setChecked(window.settings.get("vad_filter"))
 
     layout.addWidget(QLabel("Model:"))
     layout.addWidget(window.model_combo)
@@ -310,7 +310,7 @@ def build_editor_panel(window: MainWindow) -> QWidget:
         "Say \"scratch that\" to remove the last sentence, or\n"
         "\"insert\" and a quick phrase's name to write the phrase."
     )
-    font = QFont("Consolas", window.settings.get("font_size", 13))
+    font = QFont("Consolas", window.settings.get("font_size"))
     window.editor.setFont(font)
     window.editor.textChanged.connect(window._on_text_changed)
 

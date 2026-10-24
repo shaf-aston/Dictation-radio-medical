@@ -13,7 +13,6 @@ from typing import Dict, Optional
 # Upload lifecycle for a correction record.
 UPLOAD_PENDING = "pending"
 UPLOAD_UPLOADED = "uploaded"
-UPLOAD_FAILED = "failed"
 
 # Lifecycle for a training batch / cloud job.
 BATCH_PENDING = "pending"
@@ -49,22 +48,6 @@ class CorrectionRecord:
     ts_end: Optional[float] = None
     upload_status: str = UPLOAD_PENDING
     deidentified: bool = False
-    id: Optional[int] = None      # set by the DB on insert
-
-
-@dataclass
-class ImageLabelRecord:
-    """A single labeled chest X-ray image for training.
-
-    User provides the image path and confidence labels for each pathology.
-    The system de-identifies the image before staging for upload.
-    """
-
-    image_path: str
-    labels: Dict[str, float]      # pathology → confidence (0–1)
-    timestamp: str                # ISO8601 UTC
-    consent_flags: Dict[str, bool]
-    de_identified_image_path: Optional[str] = None
     id: Optional[int] = None      # set by the DB on insert
 
 

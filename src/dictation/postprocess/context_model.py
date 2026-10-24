@@ -286,11 +286,3 @@ def append_learned_text(text: str) -> None:
             logger.warning("Could not append to learned context corpus: %s", exc)
 
 
-def reset_cache() -> None:
-    """Drop the in-memory model + learned-seen cache so the next call rebuilds.
-    For tests."""
-    global _MODEL, _MODEL_SIG, _LEARNED_SEEN
-    with _LOCK:
-        _MODEL, _MODEL_SIG = None, None
-    with _LEARNED_LOCK:
-        _LEARNED_SEEN = None

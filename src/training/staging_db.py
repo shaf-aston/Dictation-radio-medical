@@ -21,9 +21,9 @@ from typing import List, Optional
 
 from src.training.schemas import (
     CorrectionRecord,
-    ImageLabelRecord,
     TrainingBatch,
     UPLOAD_PENDING,
+    UPLOAD_UPLOADED,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,17 +56,6 @@ CREATE TABLE IF NOT EXISTS training_batches (
     task_type        TEXT NOT NULL DEFAULT 'whisper_voice'
 );
 
-CREATE TABLE IF NOT EXISTS image_labels (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-    image_path              TEXT NOT NULL,
-    labels                  TEXT NOT NULL,
-    de_id_image_path        TEXT,
-    consent_flags           TEXT NOT NULL,
-    timestamp               TEXT NOT NULL,
-    created_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_image_labels_timestamp ON image_labels(timestamp);
 CREATE INDEX IF NOT EXISTS idx_corr_status ON correction_records(upload_status);
 CREATE INDEX IF NOT EXISTS idx_corr_batch ON correction_records(batch_id);
 """
@@ -165,9 +154,9 @@ class StagingDB:
         placeholders = ",".join("?" * len(record_ids))
         with self._lock:
             self._conn.execute(
-                f"UPDATE correction_records SET upload_status = 'uploaded', "
+                f"UPDATE correction_records SET upload_status = ?, "
                 f"batch_id = ? WHERE id IN ({placeholders})",
-                (batch_id, *record_ids),
+                (UPLOAD_UPLOADED, batch_id, *record_ids),
             )
             self._conn.commit()
 
@@ -214,48 +203,6 @@ class StagingDB:
             ).fetchall()
         return [self._row_to_batch(r) for r in rows]
 
-    def insert_image_label(self, record: ImageLabelRecord) -> int:
-        """Insert a labeled image record. Returns the row ID."""
-        import json
-        with self._lock:
-            cur = self._conn.execute(
-                """INSERT INTO image_labels
-                   (image_path, labels, de_id_image_path, consent_flags, timestamp)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    record.image_path,
-                    json.dumps(record.labels),
-                    record.de_identified_image_path,
-                    json.dumps(record.consent_flags),
-                    record.timestamp,
-                ),
-            )
-            self._conn.commit()
-            row_id = cur.lastrowid
-            if row_id is None:
-                raise RuntimeError("Failed to insert image label")
-            return row_id
-
-    def get_image_labels(self, limit: int = 100) -> List[ImageLabelRecord]:
-        """Retrieve recent labeled images (for training batch construction)."""
-        import json
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM image_labels ORDER BY timestamp DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-        records = []
-        for r in rows:
-            record = ImageLabelRecord(
-                id=r["id"],
-                image_path=r["image_path"],
-                labels=json.loads(r["labels"]),
-                de_identified_image_path=r["de_id_image_path"],
-                consent_flags=json.loads(r["consent_flags"]),
-                timestamp=r["timestamp"],
-            )
-            records.append(record)
-        return records
 
     # ------------------------------------------------------------------
     # Helpers

@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Optional
 
+from src.core.settings import get_default
 from src.dictation.asr.types import EngineCaps
 from src.dictation.stream.segmenter import ChunkPolicy
 
@@ -86,7 +87,7 @@ def plan_from_settings(get: Callable[[str], Any], caps: Optional[EngineCaps]) ->
     predates this still holds the old 6 / 15 / 20 as literal numbers. Reading
     those verbatim would keep every existing user on the slow shape.
     """
-    trailing = float(get("chunk_trailing_silence_sec") or 0.6)
+    trailing = float(get("chunk_trailing_silence_sec") or get_default("chunk_trailing_silence_sec"))
     if str(get("chunk_policy") or AUTO) == MANUAL or caps is None:
         return LivePlan(
             policy=ChunkPolicy(
@@ -114,14 +115,19 @@ class LiveKnobs:
     whole hand-over.
     """
 
-    pause_threshold: float = 2.5
-    live_beam_size: int = 2
-    final_beam_size: int = 5
-    preview_max_lag_sec: float = 3.0
-    polish_confidence_ceiling: float = 0.75
-    uncertain_word_confidence: float = 0.6
-    streaming: bool = True
-    background_polish: bool = True
+    pause_threshold: float
+    live_beam_size: int
+    final_beam_size: int
+    preview_max_lag_sec: float
+    polish_confidence_ceiling: float
+    uncertain_word_confidence: float
+    streaming: bool
+    background_polish: bool
+
+    @classmethod
+    def shipped(cls) -> "LiveKnobs":
+        """The knobs as shipped: what a session gets when nothing is configured."""
+        return cls.from_settings(get_default)
 
     @classmethod
     def from_settings(cls, get: Callable[[str], Any]) -> "LiveKnobs":

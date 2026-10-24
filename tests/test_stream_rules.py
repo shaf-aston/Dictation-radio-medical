@@ -116,10 +116,11 @@ def test_a_pause_too_short_to_be_a_thought_does_not_close_it():
 
 
 def test_the_minimum_chunk_length_still_wins_over_a_trailing_pause():
-    # 3s of speech then 2s of silence. The pause is long enough, but the chunk
-    # would be under chunk_min_sec, and short chunks cost a full decode each
-    # for very little text: the floor is the whole reason it exists.
-    chunks = cut_chunks(int(5.0 * SR), _marks((0.0, 3.0)))
+    # Speech a little under chunk_min_sec, then 2s of silence. The pause is
+    # long enough, but short chunks cost a full decode each for very little
+    # text: the floor is the whole reason it exists.
+    speech = ChunkPolicy().min_sec - 0.5
+    chunks = cut_chunks(int((speech + 2.0) * SR), _marks((0.0, speech)))
     assert [c for c in chunks if c.closed] == []
 
 

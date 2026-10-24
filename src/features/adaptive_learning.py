@@ -205,43 +205,17 @@ class AdaptiveLearning:
         self._change(lambda learned: learned.count_use(term))
         self._maybe_save()  # debounced, so not a write per word
 
-    def learn_accent_pattern(self, wrong: str, correct: str) -> None:
-        """Learn an accent-specific correction pattern."""
-        if not wrong or not correct:
-            return
-
-        wrong, correct = wrong.lower(), correct.lower()
-        self._change(lambda learned: learned.add_accent_hint(wrong, correct), rebuild=True)
-        self._maybe_save()
 
     # ------------------------------------------------------------------
     # Query API
     # ------------------------------------------------------------------
 
-    def get_correction(self, word: str) -> Optional[str]:
-        """Get learned correction for a word, or None if not found."""
-        with self._data_lock:
-            return self._learned.word_corrections.get(word.lower())
-
-    def is_known_term(self, term: str) -> bool:
-        """Check if term is in custom vocabulary."""
-        with self._data_lock:
-            return term.lower() in self._learned.custom_terms
 
     def custom_terms(self) -> Set[str]:
         """A copy of the words the radiologist has said to keep as spoken."""
         with self._data_lock:
             return set(self._learned.custom_terms)
 
-    def get_term_frequency(self, term: str) -> int:
-        """Get usage frequency of a term."""
-        with self._data_lock:
-            return self._learned.term_frequency.get(term.lower(), 0)
-
-    def get_high_frequency_terms(self, min_count: int = 3) -> List[str]:
-        """Get terms used at least min_count times."""
-        with self._data_lock:
-            return [t for t, c in self._learned.term_frequency.items() if c >= min_count]
 
     # ------------------------------------------------------------------
     # Post-processing integration
@@ -433,10 +407,6 @@ class AdaptiveLearning:
         with self._data_lock:
             return dict(self._learned.word_corrections)
 
-    def import_corrections(self, corrections: Dict[str, str]) -> None:
-        """Import corrections (merge with existing)."""
-        for wrong, correct in corrections.items():
-            self.learn_correction(wrong, correct)
 
     def force_save(self) -> None:
         """Force immediate save of learning data."""

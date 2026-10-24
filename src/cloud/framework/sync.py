@@ -81,14 +81,14 @@ class SyncManager:
             return None
         from src.core.settings import Settings
         s = Settings()
-        min_records = int(s.get("min_corrections_before_upload", 20))
+        min_records = int(s.get("min_corrections_before_upload"))
         if self._db.pending_count() < min_records:
             return None
         try:
             client = self._make_client()
             return self._start_batch(
                 client, task_type,
-                base_model=s.get("model_size", "base"),
+                base_model=s.get("model_size"),
                 min_records=min_records,
             )
         except CloudError as exc:
@@ -203,7 +203,7 @@ class SyncManager:
             ModelRegistry().register_downloaded_model(
                 version=version,
                 local_path=dest,
-                base_model=Settings().get("model_size", "base"),
+                base_model=Settings().get("model_size"),
                 task_type=batch.task_type,
                 correction_count=batch.record_count,
                 lightning_job_id=batch.lightning_job_id,
@@ -247,5 +247,5 @@ class SyncManager:
     def training_progress(self) -> Tuple[int, int]:
         """Return (pending_corrections, threshold) for a progress indicator."""
         from src.core.settings import Settings
-        threshold = int(Settings().get("min_corrections_before_upload", 20))
+        threshold = int(Settings().get("min_corrections_before_upload"))
         return self._db.pending_count(), threshold

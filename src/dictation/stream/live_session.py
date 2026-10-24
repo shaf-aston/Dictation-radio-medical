@@ -24,6 +24,7 @@ from typing import Callable, List, Optional, Tuple
 import numpy as np
 
 from src.core import event_log
+from src.core.settings import get_default
 from src.dictation.asr import AsrEngine, TranscribeContext
 from src.dictation.asr.port import AsrStream, StreamingAsrEngine, engine_identity
 from src.dictation.asr.types import AsrResult, StreamError, StreamFinal, StreamInterim
@@ -38,6 +39,7 @@ from src.dictation.stream.rules import (
     should_skip_preview,
     speech_span,
 )
+from src.dictation.stream.policy import LiveKnobs
 from src.dictation.stream.segmenter import Chunk, ChunkPolicy
 from src.dictation.stream.tail import LocalAgreement2
 from src.dictation.stream.vad import SAMPLE_RATE, SpeechMark, detect_speech
@@ -71,6 +73,10 @@ class LiveUpdate:
     uncertain: Tuple[str, ...] = ()
 
 
+#: What a keyword left out means: the shipped settings, never a second copy.
+_SHIPPED = LiveKnobs.shipped()
+
+
 class LiveSession:
     """A single dictation, fed audio in blocks, yielding transcript updates."""
 
@@ -83,20 +89,20 @@ class LiveSession:
         accent: str = "neutral",
         cleanup_level: str = "medium",
         policy: ChunkPolicy = ChunkPolicy(),
-        pause_threshold: float = 2.5,
-        live_beam_size: int = 2,
-        final_beam_size: int = 5,
-        preview_max_lag_sec: float = 3.0,
-        preview_min_tail_sec: float = 1.0,
-        polish_confidence_ceiling: float = 0.85,
-        uncertain_word_confidence: float = 0.6,
+        pause_threshold: float = _SHIPPED.pause_threshold,
+        live_beam_size: int = _SHIPPED.live_beam_size,
+        final_beam_size: int = _SHIPPED.final_beam_size,
+        preview_max_lag_sec: float = _SHIPPED.preview_max_lag_sec,
+        preview_min_tail_sec: float = float(get_default("preview_min_tail_sec")),
+        polish_confidence_ceiling: float = _SHIPPED.polish_confidence_ceiling,
+        uncertain_word_confidence: float = _SHIPPED.uncertain_word_confidence,
         initial_prompt: str = "",
         sr: int = SAMPLE_RATE,
         postprocess: bool = True,
         polish_vad_filter: bool = False,
         on_decoded: Optional[Callable[[AsrResult, int], None]] = None,
-        streaming: bool = True,
-        background_polish: bool = True,
+        streaming: bool = _SHIPPED.streaming,
+        background_polish: bool = _SHIPPED.background_polish,
     ) -> None:
         self.live_engine = live_engine
         self.final_engine = final_engine

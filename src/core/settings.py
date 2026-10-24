@@ -28,7 +28,9 @@ _DEFAULTS: dict = {
     # correct ones, so it could only subtract. Whisper is confidently wrong often
     # enough that its confidence does not separate a misheard word from a heard
     # one: at least not on synthetic audio, where every word scores high.
-    # Set a float to switch it on; the honest test is the `own` set, real
+    # Read only by the eval harness (scripts/eval/run_eval.py), which passes
+    # word confidences to the pipeline; the app does not, so setting it here
+    # changes nothing in dictation. The honest test is the `own` set, real
     # acoustics, where confidence actually varies. See docs/dictation-accuracy.md.
     "correction_confidence_ceiling": None,
     "theme": "dark",
@@ -155,8 +157,12 @@ _DEFAULTS: dict = {
     "cloud_training_consent": False,   # explicit user consent to upload de-identified data
     "lightning_project_id": "",        # Lightning AI project (API key lives in OS keychain)
     "min_corrections_before_upload": 20,  # don't train on tiny datasets
-    "auto_download_models": True,      # auto-fetch fine-tuned models when jobs finish
     "active_model_version": None,      # active fine-tuned version, or None for base model
+    # --- AI report cleanup (Groq; dictation/postprocess/llm_cleanup.py) ---
+    # Off: it sends de-identified text off the device, so it is switched on
+    # by the radiologist, and only works with cloud_training_consent as well.
+    "groq_cleanup_enabled": False,
+    "groq_model": "llama-3.3-70b-versatile",
     # --- Learning & UI state ---
     "learning_enabled": True,          # capture edits for adaptive learning
     "learning_consent_shown": False,   # has user seen the learning consent dialog

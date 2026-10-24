@@ -79,7 +79,7 @@ def record_web_run(
     for streaming, that number is the whole point.
     """
     record = run_log.start(
-        "web", model=str(prefs.get("model_size", "")), engine=str(settings.get("asr_engine", "")),
+        "web", model=str(prefs.get("model_size", "")), engine=str(settings.get("asr_engine")),
     )
     record.audio_sec = audio_sec
     record.duration_sec = round(elapsed, 3)
@@ -88,7 +88,7 @@ def record_web_run(
     record.word_count = len(text.split())
     if audio_sec > 0:
         record.decode_ratio = round(elapsed / audio_sec, 3)
-    record.text = text if bool(settings.get("run_log_store_text", True)) else ""
+    record.text = text if bool(settings.get("run_log_store_text")) else ""
     run_log.write(record, settings)
     # The one line that summarises the whole recording, so the console ends
     # with the verdict rather than leaving it to be added up by eye.

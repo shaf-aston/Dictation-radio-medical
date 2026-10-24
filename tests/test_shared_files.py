@@ -74,7 +74,7 @@ def test_two_apps_learning_side_by_side_keep_both(tmp_path, monkeypatch):
     assert saved["word_corrections"] == {"menscus": "meniscus", "labrom": "labrum"}
     assert saved["term_frequency"] == {"effusion": 2}
     # The second to save now knows what the first learned.
-    assert web.get_correction("menscus") == "meniscus"
+    assert web.export_corrections()["menscus"] == "meniscus"
 
 
 def test_a_failed_save_keeps_what_was_learned(tmp_path, monkeypatch):

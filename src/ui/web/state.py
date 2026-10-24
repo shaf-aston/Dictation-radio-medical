@@ -53,7 +53,7 @@ def settings() -> Settings:
 def current_preferences() -> dict:
     current = settings()
     prefs = {key: current.get(key) for key in PREFERENCE_KEYS}
-    macro_region = current.get("last_macro_region", "")
+    macro_region = current.get("last_macro_region")
     if macro_region not in macros.REGION_ORDER and macros.REGION_ORDER:
         macro_region = macros.REGION_ORDER[0]
     prefs["macro_region"] = macro_region

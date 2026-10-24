@@ -85,7 +85,7 @@ def normalize_theme(theme: object) -> str:
 
 
 def current_theme() -> str:
-    return normalize_theme(state.settings().get("theme", "dark"))
+    return normalize_theme(state.settings().get("theme"))
 
 
 def template_names() -> list[str]:
@@ -104,7 +104,7 @@ def bootstrap_payload() -> dict:
     """Collect the page bootstrap state so the client can render controls."""
     settings = state.settings()
     templates = template_names()
-    selected_template = settings.get("last_template", "")
+    selected_template = settings.get("last_template")
     if selected_template not in templates:
         selected_template = templates[0] if templates else ""
     return {
@@ -146,8 +146,10 @@ def bootstrap_payload() -> dict:
         # The marks hint stops explaining itself past the ceiling; the count
         # lives in settings rather than the browser so using the feature on the
         # desktop also retires the hint here.
-        "term_lookup_uses": int(settings.get("term_lookup_uses", 0) or 0),
-        "term_lookup_hint_uses": int(settings.get("term_lookup_hint_uses", 3) or 3),
+        "term_lookup_uses": int(settings.get("term_lookup_uses") or 0),
+        "term_lookup_hint_uses": int(settings.get("term_lookup_hint_uses") or 3),
+        # The developer console's scroll-back is the server's ring, not a copy.
+        "event_log_max": int(settings.get("event_log_max")),
         # The first-launch clinical disclaimer, shipped with the rest of the
         # first-load state rather than fetched separately: the page must be
         # able to show it before the radiologist can type anything.
@@ -160,8 +162,8 @@ def bootstrap_payload() -> dict:
         # desktop's consent dialog writes, so answering in one front-end
         # answers for both.
         "learning": {
-            "enabled": bool(settings.get("learning_enabled", True)),
-            "consent_needed": not settings.get("learning_consent_shown", False),
+            "enabled": bool(settings.get("learning_enabled")),
+            "consent_needed": not settings.get("learning_consent_shown"),
         },
     }
 

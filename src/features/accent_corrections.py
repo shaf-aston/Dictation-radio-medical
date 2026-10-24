@@ -343,6 +343,3 @@ def suggest_accent(text: str, min_matches: int = 2) -> Optional[str]:
     return best_accent
 
 
-def get_available_accents() -> List[str]:
-    """Return list of available accent profile keys."""
-    return list(ACCENT_PROFILES.keys())
