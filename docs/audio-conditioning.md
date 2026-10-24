@@ -180,3 +180,37 @@ Parakeet had been running its int8 (rounded) copy. At full precision, same
 the best cleaning step managed 10%. Now the default (`parakeet_precision`), so
 the baselines above are int8 numbers: any future step is judged against the
 fp32 ones (`data/eval/reports/fp32-<set>.replay.json`).
+
+## Real voices (eka, 2026-10-24): still none passes, all stay off
+
+`eka` is 140 real Indian-English dictations built from Eka Care's medical speech
+set (MIT); `eka_quiet` and `eka_noise` are made from it by
+`build_degraded_set.py` exactly as the `tts` ones were. Full-precision Parakeet,
+`replay.py --limit 30 --condition <step>`. Reports:
+`data/eval/reports/eka-<step>-<set>.replay.json`.
+
+| Set | Step | WER | Term error (no step) | Verdict |
+|---|---|---|---|---|
+| `eka` (clean) | none | 40.46% | 7.78% | |
+| `eka_quiet` | none | 54.78% | 15.56% | +7.8 over clean, kept |
+| `eka_noise` | none | 54.23% | 17.22% | +9.4 over clean, kept |
+| `eka_quiet` | agc | 51.41% | 20.00% (15.56) | fails: term error rises |
+| `eka_quiet` | denoise | 59.32% | 23.33% (15.56) | fails: both rise |
+| `eka_noise` | denoise | 55.42% | 19.44% (17.22) | fails: both rise |
+| `eka` (clean) | denoise | 40.28% | 6.67% (7.78) | passes the clean mark only |
+| `eka` (clean) | expander | 40.91% | 12.78% (7.78) | fails: +5.0 on clean |
+
+**The expander garbles real voices, confirmed on 30 speakers' clips.** Same
+audio, raw then expander: "chest pain" to "chess pane", "vomiting" to
+"womatin'", "popliteal" to "popretial", "nephritic" to "necrotic", and twice a
+word came back in Cyrillic ("tuberculosis"). 69 changes in 30 clips: some only case or
+punctuation, a few closer to the reference, most worse.
+
+Read the numbers with two cautions. Term error here is a mean of per-clip rates
+over few lexicon terms per clip, so one clip flipping moves it about 3 points: a
+small difference is noise, but no step moved even in the right direction on a
+kept kind, so a bigger sample cannot turn any of these into a pass (the bar is a
+quarter cut). And the high WER is partly the references: Eka's labels include
+drug brand names and abbreviations ("Telvas AM", "Eurobion plus") that no
+general model spells right; the term error, restricted to the radiology
+lexicon, is the fair number.
