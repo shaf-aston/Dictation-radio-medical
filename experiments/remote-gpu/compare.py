@@ -4,7 +4,8 @@
 
 Candidates: 'stock-whisper' (small.en), 'stock-parakeet' (the app's default engine)
 plus each folder in models/ that holds a model/ directory; a folder with parakeet.json
-is a Parakeet version, any other a Whisper one. Nothing here touches src/ or the app settings.
+is a Parakeet version (read from data/models/fine_tuned/ once moved into the app),
+any other a Whisper one. Nothing here touches src/ or the app settings.
 Scores the model's raw text (no correction stage) so the model alone is judged,
 plus the text after the app's correction stage, which is what the user sees.
 'unseen' = clips in a voice the model was never trained on: the tts set's held-out
@@ -25,7 +26,7 @@ from config import MODELS, REPO  # noqa: E402
 sys.path.insert(0, str(REPO))
 from scripts.eval.corpus import load_set  # noqa: E402
 from scripts.eval.metrics import term_error_rate, word_error_rate  # noqa: E402
-from src.dictation.asr.engines.parakeet_engine import ParakeetEngine  # noqa: E402
+from src.dictation.asr.engines.parakeet_engine import ParakeetEngine, available_models, model_dir_for  # noqa: E402
 
 
 def is_unseen(i, clip):
@@ -50,13 +51,19 @@ def candidates(only):
     # The app runs Parakeet at fp32; v1 and v2 exported int8 only, so int8 stock is their like-for-like row.
     found = [("stock-whisper", lambda: whisper(model_size="small.en")), ("stock-parakeet", parakeet),
              ("stock-parakeet-int8", lambda: parakeet(quantization="int8"))]
-    for d in sorted(MODELS.glob("*/model")):
-        if (d.parent / "parakeet.json").exists():
+    for v in sorted(p for p in MODELS.iterdir() if p.is_dir()):
+        d = v / "model"
+        if (v / "parakeet.json").exists():
+            # A version moved into the app is read from the app's copy.
+            if not d.exists() and v.name in available_models():
+                d = model_dir_for(v.name)
+            if not d.exists():
+                continue
             # Versions saved before the quantization knob were int8.
-            q = json.loads((d.parent / "parakeet.json").read_text()).get("quantization", "int8")
-            found.append((d.parent.name, lambda d=d, q=q: parakeet(str(d), q)))
-        else:
-            found.append((d.parent.name, lambda d=d: whisper(model_path=str(d))))
+            q = json.loads((v / "parakeet.json").read_text()).get("quantization", "int8")
+            found.append((v.name, lambda d=d, q=q: parakeet(str(d), q)))
+        elif d.exists():
+            found.append((v.name, lambda d=d: whisper(model_path=str(d))))
     unknown = sorted(set(only or ()) - {n for n, _ in found})
     if unknown:
         raise SystemExit(f"--only: no candidate named {unknown}; have {[n for n, _ in found]}")
