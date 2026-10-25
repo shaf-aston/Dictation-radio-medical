@@ -30,9 +30,9 @@ DISCLAIMER_TITLE = "Clinical Disclaimer"
 
 DISCLAIMER_TEXT = (
     "DISCLAIMER: IMPORTANT\n\n"
-    "This tool uses OpenAI Whisper for speech recognition. Whisper is a "
-    "general-purpose model and is not FDA-cleared or CE-marked for clinical "
-    "medical documentation.\n\n"
+    "This tool uses general-purpose speech recognition models (such as "
+    "NVIDIA Parakeet and OpenAI Whisper). None of them is FDA-cleared or "
+    "CE-marked for clinical medical documentation.\n\n"
     "All transcriptions MUST be reviewed and verified by a qualified "
     "radiologist before clinical use or patient record entry.\n\n"
     "The software author accepts no liability for transcription errors."
