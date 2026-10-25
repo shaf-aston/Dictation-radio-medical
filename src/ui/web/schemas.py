@@ -22,6 +22,7 @@ class PreferencesUpdate(BaseModel):
     vad_filter: bool = True
     accent: str = "neutral"
     cleanup_level: str = "medium"
+    parakeet_model: str = "standard"
     macro_region: str = ""
 
 

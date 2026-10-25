@@ -33,7 +33,7 @@ import argparse
 import json
 import statistics
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -42,10 +42,11 @@ import numpy as np
 from scripts.eval import corpus
 from scripts.eval.metrics import term_error_rate, word_error_rate
 from src.core.settings import Settings
+from src.core.paths import eval_set_dir
+from src.dictation.conditioning.chain import Chain
+from src.dictation.conditioning.factory import ORDER, build_chain
 from src.dictation.asr.factory import DEFAULT_ENGINE, create_engine, model_kwargs
 from src.dictation.stream.live_session import LiveSession
-from src.dictation.stream.rules import build_context_prompt
-from src.dictation.stream.segmenter import ChunkPolicy
 from src.dictation.stream.vad import SAMPLE_RATE
 
 
@@ -65,6 +66,8 @@ class ReplayResult:
     first_word_sec: Optional[float] = None
     wer: Optional[float] = None
     term_error: Optional[float] = None
+    # The chunk shape the session actually ran with.
+    policy: Dict[str, float] = field(default_factory=dict)
 
     def percentile(self, p: float) -> float:
         if not self.commit_lag:
@@ -103,23 +106,6 @@ def load_audio(path: Path) -> np.ndarray:
     return decode_audio(str(path), sampling_rate=SAMPLE_RATE)
 
 
-def _policy_from(settings: Settings, overrides: Optional[Dict[str, float]] = None) -> ChunkPolicy:
-    """The shipped policy, with any --chunk-* override applied on top.
-
-    Overriding here rather than by editing dictation_settings.json keeps an
-    A/B run from mutating the user's own configuration, and keeps the two arms
-    of a comparison in one command each.
-    """
-    values = {
-        "min_sec": float(settings.get("chunk_min_sec")),
-        "soft_max_sec": float(settings.get("chunk_soft_max_sec")),
-        "force_cut_sec": float(settings.get("chunk_force_cut_sec")),
-        "trailing_silence_sec": float(settings.get("chunk_trailing_silence_sec")),
-    }
-    values.update({k: v for k, v in (overrides or {}).items() if v is not None})
-    return ChunkPolicy(**values)
-
-
 def replay(
     audio: np.ndarray,
     name: str,
@@ -131,36 +117,31 @@ def replay(
     final_engine_name: str = "",
     polish_ceiling: Optional[float] = None,
     realtime: bool = False,
-    policy: Optional[ChunkPolicy] = None,
+    chunk_overrides: Optional[Dict[str, float]] = None,
+    conditioner: Optional[Chain] = None,
 ) -> ReplayResult:
-    """Drive one recording through the live loop exactly as the socket does."""
+    """Drive one recording through the live loop exactly as the socket does.
+
+    The session is built by the app's own builder, so it runs the chunk shape
+    the app would (``chunk_policy: auto`` included). ``chunk_overrides`` and
+    ``polish_ceiling`` are A/B knobs laid on top, never written to the user's
+    settings file.
+    """
     sr = SAMPLE_RATE
     cycle_sec = float(settings.get("live_cycle_sec"))
     block = max(1, int(cycle_sec * sr))
 
-    session = LiveSession(
+    overrides = {} if polish_ceiling is None else {"polish_confidence_ceiling": polish_ceiling}
+    session = LiveSession.from_settings(
+        settings.get,
         create_engine(engine_name, **model_kwargs(engine_name, live_model)),
         create_engine(final_engine_name or engine_name,
                       **model_kwargs(final_engine_name or engine_name, final_model)),
-        language=str(settings.get("language")),
-        accent=str(settings.get("accent")),
-        cleanup_level=str(settings.get("cleanup_level")),
-        policy=policy or _policy_from(settings),
-        pause_threshold=float(settings.get("pause_threshold")),
-        live_beam_size=int(settings.get("live_beam_size")),
-        final_beam_size=int(settings.get("final_beam_size")),
-        preview_max_lag_sec=float(settings.get("preview_max_lag_sec")),
-        preview_min_tail_sec=float(settings.get("preview_min_tail_sec")),
-        polish_confidence_ceiling=(
-            polish_ceiling if polish_ceiling is not None
-            else float(settings.get("polish_confidence_ceiling"))
-        ),
-        uncertain_word_confidence=float(settings.get("uncertain_word_confidence")),
-        initial_prompt=build_context_prompt(),
-        sr=sr,
+        chunk_overrides=chunk_overrides, sr=sr, conditioner=conditioner, **overrides,
     )
 
-    result = ReplayResult(name=name, audio_sec=len(audio) / sr, chunks=0, final_text="")
+    result = ReplayResult(name=name, audio_sec=len(audio) / sr, chunks=0, final_text="",
+                          policy=asdict(session.policy))
     committed_words = 0
     frontier = 0.0
     fed = 0
@@ -220,7 +201,7 @@ def replay(
 def _clips(args: argparse.Namespace) -> List[Path]:
     if args.audio:
         return [Path(args.audio)]
-    root = Path("data") / "eval" / args.set
+    root = eval_set_dir(args.set)
     clips = sorted(root.glob("*.wav"))
     if not clips:
         raise SystemExit(
@@ -266,6 +247,8 @@ def main() -> None:
     ap.add_argument("--trailing-silence", type=float,
                     help="override chunk_trailing_silence_sec; a huge value "
                          "effectively turns the trailing-pause cut off")
+    ap.add_argument("--condition", default="",
+                    help="comma list of audio_conditioning steps to switch on")
     args = ap.parse_args()
 
     settings = Settings()
@@ -276,19 +259,19 @@ def main() -> None:
         "" if args.engine == "parakeet" else str(settings.get("live_model_size")))
     final_model = args.final_model or (
         "" if final_engine == "parakeet" else str(settings.get("model_size")))
-    policy = _policy_from(settings, {
+    chunk_overrides = {
         "min_sec": args.chunk_min,
         "soft_max_sec": args.chunk_soft_max,
         "force_cut_sec": args.chunk_force_cut,
         "trailing_silence_sec": args.trailing_silence,
-    })
+    }
 
     ceiling = (args.polish_ceiling if args.polish_ceiling is not None
                else float(settings.get("polish_confidence_ceiling")))
     print(f"engine={args.engine} live={live_model} final_engine={final_engine} "
           f"final={final_model} polish_ceiling={ceiling}")
-    print(f"policy min={policy.min_sec} soft={policy.soft_max_sec} "
-          f"force={policy.force_cut_sec} trailing={policy.trailing_silence_sec}")
+    set_chunks = {k: v for k, v in chunk_overrides.items() if v is not None}
+    print(f"chunk_policy={settings.get('chunk_policy')} overrides={set_chunks or 'none'}")
     print(f"mode={'realtime' if args.realtime else 'flat out (audio-seconds lag)'}\n")
 
     references = {} if args.audio else _references(args.set)
@@ -297,20 +280,43 @@ def main() -> None:
         from src.medical.medical_dict import get_correction_targets
         lexicon = list(get_correction_targets())
 
+    steps = [n.strip() for n in args.condition.split(",") if n.strip()]
+    unknown = sorted(set(steps) - set(ORDER))
+    if unknown:  # a typo would otherwise run with every step off: an A/B of two identical arms
+        raise SystemExit(f"unknown --condition step(s) {unknown}; known: {', '.join(ORDER)}")
+    if steps:
+        print(f"conditioning: {', '.join(steps)}")
+
+    cond_cfg = settings.get("audio_conditioning") or {}
     results = []
+    # Pooled over every clip (errors / words), as compare.py does: a mean of per-clip
+    # rates lets a clip with no lexicon term count as a perfect 0% and dilute the rest.
+    word_err = ref_words = term_err = term_tok = 0
     for clip in _clips(args):
+        # One chain per clip: it learns the room, so none is shared.
+        # The knobs the app would run with; only which steps are on comes from --condition.
+        conditioner = (
+            build_chain({**cond_cfg, **{n: {**cond_cfg.get(n, {}), "on": n in steps} for n in ORDER}},
+                        SAMPLE_RATE) if steps else None
+        )
         res = replay(
             load_audio(clip), clip.stem, settings,
             engine_name=args.engine, live_model=live_model,
             final_model=final_model, final_engine_name=final_engine,
-            polish_ceiling=ceiling, realtime=args.realtime, policy=policy,
+            polish_ceiling=ceiling, realtime=args.realtime, chunk_overrides=chunk_overrides,
+            conditioner=conditioner,
         )
         results.append(res)
         s = res.summary()
         ref = references.get(res.name, "")
         if ref:
-            res.wer = word_error_rate(ref, res.final_text).wer
-            res.term_error = term_error_rate(ref, res.final_text, lexicon).error_rate
+            w = word_error_rate(ref, res.final_text)
+            t = term_error_rate(ref, res.final_text, lexicon)
+            res.wer, res.term_error = w.wer, t.error_rate
+            word_err += w.substitutions + w.deletions + w.insertions
+            ref_words += w.ref_words
+            term_err += t.term_errors
+            term_tok += t.term_tokens
         scored = (f"  wer {res.wer:.1%}  term {res.term_error:.1%}"
                   if res.wer is not None else "")
         print(f"{res.name:<16} audio {s['audio_sec']:>6.2f}s  chunks {s['chunks']:>2}  "
@@ -330,8 +336,8 @@ def main() -> None:
     scored_runs = [r for r in results if r.term_error is not None]
     if scored_runs:
         # The veto metric. A latency win that moves this up is not a win.
-        print(f"accuracy    wer {statistics.mean(r.wer for r in scored_runs):.2%}  "
-              f"medical-term error {statistics.mean(r.term_error for r in scored_runs):.2%}"
+        print(f"accuracy    wer {word_err / max(1, ref_words):.2%}  "
+              f"medical-term error {term_err / max(1, term_tok):.2%}"
               f"   ({len(scored_runs)} scored)")
     else:
         print("accuracy    NOT SCORED: no reference for this audio")
@@ -348,11 +354,7 @@ def main() -> None:
         "live_model": live_model,
         "final_model": final_model,
         "realtime": args.realtime,
-        "policy": {
-            "min_sec": policy.min_sec, "soft_max_sec": policy.soft_max_sec,
-            "force_cut_sec": policy.force_cut_sec,
-            "trailing_silence_sec": policy.trailing_silence_sec,
-        },
+        "policy": results[0].policy if results else {},
         "clips": [{"name": r.name, **r.summary(), "wer": r.wer,
                    "term_error": r.term_error, "text": r.final_text} for r in results],
     }, indent=2), encoding="utf-8")

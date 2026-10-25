@@ -10,17 +10,36 @@ from __future__ import annotations
 
 import importlib.util
 import logging
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 from src.dictation.asr.engines.deepgram_engine import DeepgramEngine
 from src.dictation.asr.engines.fallback_engine import ChainEngine
 from src.dictation.asr.engines.faster_whisper_engine import FasterWhisperEngine
-from src.dictation.asr.engines.parakeet_engine import ParakeetEngine
+from src.dictation.asr.engines.parakeet_engine import STANDARD, ParakeetEngine, model_dir_for
 from src.dictation.asr.engines.parakeet_hotword_engine import ParakeetHotwordEngine
 from src.dictation.asr.port import AsrEngine
 from src.core.settings import Settings, get_default
 
 logger = logging.getLogger(__name__)
+
+
+#: parakeet_precision setting -> onnx-asr's quantization argument.
+_PARAKEET_QUANTIZATION = {"fp32": None, "int8": "int8"}
+
+
+def _make_parakeet(settings: Optional[Settings] = None, **kwargs: Any) -> ParakeetEngine:
+    """Parakeet with the weights ``parakeet_model`` names, at the precision
+    ``parakeet_precision`` names. Raises ``ValueError`` on an unknown value
+    rather than guessing one."""
+    settings = settings or Settings()
+    kwargs.setdefault("model_dir", model_dir_for(settings.get("parakeet_model")))
+    precision = settings.get("parakeet_precision")
+    if precision not in _PARAKEET_QUANTIZATION:
+        raise ValueError(
+            f"Unknown parakeet_precision {precision!r}. Available: {sorted(_PARAKEET_QUANTIZATION)}"
+        )
+    kwargs.setdefault("quantization", _PARAKEET_QUANTIZATION[precision])
+    return ParakeetEngine(**kwargs)
 
 
 def _local_tiers(**kwargs: Any) -> List[Tuple[str, Any]]:
@@ -52,20 +71,21 @@ def _local_tiers(**kwargs: Any) -> List[Tuple[str, Any]]:
 def _parakeet_tier(settings: Settings) -> Any:
     """The best Parakeet this install can run, as a (name, engine) tier, or None.
 
-    1. A fine-tuned export (``parakeet_model_dir``): onnx-asr layout, so the
-       onnx-asr engine, without hotwords (its training already targets them).
+    1. A fine-tune picked as the voice model (``parakeet_model``): onnx-asr
+       layout, so the onnx-asr engine, without hotwords (its training already
+       targets them).
     2. sherpa-onnx with radiology hotwords (``asr_hotwords``, default on):
        measured 35% fewer medical-term errors than greedy at the same speed.
+       It runs its own int8 export, so ``parakeet_precision`` does not apply.
     3. onnx-asr, greedy: the stock model.
     """
-    local = str(settings.get("parakeet_model_dir") or "")
     have_onnx_asr = importlib.util.find_spec("onnx_asr") is not None
-    if local and have_onnx_asr:
-        return ("parakeet", ParakeetEngine(local))
+    if settings.get("parakeet_model") != STANDARD and have_onnx_asr:
+        return ("parakeet", _make_parakeet(settings))
     if settings.get("asr_hotwords") and importlib.util.find_spec("sherpa_onnx") is not None:
         return ("parakeet-hotwords", ParakeetHotwordEngine(float(settings.get("hotword_score"))))
     if have_onnx_asr:
-        return ("parakeet", ParakeetEngine())
+        return ("parakeet", _make_parakeet(settings))
     return None
 
 
@@ -84,7 +104,7 @@ def describe_engine(settings: Settings) -> str:
     name, engine = tier
     if name == "parakeet-hotwords":
         return "Parakeet + radiology terms"
-    return "Parakeet (your fine-tune)" if engine.model_dir else "Parakeet"
+    return f"Parakeet {settings.get('parakeet_model')}" if engine.model_dir else "Parakeet"
 
 
 def _make_local_chain(**kwargs: Any) -> AsrEngine:
@@ -99,7 +119,7 @@ def _make_deepgram_chain(**kwargs: Any) -> AsrEngine:
 
 _ENGINES = {
     "faster-whisper": FasterWhisperEngine,
-    "parakeet": ParakeetEngine,
+    "parakeet": _make_parakeet,
     "parakeet-hotwords": ParakeetHotwordEngine,
     "deepgram": _make_deepgram_chain,
     "local": _make_local_chain,

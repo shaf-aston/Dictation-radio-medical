@@ -1,15 +1,26 @@
 """Runs ON Kaggle (GPU). Fine-tunes Whisper, exports a CTranslate2 folder.
 
-Reads /kaggle/input/rd-train-data/{manifest.jsonl,config.json,*.flac}
+Reads /kaggle/input/rd-train-data/{manifest.jsonl,audio.tar}; settings come from train/whisper.json
 Writes /kaggle/working/model_ct2/ (what faster-whisper loads) + train_log.json
 """
-import json, os, random, subprocess, sys, tarfile, time
+import json
+import os
+import random
+import shutil
+import subprocess
+import sys
+import tarfile
+import time
 from pathlib import Path
 
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", "ctranslate2"], check=True)
 
-import numpy as np, soundfile as sf, torch
-from transformers import WhisperForConditionalGeneration, WhisperProcessor
+import soundfile as sf  # noqa: E402
+import torch  # noqa: E402
+from huggingface_hub import hf_hub_download  # noqa: E402
+from transformers import WhisperForConditionalGeneration, WhisperProcessor  # noqa: E402
+
+cfg = {}  # kaggle_io.run_kernel writes train/whisper.json in here at push time
 
 # Kaggle's mount path differs between runtimes; find the data by its manifest.
 DATA = next(Path("/kaggle/input").rglob("manifest.jsonl")).parent
@@ -20,8 +31,7 @@ AUDIO = DATA / "audio"
 if not AUDIO.is_dir():
     AUDIO = Path("/tmp/audio")
     tarfile.open(DATA / "audio.tar").extractall(AUDIO)
-cfg = json.loads((DATA / "config.json").read_text())
-rows = [json.loads(l) for l in (DATA / "manifest.jsonl").read_text().splitlines() if l.strip()]
+rows = [json.loads(ln) for ln in (DATA / "manifest.jsonl").read_text().splitlines() if ln.strip()]
 random.Random(0).shuffle(rows)
 n_val = max(1, int(len(rows) * cfg["val_fraction"]))
 val, train = rows[:n_val], rows[n_val:]
@@ -82,7 +92,10 @@ for ep in range(cfg["epochs"]):
         scaler.scale(loss).backward()
         scaler.unscale_(opt)
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        scaler.step(opt); scaler.update(); sched.step(); step += 1
+        scaler.step(opt)
+        scaler.update()
+        sched.step()
+        step += 1
         if step % 20 == 0:
             print(f"ep {ep} step {step}/{steps_total} loss {loss.item():.4f}", flush=True)
             log["steps"].append([step, loss.item()])
@@ -91,15 +104,14 @@ for ep in range(cfg["epochs"]):
 log["train_sec"] = time.time() - t0
 
 hf = OUT / "hf_model"
-model.save_pretrained(hf); proc.save_pretrained(hf)
+model.save_pretrained(hf)
+proc.save_pretrained(hf)
 subprocess.run(["ct2-transformers-converter", "--model", str(hf), "--output_dir", str(OUT / "model_ct2"),
                 "--quantization", cfg["quantization"], "--copy_files", "tokenizer.json"], check=True)
-# newer transformers no longer writes preprocessor_config.json: take the base model's
-from huggingface_hub import hf_hub_download
-import shutil
-# same for tokenizer.json: the new format can't be read by faster-whisper's older tokenizers
+# Newer transformers no longer writes preprocessor_config.json, and its tokenizer.json format
+# can't be read by faster-whisper's older tokenizers: take both from the base model.
 for f in ("preprocessor_config.json", "tokenizer.json"):
     shutil.copy(hf_hub_download(cfg["base_model"], f), OUT / "model_ct2" / f)
-subprocess.run(["rm", "-rf", str(hf)])
+shutil.rmtree(hf)
 (OUT / "train_log.json").write_text(json.dumps(log, indent=1))
 print("EXPORT OK", os.listdir(OUT / "model_ct2"))

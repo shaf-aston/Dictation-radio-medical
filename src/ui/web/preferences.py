@@ -8,6 +8,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from src.core.paths import templates_dir
+from src.dictation.asr.engines.parakeet_engine import available_models as parakeet_models
+from src.dictation.asr.factory import describe_engine
 from src.dictation.asr.models import SUPPORTED_MODELS
 from src.dictation.postprocess.pipeline import CLEANUP_LEVELS
 from src.features import audit_log
@@ -64,18 +66,32 @@ async def set_preferences(payload: PreferencesUpdate):
     macro_region = payload.macro_region.strip()
     if macro_region not in macros.REGION_ORDER and macros.REGION_ORDER:
         macro_region = macros.REGION_ORDER[0]
+    if payload.parakeet_model not in parakeet_models():
+        raise HTTPException(status_code=422, detail="Unknown Parakeet model")
 
+    model_changed = payload.parakeet_model != state.settings().get("parakeet_model")
     state.settings().batch_set({
         "model_size": model_size,
         "language": language,
         "vad_filter": bool(payload.vad_filter),
         "accent": accent,
         "cleanup_level": cleanup_level,
+        "parakeet_model": payload.parakeet_model,
         "last_macro_region": macro_region,
     })
-    # Drop the cached engine so the next request builds the newly chosen model.
-    state.drop_engine(model_size)
-    return {"preferences": state.current_preferences(), "macros": state.macros_payload()}
+    # Drop the cached engines so the next request builds the newly chosen model.
+    state.drop_engine(None if model_changed else model_size)
+    if model_changed:
+        # Load the new weights now, not inside the next dictation's first decode.
+        from src.dictation.warmup import rewarm, transcriber_warmer
+
+        rewarm([transcriber_warmer(model_size)])
+    return {
+        "preferences": state.current_preferences(),
+        "macros": state.macros_payload(),
+        # The badge names the engine that answers, which this save may have changed.
+        "engine_label": describe_engine(state.settings()),
+    }
 
 
 @router.post("/api/macros/reload")

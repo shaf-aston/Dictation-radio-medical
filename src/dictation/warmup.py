@@ -196,6 +196,17 @@ def warm_up_async(
     return thread
 
 
+def rewarm(warmers: Iterable[Warmer]) -> threading.Thread:
+    """Warm on a daemon thread on every call, for a setting that swaps the
+    model mid-session. :func:`warm_up_async` runs once per process, so a model
+    chosen after startup would otherwise load inside the next dictation."""
+    thread = threading.Thread(
+        target=warm_up, args=(list(warmers),), name="dictation-rewarm", daemon=True,
+    )
+    thread.start()
+    return thread
+
+
 def reset() -> None:
     """Clear the once-only guard so :func:`warm_up_async` can start again.
 

@@ -43,6 +43,7 @@ const patientReferrer = document.getElementById('patientReferrer');
 const patientAccession = document.getElementById('patientAccession');
 const patientSex = document.getElementById('patientSex');
 const modelSelect = document.getElementById('modelSelect');
+const parakeetSelect = document.getElementById('parakeetSelect');
 const languageInput = document.getElementById('languageInput');
 const accentSelect = document.getElementById('accentSelect');
 const cleanupSelect = document.getElementById('cleanupSelect');
@@ -210,12 +211,14 @@ function applyPatientInfo(info) {
 }
 
 function populateModelOptions() {
-    modelSelect.innerHTML = '';
-    (BOOTSTRAP.supported_models || []).forEach((model) => {
-        const option = document.createElement('option');
-        option.value = model;
-        option.textContent = model;
-        modelSelect.appendChild(option);
+    [[modelSelect, BOOTSTRAP.supported_models], [parakeetSelect, BOOTSTRAP.parakeet_models]].forEach(([select, models]) => {
+        select.innerHTML = '';
+        (models || []).forEach((model) => {
+            const option = document.createElement('option');
+            option.value = model;
+            option.textContent = model;
+            select.appendChild(option);
+        });
     });
 }
 
@@ -376,6 +379,7 @@ function insertTextAtCursor(text) {
 function loadReportSettingsFromServer() {
     const prefs = BOOTSTRAP.preferences || {};
     modelSelect.value = prefs.model_size || (BOOTSTRAP.supported_models || [])[0] || 'base';
+    parakeetSelect.value = prefs.parakeet_model || 'standard';
     languageInput.value = prefs.language || 'en';
     accentSelect.value = prefs.accent || 'neutral';
     cleanupSelect.value = prefs.cleanup_level || 'medium';
@@ -444,6 +448,7 @@ async function persistPreferences() {
     preferenceSaveInFlight = true;
     const payload = {
         model_size: modelSelect.value || 'base',
+        parakeet_model: parakeetSelect.value || 'standard',
         language: languageInput.value.trim() || 'en',
         vad_filter: vadCheckbox.checked,
         accent: accentSelect.value || 'neutral',
@@ -466,13 +471,18 @@ async function persistPreferences() {
         if (result.macros) {
             BOOTSTRAP.macros = result.macros;
         }
+        if (result.engine_label) {
+            BOOTSTRAP.engine_label = result.engine_label;
+        }
         modelSelect.value = BOOTSTRAP.preferences.model_size || payload.model_size;
+        parakeetSelect.value = BOOTSTRAP.preferences.parakeet_model || payload.parakeet_model;
         languageInput.value = BOOTSTRAP.preferences.language || payload.language;
         accentSelect.value = BOOTSTRAP.preferences.accent || payload.accent;
         cleanupSelect.value = BOOTSTRAP.preferences.cleanup_level || payload.cleanup_level;
         vadCheckbox.checked = Boolean(BOOTSTRAP.preferences.vad_filter);
         macroRegionSelect.value = BOOTSTRAP.preferences.macro_region || payload.macro_region;
         renderMacros(currentMacroRegion());
+        updateSettingsBadge();
         showStatus('Settings saved', 'is-ok', 1200);
     } catch (err) {
         showError('Settings could not be saved: ' + err.message);
@@ -865,6 +875,7 @@ copyBtn.addEventListener('click', async () => {
 });
 
 modelSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });
+parakeetSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });
 languageInput.addEventListener('input', () => { schedulePreferenceSave(); updateSettingsBadge(); });
 accentSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });
 cleanupSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });

@@ -43,8 +43,10 @@ by inserting real silence at VAD-confirmed mark ends; silence carries no
 words, so the source reference stays exactly correct. It measures chunk
 *policy*, never acoustics, and is not a substitute for the `own` set.
 
-Four gold sets, each measuring something different: never blend them into one
+Five gold sets, each measuring something different: never blend them into one
 figure. `own` (the user's own voice: the only set that measures real acoustics)
+· `eka` (real Indian-English speakers reading medical phrases, downloaded:
+real acoustics and accents until `own` is recorded, but phrases, not reports)
 · `tts` (synthesised radiology reports: medical *vocabulary* under
 unrealistically clean audio) · `libri` (public-domain read speech: general
 English regression + per-engine RTF) · `bench` (the existing `data/bench_audio/`

@@ -1,7 +1,11 @@
 .env
 data/train/
-smoke/out/
 train/_pack/
 train/_kernel/
 train/_out/
 models/*/model/
+*.log
+__pycache__/
+train/_err/
+train/_smoke_out/
+_cmp_*.txt

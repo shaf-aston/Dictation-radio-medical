@@ -16,16 +16,16 @@ python -m src.ui.web_app             # web app on http://127.0.0.1:8005, verifie
 
 1. **Record (F5, or F2 to start and stop) captures the microphone**: the desktop writes a growing WAV (`src/dictation/audio.py`), the browser streams 16 kHz PCM over `/ws/dictate`. Both feed the same loop, `src/dictation/stream/live_session.py`.
 2. **The still-open tail is VAD-cut into chunks and each is decoded exactly once** by Parakeet, with Whisper behind it (engine behind `src/dictation/asr/`). Exists so a long dictation doesn't cost multiples of its own length in redundant re-decoding.
-3. **The new (uncommitted) text runs through the correction chain**: `src/dictation/postprocess/pipeline.py`. Raw recogniser output contains hallucinations, spoken punctuation and commands ("scratch that", "insert <phrase>"), and medical mis-hearings that must become a clean report.
+3. **The new (uncommitted) text runs through the correction chain**: `src/dictation/postprocess/pipeline.py`. Raw ASR output contains hallucinations, spoken punctuation and commands ("scratch that", "insert <phrase>"), and medical mis-hearings that must become a clean report.
 4. **The text goes in at the caret, or over a selected template field**: `src/ui/recording_session.py` (desktop), `src/ui/frontends/app.js` (web). Text after the caret is never rewritten. Saying one option of a selected pick-list (`[Right / Left]`) answers it (`src/features/template_fields.py`). Tab / Shift+Tab move between fields.
-5. **Stop hands the text back at once; a confidence-targeted polish follows** and is dropped if the report was edited meanwhile.
+5. **Stop closes the open tail and hands the complete text back at once; a confidence-targeted polish follows** (`src/dictation/stream/polish.py`) and is dropped if the report was edited meanwhile. Only low-confidence chunks are re-decoded, never the whole recording.
 6. **Every way the report leaves is gated**: `src/features/report_release.py`. Copy, Save TXT and Export Word ask one question about unfilled fields and consistency (side, sex, impression: `src/features/report_checks.py`), which can send the radiologist back, then about critical findings, which records who was told, how and when, and can add that sentence to the report. The report is never withheld; only the audit entry differs.
 7. **The report is saved or exported** to `.txt`/`.docx`: `src/features/report_manager.py`. Every exit is audited (`src/features/audit_log.py`).
 
 ## Glossary
 
 - **Chunk-once ledger**: the point behind which live text is frozen and never re-decoded; each chunk closes at a VAD silence boundary (`src/dictation/stream/ledger.py`, `ChunkPolicy.min_sec`/`soft_max_sec`/`force_cut_sec`).
-- **Postprocess pipeline**: the ordered 10-stage cleanup chain (`src/dictation/postprocess/pipeline.py`) that turns raw Whisper text into a formatted report.
+- **Postprocess pipeline**: the ordered 10-stage cleanup chain (`src/dictation/postprocess/pipeline.py`) that turns raw ASR text into a formatted report.
 - **Open tail**: the still-growing slice of audio re-decoded each cycle for a stable live preview only (never committed), instead of the whole growing recording.
 - **Medical dictionary (fuzzy match)**: corrects mis-heard medical terms by snapping close matches to a curated term list (`src/medical/medical_dict.py`).
 - **Radiology lexicon vs. medical terms list**: two wordlists: one just recognizes real words (leave alone), the other is what a typo gets corrected *to* (`src/resources/`).
