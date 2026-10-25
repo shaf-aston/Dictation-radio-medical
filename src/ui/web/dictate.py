@@ -19,10 +19,8 @@ import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from src.core import event_log
-from src.dictation.asr.models import resolve_model
+from src.cloud.framework.registry import active_voice_model_path
 from src.dictation.stream.live_session import LiveSession
-from src.dictation.stream.policy import LiveKnobs, plan_from_settings
-from src.dictation.stream.rules import build_context_prompt
 from src.features import run_log, template_fields
 from src.ui.web import state
 
@@ -30,42 +28,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def build_live_session(settings, prefs: dict) -> LiveSession:
-    """Build a session from saved settings: the only place the knobs are read."""
-    live_model = resolve_model(settings.get("live_model_size"))
-    final_model = resolve_model(prefs.get("model_size") or settings.get("model_size"))
-    live_engine = state.get_engine(live_model)
-    # Chunk lengths and preview pacing come from what the engine that will
-    # actually answer says a call costs (stream/policy.py), unless the
-    # settings file asks for its own numbers.
-    plan = plan_from_settings(settings.get, live_engine.capabilities())
-    knobs = LiveKnobs.from_settings(settings.get)
-    # The knobs are read here and nowhere else, so this is the one honest place
-    # to say which of them a recording actually ran with.
-    event_log.emit(
-        "live", "dictation session configured",
-        live_model=live_model, final_model=final_model,
-        language=prefs["language"], accent=prefs["accent"], cleanup=prefs["cleanup_level"],
-        chunk_plan=plan.row,
-        chunk_min_sec=plan.policy.min_sec,
-        chunk_soft_max_sec=plan.policy.soft_max_sec,
-        chunk_force_cut_sec=plan.policy.force_cut_sec,
-        live_beam_size=knobs.live_beam_size,
-        final_beam_size=knobs.final_beam_size,
-        preview_max_lag_sec=knobs.preview_max_lag_sec,
-        preview_min_tail_sec=plan.preview_min_tail_sec,
-    )
-    return LiveSession(
-        live_engine,
-        state.get_engine(final_model),
-        language=prefs["language"],
-        accent=prefs["accent"],
-        cleanup_level=prefs["cleanup_level"],
-        policy=plan.policy,
-        preview_min_tail_sec=plan.preview_min_tail_sec,
-        initial_prompt=build_context_prompt(),
-        sr=state.LIVE_SAMPLE_RATE,
-        **knobs.as_kwargs(),
+def build_live_session(settings) -> LiveSession:
+    """A session from the saved settings (LiveSession.from_settings reads them).
+
+    The accurate engine uses an active fine-tuned voice model, as the desktop
+    does; live text always comes from the stock fast model.
+    """
+    live_engine = state.get_engine(settings.get("live_model_size"))
+    final_engine = state.get_engine(settings.get("model_size"), active_voice_model_path())
+    return LiveSession.from_settings(
+        settings.get, live_engine, final_engine, sr=state.LIVE_SAMPLE_RATE,
     )
 
 
@@ -108,7 +80,7 @@ async def dictate_socket(ws: WebSocket) -> None:
     generation = state.next_dictation()
     settings = state.settings()
     prefs = state.current_preferences()
-    session = build_live_session(settings, prefs)
+    session = build_live_session(settings)
     cycle_sec = float(settings.get("live_cycle_sec"))
     max_sec = int(settings.get("max_upload_mb")) * 1024 * 1024 / (2 * state.LIVE_SAMPLE_RATE)
 

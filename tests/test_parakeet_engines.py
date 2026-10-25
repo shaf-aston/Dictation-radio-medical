@@ -8,7 +8,11 @@ does nothing).
 
 import importlib.util
 
+import pytest
+
+from src.core.settings import get_default
 from src.dictation.asr import factory
+from src.dictation.asr.engines import parakeet_engine
 from src.dictation.asr.engines.parakeet_engine import ParakeetEngine
 from src.dictation.asr.engines.parakeet_hotword_engine import (
     ParakeetHotwordEngine,
@@ -34,7 +38,15 @@ def test_hotwords_are_lower_case_and_unique(tmp_path):
 
 class _Settings(dict):
     def get(self, key, default=None):
-        return super().get(key, default)
+        return super().get(key, get_default(key))
+
+
+def _a_fine_tune(monkeypatch, tmp_path):
+    """One fine-tuned Parakeet installed, named "my-tune"."""
+    (tmp_path / "my-tune").mkdir()
+    (tmp_path / "my-tune" / "encoder-model.onnx").write_bytes(b"")
+    monkeypatch.setattr(parakeet_engine, "fine_tuned_dir", lambda: tmp_path)
+    return "my-tune"
 
 
 def _tier(monkeypatch, installed, **settings):
@@ -43,7 +55,7 @@ def _tier(monkeypatch, installed, **settings):
         factory.importlib.util, "find_spec",
         lambda name: object() if name in installed else (None if name in ("onnx_asr", "sherpa_onnx") else real(name)),
     )
-    return factory._parakeet_tier(_Settings({"asr_hotwords": True, "hotword_score": 1.0, **settings}))
+    return factory.parakeet_tier(_Settings({"asr_hotwords": True, "hotword_score": 1.0, **settings}))
 
 
 def test_hotwords_engine_when_sherpa_is_installed(monkeypatch):
@@ -57,8 +69,9 @@ def test_greedy_engine_when_hotwords_are_off_or_unavailable(monkeypatch):
 
 
 def test_a_fine_tuned_export_wins(monkeypatch, tmp_path):
-    name, engine = _tier(monkeypatch, {"onnx_asr", "sherpa_onnx"}, parakeet_model_dir=str(tmp_path))
-    assert name == "parakeet" and isinstance(engine, ParakeetEngine) and engine.model_dir == tmp_path
+    tune = _a_fine_tune(monkeypatch, tmp_path)
+    name, engine = _tier(monkeypatch, {"onnx_asr", "sherpa_onnx"}, parakeet_model=tune)
+    assert name == "parakeet" and isinstance(engine, ParakeetEngine) and engine.model_dir == tmp_path / tune
 
 
 def test_no_parakeet_without_either_runtime(monkeypatch):
@@ -72,5 +85,36 @@ def test_engine_label_names_what_actually_answers(monkeypatch, tmp_path):
     base = {"asr_engine": "local", "asr_hotwords": True, "hotword_score": 1.0, "model_size": "base.en"}
     assert factory.describe_engine(_Settings(base)) == "Parakeet + radiology terms"
     assert factory.describe_engine(_Settings({**base, "asr_hotwords": False})) == "Parakeet"
-    assert factory.describe_engine(_Settings({**base, "parakeet_model_dir": str(tmp_path)})) == "Parakeet (your fine-tune)"
+    tune = _a_fine_tune(monkeypatch, tmp_path)
+    assert factory.describe_engine(_Settings({**base, "parakeet_model": tune})) == "Parakeet, tuned: my-tune"
     assert factory.describe_engine(_Settings({**base, "asr_engine": "deepgram"})) == "Deepgram (cloud)"
+
+
+def test_a_voice_that_is_no_longer_installed_falls_back_and_says_so(monkeypatch, tmp_path):
+    # A deleted fine-tune folder must not stop dictation or the page loading.
+    monkeypatch.setattr(parakeet_engine, "fine_tuned_dir", lambda: tmp_path)
+    name, _ = _tier(monkeypatch, {"onnx_asr", "sherpa_onnx"}, parakeet_model="deleted-tune")
+    assert name == "parakeet-hotwords"
+    base = {"asr_engine": "local", "asr_hotwords": True, "model_size": "base.en", "parakeet_model": "deleted-tune"}
+    assert factory.describe_engine(_Settings(base)) == "Parakeet + radiology terms (deleted-tune not installed)"
+
+
+class _Saved(_Settings):
+    def set(self, key, value):
+        self[key] = value
+
+
+def test_a_voice_that_fails_to_load_leaves_the_previous_one_chosen(monkeypatch, tmp_path):
+    from src.dictation.asr import voice_model
+
+    tune = _a_fine_tune(monkeypatch, tmp_path)
+
+    class _Broken:
+        def preload(self):
+            raise RuntimeError("corrupt weights")
+
+    monkeypatch.setattr(voice_model, "parakeet_tier", lambda settings: ("parakeet", _Broken()))
+    settings = _Saved({"parakeet_model": "standard"})
+    with pytest.raises(RuntimeError):
+        voice_model.switch(settings, tune)
+    assert settings["parakeet_model"] == "standard"

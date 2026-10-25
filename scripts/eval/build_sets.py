@@ -6,11 +6,12 @@
     python -m scripts.eval.build_sets --set own --record   # then record them
     python -m scripts.eval.build_sets --set bench
     python -m scripts.eval.build_sets --set libri     # ~350 MB one-time download
+    python -m scripts.eval.build_sets --set eka       # ~45 MB one-time download
 
 Each set writes ``data/eval/<name>/`` with audio plus a ``manifest.jsonl``. All
 of it is local: the ``tts`` set is synthesised on-device with the Windows speech
-engine, and ``own``/``bench`` never leave the machine at all. Only ``libri``
-touches the network, once, and only when explicitly asked for.
+engine, and ``own``/``bench`` never leave the machine at all. Only ``libri`` and
+``eka`` touch the network, once, and only when explicitly asked for.
 
 The ``bench`` set writes *drafts* transcribed by the current engine and marks
 them ``[UNREVIEWED]``. A draft is a machine guess, not ground truth, so
@@ -45,6 +46,18 @@ _OWN_SET_SIZE = 5
 #: utterances add nothing but runtime.
 _LIBRI_URL = "https://www.openslr.org/resources/12/test-clean.tar.gz"
 _LIBRI_CLIPS = 100
+
+#: Eka Care's medical ASR evaluation set: real Indian-English speakers reading
+#: short medical phrases, MIT licence, no login. Three English shards (~1,500
+#: phrases); drug-name-only rows are skipped, they are not dictation.
+_EKA_URL = ("https://huggingface.co/datasets/ekacare/eka-medical-asr-evaluation-dataset"
+            "/resolve/main/en/test-{:05d}.parquet")
+_EKA_SHARDS = (1, 2, 3)
+_EKA_KEEP = {"clinical_findings", "diagnostics", "advices"}
+#: One speaker's phrases are joined into dictation-length clips with a real
+#: pause between them, so the live loop has something to chunk.
+_EKA_DICTATION_SEC = 25.0
+_EKA_GAP_SEC = 0.8
 
 
 # ---------------------------------------------------------------------------
@@ -439,9 +452,11 @@ def build_libri(clip_count: int = _LIBRI_CLIPS) -> int:
 
     if not archive.exists():
         logger.info("Downloading LibriSpeech test-clean (~346 MB) from %s", _LIBRI_URL)
+        # Closed before the move: Windows refuses to move a file that is still open.
         with tempfile.NamedTemporaryFile(delete=False, suffix=".tar.gz") as tmp:
-            urllib.request.urlretrieve(_LIBRI_URL, tmp.name)  # noqa: S310 - fixed https URL
-            shutil.move(tmp.name, archive)
+            pass
+        urllib.request.urlretrieve(_LIBRI_URL, tmp.name)  # noqa: S310 - fixed https URL
+        shutil.move(tmp.name, archive)
     logger.info("Extracting %d utterances", clip_count)
 
     import soundfile as sf
@@ -491,6 +506,76 @@ def build_libri(clip_count: int = _LIBRI_CLIPS) -> int:
     return 0
 
 
+def build_eka(limit: int = 0) -> int:
+    """Download Eka Care's medical phrases and join them into dictations.
+
+    Real voices and accents saying medical words, which neither ``tts`` (a
+    synthesiser) nor ``libri`` (not medical) has. Phrases, not radiology
+    reports: it measures the ear, not the report vocabulary.
+    """
+    import io
+    import urllib.request
+
+    import numpy as np
+    import soundfile as sf
+    try:
+        import pyarrow.parquet as pq
+    except ImportError:
+        logger.error("eka needs pyarrow: pip install pyarrow")
+        return 1
+
+    out_dir = eval_set_dir("eka")
+    source = out_dir / "source"
+    source.mkdir(parents=True, exist_ok=True)
+    by_speaker: dict = {}
+    skipped = 0
+    for shard in _EKA_SHARDS:
+        path = source / f"test-{shard:05d}.parquet"
+        if not path.exists():
+            logger.info("Downloading Eka shard %d", shard)
+            # To a temporary name first: an interrupted download must not leave
+            # a partial file that exists() then trusts on every later run.
+            partial = path.with_suffix(".part")
+            urllib.request.urlretrieve(_EKA_URL.format(shard), partial)  # noqa: S310 - fixed https URL
+            partial.replace(path)
+        table = pq.read_table(path, columns=["audio", "text", "speaker", "type_concept"])
+        for row in table.to_pylist():
+            if row["type_concept"] not in _EKA_KEEP or not row["text"].strip():
+                continue
+            data, rate = sf.read(io.BytesIO(row["audio"]), dtype="float32")
+            if rate != 16000 or data.ndim != 1:
+                skipped += 1
+                continue
+            by_speaker.setdefault(row["speaker"], []).append((data, row["text"].strip()))
+
+    if skipped:
+        logger.warning("Eka: skipped %d phrases that were not 16 kHz mono", skipped)
+    gap = np.zeros(int(_EKA_GAP_SEC * 16000), dtype=np.float32)
+    clips: List[Clip] = []
+    # Speaker ids look like email addresses: replaced by a number, never written.
+    for n, phrases in enumerate(by_speaker.values()):
+        audio, texts = [], []
+        for i, (data, text) in enumerate(phrases):
+            audio += [data, gap]
+            texts.append(text.rstrip("."))
+            if sum(len(a) for a in audio) >= _EKA_DICTATION_SEC * 16000 or i == len(phrases) - 1:
+                dest = out_dir / f"spk{n:02d}_{len(clips):03d}.wav"
+                sf.write(dest, np.concatenate(audio), 16000)
+                clips.append(Clip(
+                    set_name="eka", audio_path=dest, reference=". ".join(texts) + ".",
+                    source=f"ekacare/eka-medical-asr-evaluation-dataset spk{n:02d}",
+                    licence="MIT", synthetic=False, duration_sec=audio_duration(dest),
+                ))
+                audio, texts = [], []
+
+    if not clips:
+        logger.error("No usable Eka phrases in %s", source)
+        return 1
+    write_manifest("eka", clips[: limit or None])
+    logger.info("eka set: %d clips from %d speakers", len(clips[: limit or None]), len(by_speaker))
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -501,6 +586,7 @@ _BUILDERS = {
     "own": lambda a: record_own(force=a.force) if a.record else build_own(),
     "bench": lambda a: build_bench(),
     "libri": lambda a: build_libri(clip_count=a.limit or _LIBRI_CLIPS),
+    "eka": lambda a: build_eka(limit=a.limit),
 }
 
 
@@ -516,7 +602,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--limit", type=int, default=0,
-        help="cap the number of clips (tts, libri) - useful for a quick smoke run",
+        help="cap the number of clips (tts, libri, eka) - useful for a quick smoke run",
     )
     parser.add_argument(
         "--voices", type=Path, default=None,

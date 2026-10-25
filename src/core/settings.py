@@ -16,6 +16,18 @@ _DEFAULTS: dict = {
     # 2026-09-29 on the tts_paused set, live path: Parakeet 4.6 % medical-term
     # error, Whisper tiny.en + small.en 12.5 %. "deepgram" puts the cloud first.
     "asr_engine": "local",
+    # Parakeet's weights: "fp32" (full) or "int8" (rounded, smaller). Measured
+    # 2026-10-23 on the live path (replay.py, 30 reports each): medical-term
+    # error 7.1 % vs 7.9 % clean, 13.3 % vs 24.6 % in pink noise, with the same
+    # first-word time and lag. The cost is memory: 2.2 GB loaded against 0.7 GB,
+    # and a one-time 2.4 GB download. "int8" is for a machine short of memory.
+    "parakeet_precision": "fp32",
+    # Which Parakeet: "standard" (the download) or a fine-tuned folder's name in
+    # data/models/fine_tuned/. parakeet-rad-v3, measured 2026-10-24 on 140 real
+    # Indian-English clips: WER 22.9 % -> 19.7 %, medical words missed 21 -> 13
+    # of 185; general English 1.85 % -> 2.18 %. Same speed and memory. Table:
+    # experiments/remote-gpu/models/parakeet-rad-v3/README.md.
+    "parakeet_model": "standard",
     "model_size": "base.en",   # English-only: faster AND more accurate than "base"
     "language": "en",
     "vad_filter": True,
@@ -166,10 +178,6 @@ _DEFAULTS: dict = {
     # Who signs the communication record of a critical finding ("... by Dr
     # Shah."). Asked for in that dialog and remembered from it.
     "radiologist_name": "",
-    # A fine-tuned Parakeet exported for onnx-asr (scripts/finetune/README.md).
-    # Empty: the stock model. Switch only after it beats the stock model on
-    # your own recorded voice (run_eval --set own --engine parakeet --model DIR).
-    "parakeet_model_dir": "",
     # "en-GB" writes British spelling for ordinary words the recogniser spells
     # the US way (characterise, calibre); "en-US" leaves them. Medical words
     # (oedema, haemorrhage) follow terminology.py either way.
@@ -182,6 +190,21 @@ _DEFAULTS: dict = {
     "hotword_score": 1.0,
     "key_next_field": "Tab",
     "key_previous_field": "Shift+Tab",
+    # Mic cleaning before anything listens (src/dictation/conditioning). Every
+    # step is off until replay.py shows it passes its marks (docs/audio-conditioning.md).
+    # Read ONLY by scripts/eval/replay.py today: no step has passed, so neither
+    # front-end builds a chain, and switching a step on here changes nothing in the app.
+    "audio_conditioning": {
+        "window_samples": 512,
+        "highpass": {"on": False, "cutoff_hz": 80.0},
+        "denoise": {"on": False, "strength": 2.0, "min_gain_db": -20.0,
+                    "noise_rise_db_per_sec": 3.0, "smoothing": 0.9},
+        "expander": {"on": False, "below_voice_db": 6.0, "max_cut_db": 15.0,
+                     "voice_release_db_per_sec": 6.0},
+        "agc": {"on": False, "target_dbfs": -20.0, "max_gain_db": 24.0,
+                "slew_db_per_sec": 20.0, "voice_release_db_per_sec": 6.0,
+                "adapt_within_db": 10.0},
+    },
 }
 
 

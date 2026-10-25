@@ -197,8 +197,9 @@ print('onnx     :', exported.recognize(row['audio_filepath']))
    `python -m scripts.eval.run_eval --set own --engine parakeet --model <unzipped dir>`
    and compare with the same command without `--model`. Keep it only if
    medical-term error is lower on your own voice.
-3. Switch it on: set `"parakeet_model_dir": "<unzipped dir>"` in
-   `dictation_settings.json` and restart. Empty string goes back to stock."""),
+3. Switch it on: copy the unzipped folder to `data/models/fine_tuned/<name>`
+   and pick it under **Voice model** (web Settings, or the desktop settings
+   bar). **Standard** goes back to stock."""),
 ]
 
 

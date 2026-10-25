@@ -188,3 +188,16 @@ class ModelRegistry:
         self, task_type: str = TASK_WHISPER_VOICE
     ) -> Optional[str]:
         return self._load().get("active", {}).get(task_type)
+
+
+def active_voice_model_path() -> Optional[Path]:
+    """The active fine-tuned voice model directory, or None for the stock model.
+
+    Both front-ends ask this, so a fine-tune answers on the web as it does on
+    the desktop. A registry that cannot be read means the stock model.
+    """
+    try:
+        return ModelRegistry().get_active_model_path(TASK_WHISPER_VOICE)
+    except Exception as exc:
+        logger.debug("Model registry lookup failed: %s", exc)
+        return None

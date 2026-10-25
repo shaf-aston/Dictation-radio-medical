@@ -55,7 +55,7 @@ from src.ui.views import (
 # Recording control
 from src.ui.field_navigation import FieldKeys
 from src.ui.recording_session import (
-    confirm_release, on_partial_text, on_processed_text, on_start_recording,
+    confirm_release, on_handback, on_partial_text, on_processed_text, on_start_recording,
     on_stop_recording, on_transcription_finished, setup_level_timer,
 )
 
@@ -132,6 +132,8 @@ class MainWindow(QMainWindow):
     btn_record: QPushButton
     btn_stop: QPushButton
     model_combo: QComboBox
+    parakeet_combo: QComboBox
+    engine_label: QLabel
     vad_checkbox: QCheckBox
     language_input: QLineEdit
     accent_combo: QComboBox
@@ -319,9 +321,9 @@ class MainWindow(QMainWindow):
             # cache is keyed on that reference: warming the stock model while
             # a fine-tune is active would miss the cache AND pin an unused
             # model in RAM.
-            from src.ui.recording_session import _active_model_path
+            from src.cloud.framework.registry import active_voice_model_path
 
-            active_model = _active_model_path()
+            active_model = active_voice_model_path()
             warmers = postprocess_warmers() + [
                 transcriber_warmer(
                     model_size,
@@ -755,6 +757,10 @@ class MainWindow(QMainWindow):
     @Slot(str, int)
     def _on_partial_text(self, transcript: str, committed_len: int) -> None:
         on_partial_text(self, transcript, committed_len)
+
+    @Slot(str)
+    def _on_handback(self, raw: str) -> None:
+        on_handback(self, raw)
 
     @Slot(str, list, int)
     def _on_processed_text(self, text: str, changes: list, seq: int) -> None:

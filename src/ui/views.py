@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import threading
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -11,9 +13,11 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QCheckBox, QFrame, QScrollArea, QSplitter,
     QSizePolicy, QMenu, QProgressBar,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QAction, QKeySequence
 
+from src.dictation.asr import voice_model
+from src.dictation.asr.factory import describe_engine
 from src.dictation.asr.models import SUPPORTED_MODELS, resolve_model
 from src.dictation.postprocess import CLEANUP_LEVEL_LABELS
 from src.features.accent_corrections import ACCENT_LABELS
@@ -29,6 +33,8 @@ from src.ui.dialogs import (
     show_ai_cleanup_settings_dialog, on_run_ai_cleanup, show_scan_assistant_dialog,
     show_correction_rules_dialog,
 )
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from src.ui.main_window import MainWindow
@@ -248,6 +254,20 @@ def build_settings_panel(window: MainWindow) -> QFrame:
     )
     window.model_combo.setFixedWidth(104)
 
+    window.parakeet_combo = QComboBox()
+    for choice in voice_model.choices():
+        window.parakeet_combo.addItem(choice["label"], choice["value"])
+    idx = window.parakeet_combo.findData(window.settings.get("parakeet_model"))
+    if idx >= 0:
+        window.parakeet_combo.setCurrentIndex(idx)
+    window.parakeet_combo.setToolTip("Tuned voices were trained on radiology speech.")
+    window.parakeet_combo.currentIndexChanged.connect(partial(_switch_parakeet, window))
+
+    # Which engine actually answers: the pickers name choices, this names the
+    # result (a fallback, a tuned voice that is missing). The web badge says the same.
+    window.engine_label = QLabel(describe_engine(window.settings))
+    window.engine_label.setToolTip("What is transcribing right now")
+
     window.language_input = QLineEdit(window.settings.get("language", "en"))
     window.language_input.setFixedWidth(44)
     window.language_input.setToolTip("ISO language code, e.g. 'en'")
@@ -280,7 +300,9 @@ def build_settings_panel(window: MainWindow) -> QFrame:
     window.vad_checkbox.setToolTip("Voice activity detection - filters silence (recommended)")
     window.vad_checkbox.setChecked(window.settings.get("vad_filter", True))
 
-    layout.addWidget(QLabel("Model:"))
+    layout.addWidget(QLabel("Voice model:"))
+    layout.addWidget(window.parakeet_combo)
+    layout.addWidget(QLabel("Backup model:"))
     layout.addWidget(window.model_combo)
     layout.addWidget(QLabel("Language:"))
     layout.addWidget(window.language_input)
@@ -290,7 +312,53 @@ def build_settings_panel(window: MainWindow) -> QFrame:
     layout.addWidget(window.cleanup_combo)
     layout.addWidget(window.vad_checkbox)
     layout.addStretch()
+    layout.addWidget(window.engine_label)
     return frame
+
+
+def _switch_parakeet(window: MainWindow, _index: int) -> None:
+    """Switch voice off the UI thread (voice_model.switch loads 2.4 GB), with
+    the picker held and the status saying so until it is ready, as on the web.
+    A failed load keeps the previous voice, and the picker goes back to it."""
+    name = window.parakeet_combo.currentData()
+    if name == window.settings.get("parakeet_model"):
+        return
+    window.parakeet_combo.setEnabled(False)
+    window._show_status("Loading voice model", state="busy")
+    failure: list = []
+
+    def load() -> None:
+        try:
+            voice_model.switch(window.settings, name)
+        except Exception as exc:
+            failure.append(exc)
+
+    thread = threading.Thread(target=load, name="voice-model-switch", daemon=True)
+    thread.start()
+    poll = QTimer(window)
+
+    def finish() -> None:
+        if thread.is_alive():
+            return
+        poll.stop()
+        poll.deleteLater()
+        if failure:
+            logger.error("Voice model %r failed to load: %s", name, failure[0])
+            window.parakeet_combo.blockSignals(True)
+            window.parakeet_combo.setCurrentIndex(
+                window.parakeet_combo.findData(window.settings.get("parakeet_model"))
+            )
+            window.parakeet_combo.blockSignals(False)
+            window._show_status(
+                "That voice model could not be loaded; the previous one is kept", 6000, state="warn",
+            )
+        else:
+            window._show_status("Voice model ready", 2000)
+        window.parakeet_combo.setEnabled(True)
+        window.engine_label.setText(describe_engine(window.settings))
+
+    poll.timeout.connect(finish)
+    poll.start(200)
 
 
 def build_editor_panel(window: MainWindow) -> QWidget:

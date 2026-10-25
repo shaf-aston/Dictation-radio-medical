@@ -5,9 +5,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import anyio
 from fastapi import APIRouter, HTTPException
 
 from src.core.paths import templates_dir
+from src.dictation.asr import voice_model
+from src.dictation.asr.factory import describe_engine
 from src.dictation.asr.models import SUPPORTED_MODELS
 from src.dictation.postprocess.pipeline import CLEANUP_LEVELS
 from src.features import audit_log
@@ -64,8 +67,21 @@ async def set_preferences(payload: PreferencesUpdate):
     macro_region = payload.macro_region.strip()
     if macro_region not in macros.REGION_ORDER and macros.REGION_ORDER:
         macro_region = macros.REGION_ORDER[0]
-
-    state.settings().batch_set({
+    settings = state.settings()
+    voice_changed = payload.parakeet_model != settings.get("parakeet_model")
+    if voice_changed:
+        # Loads the new voice before answering (the page shows "Loading voice
+        # model" meanwhile), so the next dictation does not pay for the load.
+        try:
+            await anyio.to_thread.run_sync(voice_model.switch, settings, payload.parakeet_model)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Unknown voice model") from exc
+        except Exception as exc:
+            logger.error("Voice model %r failed to load: %s", payload.parakeet_model, exc, exc_info=True)
+            raise HTTPException(
+                status_code=503, detail="That voice model could not be loaded; the previous one is kept",
+            ) from exc
+    settings.batch_set({
         "model_size": model_size,
         "language": language,
         "vad_filter": bool(payload.vad_filter),
@@ -73,9 +89,14 @@ async def set_preferences(payload: PreferencesUpdate):
         "cleanup_level": cleanup_level,
         "last_macro_region": macro_region,
     })
-    # Drop the cached engine so the next request builds the newly chosen model.
-    state.drop_engine(model_size)
-    return {"preferences": state.current_preferences(), "macros": state.macros_payload()}
+    # Drop the cached engines so the next request builds the newly chosen model.
+    state.drop_engine(None if voice_changed else model_size)
+    return {
+        "preferences": state.current_preferences(),
+        "macros": state.macros_payload(),
+        # The badge names the engine that answers, which this save may have changed.
+        "engine_label": describe_engine(settings),
+    }
 
 
 @router.post("/api/macros/reload")

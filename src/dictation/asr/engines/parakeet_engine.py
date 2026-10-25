@@ -43,7 +43,7 @@ from src.dictation.asr.types import (
     TranscribeContext,
     Word,
 )
-from src.core.paths import onnx_asr_cache_dir
+from src.core.paths import fine_tuned_dir, onnx_asr_cache_dir
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +58,12 @@ logger = logging.getLogger(__name__)
 #: 21.8% raw), WER 5.3% vs 6.4%. Both CC-BY-4.0.
 DEFAULT_MODEL = "nemo-parakeet-tdt-0.6b-v2"
 
-#: int8 by default: the fp32 encoder alone is 2.4 GB against 652 MB quantised,
-#: and faster-whisper already runs int8 on this CPU: matching the quantisation
-#: is what makes an engine comparison measure the engine.
-DEFAULT_QUANTIZATION = "int8"
+#: The ``parakeet_model`` setting's value for the download above. Any other
+#: value names a fine-tuned folder under data/models/fine_tuned/.
+STANDARD = "standard"
+
+#: onnx-asr's architecture id for a Parakeet TDT export in a local folder.
+_LOCAL_ARCH = "nemo-conformer-tdt"
 
 #: Parakeet's fixed input rate. Anything else is resampled by onnx-asr.
 SAMPLE_RATE = 16000
@@ -79,7 +81,8 @@ _MISSING_HINT = (
 # Process-wide model cache, as faster_whisper_engine keeps one: the web app
 # builds an engine per slot and warm-up builds its own, so a model held per
 # instance was loaded at startup into an engine nobody decoded with, then
-# loaded again, cold, inside the first dictation's first decode.
+# loaded again, cold, inside the first dictation's first decode. It holds one
+# model at a time: each is 2.4 GB, and a switch must not keep both in memory.
 _MODELS: dict = {}
 _MODELS_LOCK = threading.Lock()
 
@@ -90,15 +93,14 @@ class ParakeetEngine:
     def __init__(
         self,
         model_name: str = DEFAULT_MODEL,
-        quantization: Optional[str] = DEFAULT_QUANTIZATION,
+        quantization: Optional[str] = None,
+        model_dir: Optional[Path] = None,
     ) -> None:
-        # A directory instead of a model id is a local export, typically a
-        # fine-tune (scripts/finetune/): the same onnx-asr layout as the
-        # download (config.json, encoder-model*.onnx, decoder_joint-model*.onnx,
-        # vocab.txt), loaded in place and never downloaded over.
-        self.model_dir: Optional[Path] = Path(model_name) if Path(model_name).is_dir() else None
-        self.model_name = DEFAULT_MODEL if self.model_dir else model_name
+        # None is full precision; the parakeet_precision setting picks (factory.py).
+        # model_dir is a fine-tuned export; it replaces the download's weights.
+        self.model_name = model_name
         self.quantization = quantization
+        self.model_dir = model_dir
         self._model: Any = None
 
     # -- port ---------------------------------------------------------------
@@ -106,9 +108,10 @@ class ParakeetEngine:
     def preload(self) -> None:
         """Download (once) and load the model, so no transcribe() pays for it."""
         if self._model is None:
-            key = (self.model_name, str(self.model_dir or ""), self.quantization)
+            key = self.identity()
             with _MODELS_LOCK:
                 if key not in _MODELS:
+                    _MODELS.clear()
                     try:
                         _MODELS[key] = self._load()
                     except Exception as exc:
@@ -156,15 +159,35 @@ class ParakeetEngine:
         except ImportError as exc:
             raise RuntimeError(_MISSING_HINT) from exc
 
-        path = self.model_dir or onnx_asr_cache_dir(
-            f"{self.model_name}-{self.quantization or 'fp32'}"
-        )
-        if not path.exists():
-            logger.info("Downloading %s into %s (one time)", self.model_name, path)
-        logger.info("Loading %s (%s) from %s", self.model_name, self.quantization or "fp32", path)
-        return onnx_asr.load_model(
-            self.model_name, path, quantization=self.quantization
-        ).with_timestamps()
+        if self.model_dir:
+            # A fine-tune ships at one precision; asking for another is an error.
+            encoder = f"encoder-model{'.' + self.quantization if self.quantization else ''}.onnx"
+            if not (self.model_dir / encoder).is_file():
+                raise FileNotFoundError(f"No {encoder} in {self.model_dir}")
+            arch, path = _LOCAL_ARCH, self.model_dir
+        else:
+            arch = self.model_name
+            path = onnx_asr_cache_dir(f"{self.model_name}-{self.quantization or 'fp32'}")
+            if not path.exists():
+                logger.info("Downloading %s into %s (one time)", self.model_name, path)
+        logger.info("Loading %s (%s)", path.name, self.quantization or "fp32")
+        return onnx_asr.load_model(arch, path, quantization=self.quantization).with_timestamps()
+
+
+def available_models() -> List[str]:
+    """What the ``parakeet_model`` setting may be: the download, then every
+    fine-tuned Parakeet folder, full precision or int8 (a Whisper fine-tune
+    has no encoder file)."""
+    tuned = sorted(d.name for d in fine_tuned_dir().iterdir() if any(d.glob("encoder-model*.onnx")))
+    return [STANDARD, *tuned]
+
+
+def model_dir_for(name: str) -> Optional[Path]:
+    """The folder a ``parakeet_model`` value names; None for the download.
+    Raises ``ValueError`` on a name that is not installed, rather than guess."""
+    if name not in available_models():
+        raise ValueError(f"Unknown parakeet_model {name!r}. Available: {available_models()}")
+    return None if name == STANDARD else fine_tuned_dir() / name
 
 
 def _as_input(audio: Any) -> Any:

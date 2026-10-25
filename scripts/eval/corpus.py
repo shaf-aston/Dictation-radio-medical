@@ -2,7 +2,7 @@
 
 A *gold set* is a directory under ``data/eval/<name>/`` containing audio clips
 and a ``manifest.jsonl``: one JSON record per clip pairing it with its
-reference transcript. Four sets exist, and they measure genuinely different
+reference transcript. Five sets exist, and they measure genuinely different
 things; reporting them as one blended number would hide exactly the failures
 this harness is for:
 
@@ -19,6 +19,10 @@ this harness is for:
     change break general English" and for per-engine real-time factor.
 ``bench``
     The two clips already in ``data/bench_audio/``, once hand-corrected.
+``eka``
+    Real Indian-English speakers reading short medical phrases (Eka Care's
+    evaluation set, MIT), joined per speaker into ~25 s dictations. Real
+    voices and medical words, but phrases, not radiology reports.
 
 Audio lives under ``data/`` which is gitignored: deliberate, since ``own`` is
 the user's recorded voice and belongs in version control no more than a report
@@ -51,6 +55,7 @@ KNOWN_SETS: Dict[str, str] = {
     "piper": "the same reports read by neural voices (UK + US), clean audio",
     "libri": "public-domain read speech, general-English regression + RTF",
     "bench": "existing data/bench_audio clips, hand-corrected",
+    "eka": "real Indian-English speakers reading medical phrases (Eka Care, MIT)",
 }
 
 

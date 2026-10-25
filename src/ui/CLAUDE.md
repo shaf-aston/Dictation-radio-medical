@@ -33,3 +33,13 @@ severity in this app, and a slow decode is neither.
 Nothing here weakens the offline rule: both endpoints read in-process buffers
 and are served on loopback. Nothing is written to disk and nothing is sent
 anywhere.
+
+## Why the front-end is served no-store
+
+Front-end files are cached in memory keyed on the file's modification time
+(`web/pages._frontend_cache`), and every page and asset is served `no-store`. Both
+halves matter: without the mtime key an edit to app.js needed a server restart,
+and without `no-store` the browser kept running the previous release's script
+against the current server: which is how the page went on using the old
+record-then-upload path, and felt many seconds slower, long after live dictation
+had landed.
