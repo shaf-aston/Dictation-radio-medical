@@ -40,9 +40,9 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 from src.core.paths import related_terms_path
 from src.medical.medical_dict import (
     get_correction_targets,
-    get_medical_terms,
     get_symspell,
     is_english_word,
+    is_known_word,
 )
 
 logger = logging.getLogger(__name__)
@@ -442,7 +442,6 @@ def _suspect_terms(text: str, keep: frozenset) -> List[Span]:
         return []
 
     index = _index()
-    known = get_medical_terms()
     floor = index.tuning["min_suspect_chars"]
     ceiling = index.tuning["max_marks"]
 
@@ -455,15 +454,33 @@ def _suspect_terms(text: str, keep: frozenset) -> List[Span]:
             break
         word = match.group()
         lowered = word.lower()
-        if len(lowered) < floor or lowered in known or lowered in keep:
+        if len(lowered) < floor or lowered in keep:
             continue
         verdict = verdicts.get(lowered)
         if verdict is None:
-            verdict = (
-                not is_english_word(lowered)
-                and bool(_similar_spelling(lowered, index))
-            )
+            verdict = not is_known_word(lowered) and bool(_similar_spelling(lowered, index))
             verdicts[lowered] = verdict
         if verdict:
             spans.append(Span(match.start(), match.end(), word))
     return spans
+
+
+# -- the hint under the marks ------------------------------------------------
+# Counted in settings, not per front-end: learning the feature on the desktop
+# retires the hint in the browser too.
+
+def lookup_hint_active(get) -> bool:
+    """Do the marks still explain how to use them? *get* is ``Settings.get``.
+
+    Yes until a suggestion has been taken ``term_lookup_hint_uses`` times: a
+    permanent "how to use this" line teaches once and then costs a row on every
+    report for ever.
+    """
+    return int(get("term_lookup_uses") or 0) < int(get("term_lookup_hint_uses"))
+
+
+def note_lookup_used(settings) -> bool:
+    """Count one taken suggestion; return whether the hint is still shown."""
+    if lookup_hint_active(settings.get):
+        settings.set("term_lookup_uses", int(settings.get("term_lookup_uses") or 0) + 1)
+    return lookup_hint_active(settings.get)

@@ -1,7 +1,7 @@
 """Stage 7: fuzzy medical-dictionary correction.
 
 Replaces a misspelled word with the closest known medical term, any of the
-~98k terms in :func:`medical_dict.get_medical_terms`, not just the 756-term
+~98k terms in :func:`medical_dict.get_medical_terms`, not just the ~870-term
 curated radiology lexicon, when it is within a small, length-scaled **edit
 distance** of that term (via :func:`medical_dict.get_symspell`). Acronyms,
 protected terms, and short words are never touched. Curated radiology-lexicon
@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Optional, Set
+from typing import Any, Optional, Set
 
 from src.medical import medical_dict
 from src.medical.medical_dict import is_english_word
@@ -64,7 +64,7 @@ def _max_edits(n: int) -> int:
     return 1 if n <= 9 else 2
 
 
-def _nearest_term(word: str, max_distance: int, sym: Optional[object] = None) -> Optional[str]:
+def _nearest_term(word: str, max_distance: int, sym: Optional[Any] = None) -> Optional[str]:
     """Closest known medical term to *word* within *max_distance* edits, or None.
 
     Looks up the SymSpell index (:func:`medical_dict.get_symspell`), which
@@ -86,7 +86,18 @@ def _nearest_term(word: str, max_distance: int, sym: Optional[object] = None) ->
     suggestions = sym.lookup(
         word, Verbosity.CLOSEST, max_edit_distance=max_distance, transfer_casing=False,
     )
-    return suggestions[0].term if suggestions else None
+    # Only an unambiguous answer is a correction. Every term returned sits at
+    # the same (smallest) distance; when several do, a curated lexicon term
+    # wins only if it is the only one, and otherwise the word is left alone.
+    # Picking the most frequent of a tie turned "cholithiasis" into
+    # "urolithiasis" and "stetosis" into "stenosis": a guess between two
+    # diagnoses is not a spelling fix. The same rule as _four_letter_decision.
+    terms = [s.term for s in suggestions]
+    if len(terms) <= 1:
+        return terms[0] if terms else None
+    lexicon = set(medical_dict.get_correction_targets())
+    curated = [t for t in terms if t in lexicon]
+    return curated[0] if len(curated) == 1 else None
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +116,14 @@ _english_known = is_english_word
 # "resolve"). The bundled wordlist stores singular/base forms, so without
 # this guard every plural or past-tense word gets demoted to its base.
 _INFLECTIONS = ("es", "ed", "ing", "s", "d")
+#: Derived forms written from a base: (ending, the base's ending). An adverb,
+#: adjective or verb form of a known term is spelled as meant, and snapping it
+#: to the base changed the word dictated ("craniocaudally" -> "craniocaudal",
+#: "osteonecrotic" -> "osteonecrosis", "isoattenuating" -> "isoattenuation").
+_DERIVATIONS = (
+    ("ally", "al"), ("otic", "osis"), ("itic", "itis"),
+    ("ating", "ation"), ("ated", "ation"), ("i", "us"),
+)
 _MIN_STEM = 4
 
 # Acronyms preserved verbatim regardless of case.
@@ -210,17 +229,12 @@ def _stems(word: str) -> Set[str]:
     }
     if word.endswith("ies") and len(word) >= _MIN_STEM + 2:
         stems.add(f"{word[:-3]}y")
+    stems.update(
+        word[: -len(end)] + base
+        for end, base in _DERIVATIONS
+        if word.endswith(end) and len(word) - len(end) >= _MIN_STEM
+    )
     return stems
-
-
-def _is_inflected_form(word: str, terms: Set[str]) -> bool:
-    """True when *word* is an inflected form of a term that is in *terms*.
-
-    e.g. "findings" → strip "s" → "finding" is in the medical dict.
-    This means the word is already correct, just in a form the dict
-    doesn't store, so the fuzzy stage must leave it alone.
-    """
-    return bool(_stems(word) & terms)
 
 
 def _only_inflection_differs(a: str, b: str) -> bool:
@@ -233,6 +247,10 @@ def _only_inflection_differs(a: str, b: str) -> bool:
     """
     stems_a = _stems(a)
     stems_b = _stems(b)
+    # One is the other with a suffix: "multisequence" is not a typo of
+    # "multisequenced".
+    if a in stems_b or b in stems_a:
+        return True
     shared = stems_a & stems_b
     if not shared:
         return False
@@ -315,7 +333,7 @@ def _four_letter_decision(wl: str) -> Optional[str]:
     return candidates[0] if len(candidates) == 1 else None
 
 
-def _compute_decision(wl: str, terms: Set[str], sym: Optional[object]) -> Optional[str]:
+def _compute_decision(wl: str, terms: Set[str], sym: Optional[Any]) -> Optional[str]:
     """Correction for already-lowercased non-word *wl*, or None to leave it alone.
 
     Pure function of *wl* and the load-once term sets (that is what makes the
@@ -386,7 +404,9 @@ def apply_medical_dictionary_suggestions(text: str) -> str:
 
     def _replace(m: re.Match) -> str:
         w = m[0]
-        if w.upper() in _ACRONYMS:
+        # Written in capitals, a word is an abbreviation: never a typo of a
+        # dictionary word ("TEVAR" -> "TEAR", "CVST" -> "CYST", "STEMI").
+        if w.upper() in _ACRONYMS or (len(w) >= 2 and w.isupper()):
             return w
         wl = w.lower()
         if len(wl) < _MIN_LEN_LEXICON_ONLY:

@@ -1,10 +1,9 @@
 """
-Accent-specific Whisper mis-transcription correction patterns.
+Stage: accent-specific mis-transcription correction patterns.
 
-Whisper is trained on multi-accent data but still produces systematic errors
-with certain accents.  These patterns correct the *Whisper output* – they
-target the text that Whisper generates when it hears accented speech, not the
-accent itself.
+Recognisers trained on multi-accent data still produce systematic errors with
+certain accents. These patterns correct the recogniser's *output*: they target
+the text it writes when it hears accented speech, not the accent itself.
 
 Patterns are eagerly compiled at module load to ensure they're ready for use.
 A combined regex approach is used for faster matching where possible.
@@ -16,6 +15,8 @@ Supported accents:
   - west_african  : Nigerian, Ghanaian English
   - neutral       : No accent-specific corrections (default)
 """
+
+from __future__ import annotations
 
 import re
 from typing import Callable, Dict, List, Optional, Pattern, Tuple, Union
@@ -234,43 +235,17 @@ ACCENT_LABELS: Dict[str, str] = {
 
 
 # ---------------------------------------------------------------------------
-# Quick-scan patterns for early exit optimization
-# These are simple string fragments that indicate potential matches exist.
-# If none are found, we can skip the more expensive regex processing.
+# One search per accent says whether any of its rules can fire, so a report
+# with nothing to fix skips the per-rule passes. Built from the rules
+# themselves: the hand-typed list of marker fragments it replaces had drifted
+# from them, and a rule with no marker ("artritis" for Middle Eastern) never ran.
 # ---------------------------------------------------------------------------
 
-_QUICK_SCAN_MARKERS: Dict[str, List[str]] = {
-    "south_asian": [
-        "wertebr", "wein", "walv", "wascular", "wolar", "wisuali",
-        "torac", "torassic", "torax", "tickness", "artritis", "artrop",
-        "artrosc", "artroplast", "raptur", "tandon", "tandino", "legament",
-        "ligamant", "normel", "frachur", "fraccher", "harniat", "protusion",
-        "fusion", "arosion", "pattell", "acitabul", "subchondrel", "osteofyte",
-        "kalsific", "tendonitis", "menesci", "menescus", "menescal",
-        "supraspinatous", "infraspinatous", "disk",
-    ],
-    "middle_eastern": [
-        "bneumo", "balmar", "bosterior", "broximal", "beroneal", "batell",
-        "blanter", "blantar", "beriost", "beriarticular", "bulmonary",
-        "bleural", "batholog", "fertebr", "fein", "falfe", "fascular",
-        "sickness", "wertebr", "walv", "wascular",
-    ],
-    "east_asian": [
-        "rigament", "righament", "rateral", "rabrum", "rabral", "retinacur",
-        "fracchure", "fraccture", "struccture", "ruptchure", "supinatus",
-    ],
-    "west_african": [
-        "tickness", "toracic", "artritis", "tandon", "legament",
-    ],
+_ANY_RULE: Dict[str, Pattern] = {
+    accent: re.compile("|".join(f"(?:{p.pattern})" for p, _ in patterns), re.IGNORECASE)
+    for accent, patterns in ACCENT_PROFILES.items()
+    if patterns
 }
-
-
-def _has_potential_matches(text_lower: str, accent: str) -> bool:
-    """Quick check if text might contain any matchable patterns for this accent."""
-    if markers := _QUICK_SCAN_MARKERS.get(accent, []):
-        return any(marker in text_lower for marker in markers)
-    else:
-        return False
 
 
 def apply_accent_corrections(text: str, accent: str) -> str:
@@ -292,9 +267,7 @@ def apply_accent_corrections(text: str, accent: str) -> str:
     if accent == "neutral" or accent not in ACCENT_PROFILES:
         return text
 
-    # Quick scan optimization: skip regex processing if no potential matches
-    text_lower = text.lower()
-    if not _has_potential_matches(text_lower, accent):
+    if not _ANY_RULE[accent].search(text):
         return text
 
     patterns = ACCENT_PROFILES.get(accent, [])
@@ -371,6 +344,3 @@ def suggest_accent(text: str, min_matches: int = 2) -> Optional[str]:
     return best_accent
 
 
-def get_available_accents() -> List[str]:
-    """Return list of available accent profile keys."""
-    return list(ACCENT_PROFILES.keys())

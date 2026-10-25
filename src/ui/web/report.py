@@ -16,14 +16,14 @@ from src.core.paths import report_filename
 from src.features import audit_log
 from src.features.report_manager import DOCX_AVAILABLE, export_to_word_bytes, format_plain_text_report
 from src.features.report_release import (
+    OutstandingFindings,
     add_communication_statement,
-    check_release,
     communication_statement,
     record_release,
     report_warnings,
 )
 from src.ui.web import state
-from src.ui.web.schemas import ReportRequest, StatementRequest, TextRequest
+from src.ui.web.schemas import ReportRef, ReportRequest, StatementRequest, TextRequest
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -39,12 +39,13 @@ async def report_findings_endpoint(payload: TextRequest):
     without knowing any of the scanning rules: exactly what the desktop gutter
     reads off the same object.
     """
-    findings = state.findings
+    findings = state.findings_for(payload.report_id)
     findings.update(payload.text)
     outstanding = {id(f) for f in findings.outstanding}
     return {
         "count": findings.count,
         "state": findings.state,
+        "label": findings.label,
         "findings": [
             {
                 "term": f.term,
@@ -59,16 +60,15 @@ async def report_findings_endpoint(payload: TextRequest):
 
 
 @router.post("/api/report/findings/reset")
-async def reset_findings_endpoint():
-    """Forget this report's findings and its acknowledgements: a new report.
+async def reset_findings_endpoint(payload: ReportRef):
+    """The report was cleared: forget its findings and its acknowledgements.
 
-    Acknowledgement answers "has this been phoned through for *this* patient",
-    so carrying it into the next report would show the next patient's identical
-    finding as already communicated.
+    The page moves to a fresh report id at the same time, so nothing answered
+    here can reach the next report either way.
     """
-    state.findings.reset()
+    state.forget_report(payload.report_id)
     audit_log.log_report_cleared("")
-    return {"count": 0, "state": "clear", "findings": []}
+    return {"count": 0, "state": "clear", "label": OutstandingFindings().label, "findings": []}
 
 
 def confirm_release(payload: ReportRequest) -> None:
@@ -91,38 +91,40 @@ def confirm_release(payload: ReportRequest) -> None:
                 "reason": "report_checks",
                 "fields": list(found.fields),
                 "issues": list(found.issues),
+                "message": found.message(),
             },
         )
 
-    # Scanned through the shared state object, so this answer settles the same
+    # Scanned through this report's state, so this answer settles the same
     # count the strip in the browser is showing: and a finding typed in after
     # an acknowledgement puts it back to outstanding, rather than riding out on
     # an answer given before it existed.
-    findings = state.findings
+    findings = state.findings_for(payload.report_id)
     findings.update(payload.text)
-    check = findings.check
-    outstanding = findings.outstanding
-    if not check.needs_acknowledgement:
+    # Only what is still outstanding is asked about and audited: an audit
+    # entry claims a phone call happened, so a second export must not record
+    # (or ask for) a second one.
+    pending = findings.pending
+    if not pending.needs_acknowledgement:
         return
     if payload.acknowledged is None:
         raise HTTPException(
             status_code=409,
             detail={
                 "reason": "critical_findings",
-                "summary": check.summary,
-                "worst_level": check.worst_level,
+                "title": pending.title,
+                "summary": pending.summary,
+                "worst_level": pending.worst_level,
             },
         )
-    # Only what was still outstanding is audited: an audit entry claims a phone
-    # call happened, so exporting the same report twice must not record two.
     record_release(
-        outstanding,
+        pending.findings,
         payload.patient.id,
         payload.acknowledged,
         payload.communication.to_record() if payload.communication else None,
     )
     if payload.acknowledged:
-        findings.acknowledge(check)
+        findings.acknowledge(pending)
 
 
 @router.post("/api/report/communication")
@@ -136,7 +138,9 @@ async def communication_statement_endpoint(payload: StatementRequest):
     comm = payload.communication.to_record()
     if comm.radiologist:
         state.settings().set("radiologist_name", comm.radiologist)
-    findings = check_release(payload.text).findings
+    report = state.findings_for(payload.report_id)
+    report.update(payload.text)
+    findings = report.pending.findings
     if not findings:
         return {"text": payload.text, "statement": ""}
     statement = communication_statement(findings, comm)

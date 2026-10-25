@@ -13,12 +13,14 @@ from src.core.patient_schema import empty_patient_info
 from src.core.settings import get_default
 from src.dictation.asr.factory import describe_engine
 from src.dictation.asr import voice_model
+from src.dictation import mic
 from src.dictation.asr.models import SUPPORTED_MODELS
 from src.dictation.postprocess.pipeline import CLEANUP_LEVEL_LABELS
 from src.features import template_fields
-from src.features.accent_corrections import ACCENT_LABELS
+from src.dictation.postprocess.accent import ACCENT_LABELS
 from src.features.clinical_disclaimer import DISCLAIMER_TEXT, DISCLAIMER_TITLE, needs_showing
 from src.features.report_manager import DOCX_AVAILABLE
+from src.medical import term_lookup
 from src.features.report_release import COMMUNICATION_METHODS
 from src.ui.theme import css_variables
 from src.ui.web import state
@@ -35,6 +37,8 @@ FRONTEND_FILES = {
     "app.html": "text/html; charset=utf-8",
     "app.css": "text/css; charset=utf-8",
     "app.js": "text/javascript; charset=utf-8",
+    # The developer Test voice (src/devtools), separate so it can be removed.
+    "speechtest.js": "text/javascript; charset=utf-8",
     # Loaded into the AudioWorklet only when the browser cannot give a 16 kHz
     # context on the microphone (Firefox).
     "resampler.js": "text/javascript; charset=utf-8",
@@ -86,7 +90,7 @@ def normalize_theme(theme: object) -> str:
 
 
 def current_theme() -> str:
-    return normalize_theme(state.settings().get("theme", "dark"))
+    return normalize_theme(state.settings().get("theme"))
 
 
 def template_names() -> list[str]:
@@ -105,7 +109,7 @@ def bootstrap_payload() -> dict:
     """Collect the page bootstrap state so the client can render controls."""
     settings = state.settings()
     templates = template_names()
-    selected_template = settings.get("last_template", "")
+    selected_template = settings.get("last_template")
     if selected_template not in templates:
         selected_template = templates[0] if templates else ""
     return {
@@ -148,8 +152,10 @@ def bootstrap_payload() -> dict:
         # The marks hint stops explaining itself past the ceiling; the count
         # lives in settings rather than the browser so using the feature on the
         # desktop also retires the hint here.
-        "term_lookup_uses": int(settings.get("term_lookup_uses", 0) or 0),
-        "term_lookup_hint_uses": int(settings.get("term_lookup_hint_uses", 3) or 3),
+        "lookup_hint_active": term_lookup.lookup_hint_active(settings.get),
+        "mic": mic.as_payload(),
+        # The developer console's scroll-back is the server's ring, not a copy.
+        "event_log_max": int(settings.get("event_log_max")),
         # The first-launch clinical disclaimer, shipped with the rest of the
         # first-load state rather than fetched separately: the page must be
         # able to show it before the radiologist can type anything.
@@ -162,14 +168,22 @@ def bootstrap_payload() -> dict:
         # desktop's consent dialog writes, so answering in one front-end
         # answers for both.
         "learning": {
-            "enabled": bool(settings.get("learning_enabled", True)),
-            "consent_needed": not settings.get("learning_consent_shown", False),
+            "enabled": bool(settings.get("learning_enabled")),
+            "consent_needed": not settings.get("learning_consent_shown"),
         },
     }
 
 
+#: JSON inside an inline <script>: the HTML parser reads it before the script
+#: does, so "</script>", "<!--" and "&" in a value (a radiologist's name is
+#: enough) can end the script or change how it is parsed. Escaped as \uXXXX,
+#: which JSON reads back as the same character.
+_SCRIPT_UNSAFE = str.maketrans({"<": "\\u003c", ">": "\\u003e", "&": "\\u0026",
+                                "\u2028": "\\u2028", "\u2029": "\\u2029"})
+
+
 def _json_for_script(payload: object) -> str:
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).translate(_SCRIPT_UNSAFE)
 
 
 def render_html(theme: str) -> str:

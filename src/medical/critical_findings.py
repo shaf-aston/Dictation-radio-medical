@@ -7,6 +7,8 @@ false-positive alerts for phrases like "no pneumothorax" while still
 flagging uncertainty phrases like "cannot exclude pulmonary embolism".
 """
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass
 from typing import List, Tuple
@@ -27,14 +29,20 @@ _NEGATION_PRE = [
     r"absent\s+",
     r"absence\s+of\s+",
     r"free\s+of\s+",
-    r"no\s+",
 ]
 
 # Post-finding negation triggers (appear AFTER the term, up to 60 chars ahead)
 _NEGATION_POST = [
     r"\s+(?:is|are|was|were)\s+(?:not|absent|excluded|ruled\s+out)",
     r"\s+not\s+(?:seen|identified|detected|noted|demonstrated|visualised|visualized|present|apparent)",
-    r"\s+(?:is|are|was|were)\s+not\s+(?:seen|identified|detected|noted|present)",
+]
+
+# Post-finding hedges. "Not excluded" contains a denial's words and means the
+# opposite: "pneumothorax is not excluded" is a pneumothorax that may be there,
+# and used to clear the alert. Checked before the denials, and wins over them.
+_UNCERTAINTY_POST = [
+    r"\s+(?:is|are|was|were)\s+not\s+(?:excluded|ruled\s+out)",
+    r"\s+(?:cannot|can\s*not|could\s+not)\s+(?:be\s+)?(?:excluded|ruled\s+out)",
 ]
 
 # Uncertainty / hedging triggers (pre-finding; NOT a clean negative)
@@ -166,6 +174,10 @@ _UNC_PRE_RE = re.compile(
     r"(?:" + "|".join(_UNCERTAINTY_PRE) + r")$",
     re.IGNORECASE,
 )
+_UNC_POST_RE = re.compile(
+    r"^(?:" + "|".join(_UNCERTAINTY_POST) + r")",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +205,12 @@ def _check_negation(text: str, start: int, end: int) -> Tuple[bool, bool]:
     """Return ``(is_negated, is_uncertain)`` for the term at ``text[start:end]``."""
     before = text[max(0, start - _WINDOW):start]
     after  = text[end:end + _WINDOW]
-    negated  = bool(_NEG_PRE_RE.search(before)) or bool(_NEG_POST_RE.match(after))
-    uncertain = not negated and bool(_UNC_PRE_RE.search(before))
+    # A hedge wins over a denial: "not excluded" holds a denial's words, and a
+    # missed life-threatening finding costs more than an unneeded question.
+    uncertain = bool(_UNC_PRE_RE.search(before)) or bool(_UNC_POST_RE.match(after))
+    negated = not uncertain and (
+        bool(_NEG_PRE_RE.search(before)) or bool(_NEG_POST_RE.match(after))
+    )
     return negated, uncertain
 
 
@@ -267,8 +283,6 @@ def format_findings_for_dialog(findings: List[CriticalFinding]) -> str:
         qualifier = ""
         if f.uncertain:
             qualifier = " [UNCERTAIN, cannot exclude]"
-        elif f.negated:
-            qualifier = " [negated, verify context]"
         severity = "⚠ LIFE-THREATENING" if f.level == 1 else "⚠ URGENT"
         lines.extend(
             (

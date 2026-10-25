@@ -2,12 +2,13 @@
 
 Every constant here used to be one hard-coded answer, sized for local Whisper,
 whose every call pays ~1-4s however little audio it is handed (the 30s pad).
-Few long chunks amortise that. But the default engine became Deepgram at
+Few long chunks amortise that. But a cloud engine such as Deepgram answers in
 ~0.2s a call, and the same long chunks then only made the kept text trail the
 microphone by the chunk length: the decode was fast and the word still waited
 6 to 15 seconds for its chunk to close. So the engine declares its price
 (:class:`~src.dictation.asr.types.CostModel`) and this module turns the price
-into a shape. Pure: no settings file, no engine calls, no I/O.
+into a shape. Pure: no engine calls, no I/O; settings arrive as a ``get``
+function (``Settings.get``).
 
 Both rows are measured starting points, not settled truths: any change is
 judged by ``scripts/eval/replay.py`` against the medical-term error veto.
@@ -18,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
+from src.core.settings import get_default
 from src.dictation.asr.types import EngineCaps
 from src.dictation.stream.segmenter import ChunkPolicy
 
@@ -64,10 +66,12 @@ def is_cheap(caps: EngineCaps) -> bool:
     return caps.cost.fixed_sec < CHEAP_CALL_SEC
 
 
-def plan_for(caps: EngineCaps, trailing_silence_sec: float = 0.6) -> LivePlan:
+def plan_for(caps: EngineCaps, trailing_silence_sec: Optional[float] = None) -> LivePlan:
     """The live shape for an engine with these capabilities."""
     cheap = is_cheap(caps)
     lo, soft, force = CHEAP_POLICY if cheap else LOCAL_POLICY
+    if trailing_silence_sec is None:
+        trailing_silence_sec = float(get_default("chunk_trailing_silence_sec"))
     return LivePlan(
         policy=ChunkPolicy(
             min_sec=lo, soft_max_sec=soft, force_cut_sec=force,
@@ -86,7 +90,7 @@ def plan_from_settings(get: Callable[[str], Any], caps: Optional[EngineCaps]) ->
     predates this still holds the old 6 / 15 / 20 as literal numbers. Reading
     those verbatim would keep every existing user on the slow shape.
     """
-    trailing = float(get("chunk_trailing_silence_sec") or 0.6)
+    trailing = float(get("chunk_trailing_silence_sec") or get_default("chunk_trailing_silence_sec"))
     if str(get("chunk_policy") or AUTO) == MANUAL or caps is None:
         return LivePlan(
             policy=ChunkPolicy(

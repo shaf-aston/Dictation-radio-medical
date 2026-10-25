@@ -10,12 +10,11 @@ Activation is reversible via ``rollback_to_base(task_type)``.
 from __future__ import annotations
 
 import logging
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
-from src.core.json_store import read_json, write_json
+from src.core.json_store import read_json, update_json
 from src.training.schemas import TASK_WHISPER_VOICE, ModelVersion
 
 logger = logging.getLogger(__name__)
@@ -29,7 +28,6 @@ class ModelRegistry:
             from src.core.paths import model_registry_path
             registry_path = model_registry_path()
         self._path = Path(registry_path)
-        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Load / save
@@ -52,8 +50,11 @@ class ModelRegistry:
         data.setdefault("models", [])
         return data
 
-    def _save(self, data: dict) -> None:
-        write_json(self._path, data)
+    def _update(self, change: Callable[[dict], None]) -> None:
+        """Read, *change* and write the registry as one step, across processes."""
+        if update_json(self._path, {"active": {}, "models": []},
+                       lambda data: change(self._normalize(data))) is None:
+            raise OSError(f"Could not write the model registry {self._path}")
 
     # ------------------------------------------------------------------
     # Registration
@@ -83,12 +84,11 @@ class ModelRegistry:
             is_active=False,
             metrics=metrics or {},
         )
-        with self._lock:
-            data = self._load()
+        def add(data: dict) -> None:
             # Replace any existing entry with the same version.
             data["models"] = [m for m in data["models"] if m.get("version") != version]
             data["models"].append(mv.to_dict())
-            self._save(data)
+        self._update(add)
         logger.info("Registered %s model %s at %s", task_type, version, local_path)
         return mv
 
@@ -98,23 +98,29 @@ class ModelRegistry:
 
     def activate_model(self, version: str) -> bool:
         """Make *version* the active model for its task. False if unknown."""
-        with self._lock:
-            data = self._load()
+        found: dict = {}
+
+        def activate(data: dict) -> None:
             target = next((m for m in data["models"] if m.get("version") == version), None)
             if target is None or not target.get("local_path"):
-                logger.warning("Cannot activate unknown/undownloaded model %s", version)
-                return False
-            task_type = target.get("task_type", TASK_WHISPER_VOICE)
+                return
+            task_type = found["task_type"] = target.get("task_type", TASK_WHISPER_VOICE)
+            found["base_model"] = target.get("base_model", "base")
             # Only one active model *per task*; leave other tasks untouched.
             for m in data["models"]:
                 if m.get("task_type", TASK_WHISPER_VOICE) == task_type:
                     m["is_active"] = (m.get("version") == version)
             data["active"][task_type] = version
-            self._save(data)
+
+        self._update(activate)
+        if not found:
+            logger.warning("Cannot activate unknown/undownloaded model %s", version)
+            return False
+        task_type = found["task_type"]
         self._mirror_active_to_settings(task_type, version)
         try:
             from src.features import audit_log
-            audit_log.log_model_activated(version, target.get("base_model", "base"))
+            audit_log.log_model_activated(version, found["base_model"])
         except Exception as exc:
             logger.debug("Could not write model-activation audit entry: %s", exc)
         logger.info("Activated %s model %s", task_type, version)
@@ -122,13 +128,12 @@ class ModelRegistry:
 
     def rollback_to_base(self, task_type: str = TASK_WHISPER_VOICE) -> None:
         """Deactivate the active model for *task_type*; revert to base weights."""
-        with self._lock:
-            data = self._load()
+        def deactivate(data: dict) -> None:
             for m in data["models"]:
                 if m.get("task_type", TASK_WHISPER_VOICE) == task_type:
                     m["is_active"] = False
             data["active"].pop(task_type, None)
-            self._save(data)
+        self._update(deactivate)
         self._mirror_active_to_settings(task_type, None)
         logger.info("Rolled back %s to base model", task_type)
 

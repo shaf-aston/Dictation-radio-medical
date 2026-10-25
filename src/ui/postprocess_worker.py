@@ -3,7 +3,7 @@
 Why this exists
 ---------------
 The live worker re-emits the whole transcript several times a second. Running
-the ten-stage correction pipeline inline in the ``partial`` slot ran it on the
+the correction pipeline inline in the ``partial`` slot ran it on the
 Qt **main thread**: so every cycle the UI stopped repainting and stopped
 accepting input until terminology regexes and the fuzzy medical dictionary had
 finished scanning the entire document. That is the freeze the user feels.

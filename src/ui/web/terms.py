@@ -11,10 +11,9 @@ import logging
 from dataclasses import asdict
 
 import anyio
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException
 
 from src.core import event_log
-from src.devtools import speech_test
 from src.features import audit_log
 from src.features.adaptive_learning import get_adaptive_learning, learn_from_session
 from src.features.edit_tracking import record_session_edits
@@ -60,13 +59,7 @@ async def term_used_endpoint():
     counts the same takes into the same key: learning the feature in one
     front-end should not leave the other still explaining it.
     """
-    settings = state.settings()
-    ceiling = int(settings.get("term_lookup_hint_uses", 3) or 3)
-    used = int(settings.get("term_lookup_uses", 0) or 0)
-    if used < ceiling:
-        used += 1
-        settings.set("term_lookup_uses", used)
-    return {"term_lookup_uses": used, "term_lookup_hint_uses": ceiling}
+    return {"hint_active": term_lookup.note_lookup_used(state.settings())}
 
 
 @router.post("/api/learn/consent")
@@ -87,7 +80,7 @@ async def learn_session_endpoint(payload: SessionEditsRequest):
     recording). The diff and the learning rules live in features/; this only
     checks consent.
     """
-    if not state.settings().get("learning_enabled", True):
+    if not state.settings().get("learning_enabled"):
         return {"learned": 0}
 
     def work() -> int:
@@ -108,30 +101,15 @@ async def learn_choice_endpoint(payload: TermChoiceRequest):
     Keep adds the word to the radiologist's own vocabulary, so it is never
     marked again.
     """
-    if not state.settings().get("learning_enabled", True):
+    if not state.settings().get("learning_enabled"):
         return {"learned": False}
     learning = get_adaptive_learning()
     if payload.replacement:
-        learning.learn_correction(payload.word, payload.replacement)
+        learned = learning.learn_correction(payload.word, payload.replacement)
     else:
         learning.learn_term(payload.word)
-    event_log.emit("learn", "accepted a fix" if payload.replacement else "kept a word",
-                   word=payload.word, replacement=payload.replacement)
-    return {"learned": True}
-
-
-@router.post("/api/dev/speak")
-async def dev_speak_endpoint(payload: TextRequest):
-    """Typed text spoken as a WAV, for testing dictation without a voice.
-
-    Developer tool (src/devtools/speech_test.py); the page plays the WAV into
-    the normal recording path in place of the microphone.
-    """
-    try:
-        wav = await anyio.to_thread.run_sync(speech_test.speak_to_wav, payload.text)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.error("Test voice failed: %s", exc)
-        raise HTTPException(status_code=500, detail="Speech synthesis failed") from exc
-    return Response(content=wav, media_type="audio/wav")
+        learned = True
+    if learned:
+        event_log.emit("learn", "accepted a fix" if payload.replacement else "kept a word",
+                       word=payload.word, replacement=payload.replacement)
+    return {"learned": learned}

@@ -107,6 +107,17 @@ def write_manifest_archive(
         info = tarfile.TarInfo("manifest.json")
         info.size = len(data)
         tar.addfile(info, io.BytesIO(data))
+        added = set()
         for src_path, arcname in (members or {}).items():
-            tar.add(src_path, arcname=arcname)
+            if arcname not in added:  # identical files share one name
+                added.add(arcname)
+                tar.add(src_path, arcname=arcname, filter=_without_owner)
     return tmp
+
+
+def _without_owner(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    """Keep the local account name and file times out of what is uploaded."""
+    info.uid = info.gid = 0
+    info.uname = info.gname = ""
+    info.mtime = 0
+    return info

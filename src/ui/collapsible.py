@@ -44,5 +44,3 @@ class Section(QWidget):
         )
         self.toggled.emit(expanded)
 
-    def is_expanded(self) -> bool:
-        return self.header.isChecked()

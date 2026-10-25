@@ -53,7 +53,7 @@ def _cpu_threads_setting() -> int:
     """
     default = get_default("asr_cpu_threads")
     try:
-        value = int(Settings().get("asr_cpu_threads", default))
+        value = int(Settings().get("asr_cpu_threads"))
     except (TypeError, ValueError):
         value = default
     return max(1, min(value, os.cpu_count() or 8))
@@ -422,7 +422,7 @@ class FasterWhisperEngine:
 
     def capabilities(self) -> EngineCaps:
         return EngineCaps(
-            word_confidence=True, hotwords=True,
+            word_confidence=True, hotwords=True, beam_sensitive=True,
             cost=_decode_cost(self._transcriber.model_path or self._transcriber.model_size),
         )
 

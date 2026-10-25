@@ -14,7 +14,7 @@ from src.dictation.asr.factory import describe_engine
 from src.dictation.asr.models import SUPPORTED_MODELS
 from src.dictation.postprocess.pipeline import CLEANUP_LEVELS
 from src.features import audit_log
-from src.features.accent_corrections import ACCENT_LABELS
+from src.dictation.postprocess.accent import ACCENT_LABELS
 from src.features.clinical_disclaimer import mark_shown
 from src.medical import macros
 from src.ui.web import state
@@ -106,7 +106,7 @@ async def reload_macros_route():
     except Exception as exc:
         logger.error("Failed to reload macros: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to reload macros") from exc
-    return state.macros_payload()
+    return {"macros": state.macros_payload()}
 
 
 def _resolve_template_path(template_name: str) -> Path:

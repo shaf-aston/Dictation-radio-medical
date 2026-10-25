@@ -52,7 +52,7 @@ def test_last_provider_error_still_reaches_caller():
 
 
 def test_dead_key_skipped_across_separate_chain_instances():
-    # web_app builds one ChainEngine per model name (live tier, polish tier);
+    # state.get_engine builds one ChainEngine per model name (live tier, polish tier);
     # a rejection learned by one instance must not be re-paid by the other.
     dead1, local1 = _Engine(ProviderUnavailable("401")), _Engine()
     live_chain = ChainEngine([("deepgram", dead1), ("whisper", local1)])

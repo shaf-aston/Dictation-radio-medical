@@ -7,8 +7,9 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QThread, QTimer
-from PySide6.QtWidgets import QDialog, QMessageBox
+from PySide6.QtCore import Qt, QThread, QTimer
+from PySide6.QtGui import QTextCursor
+from PySide6.QtWidgets import QMessageBox
 
 from src.core import perf
 from src.cloud.framework.registry import active_voice_model_path
@@ -16,14 +17,10 @@ from src.dictation.worker import LiveTranscribeWorker
 from src.core.paths import create_temp_wav
 from src.features import run_log
 from src.ui.postprocess_worker import PostprocessWorker, build_changes
-from src.features.accent_corrections import ACCENT_LABELS, suggest_accent
-from src.features.report_release import (
-    add_communication_statement,
-    communication_statement,
-    record_release,
-)
+from src.dictation.postprocess.accent import ACCENT_LABELS, suggest_accent
 from src.features.template_fields import find_fields, resolve_choice
-from src.ui.dialogs import CommunicationDialog, confirm_report_checks, offer_ai_cleanup
+from src.ui.dialogs import offer_ai_cleanup
+from src.ui import training_capture
 from src.ui.styles import set_level_state
 
 if TYPE_CHECKING:
@@ -32,99 +29,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Cloud training capture helpers (all no-ops unless the user has opted in)
-# ---------------------------------------------------------------------------
-
-def _start_training_capture(window: MainWindow, wav_path: str, model_size: str) -> None:
-    """Start a collector session and route voice corrections into it."""
-    try:
-        from src.training.collector import get_correction_collector
-        from src.dictation.postprocess.voice_commands import set_correction_hook
-
-        collector = get_correction_collector()
-        # Persist any previous session still open for review before reusing it.
-        collector.finalize_session()
-        accent = getattr(window, "_active_accent", "neutral")
-        version = window.settings.get("active_model_version") or model_size
-        collector.start_session(
-            session_id=os.path.basename(wav_path),
-            wav_path=wav_path,
-            patient_info=window._get_patient_info(),
-            model_version=version,
-            accent_profile=accent,
-        )
-        # Explicit "X correct word Y" voice edits feed the collector too.
-        set_correction_hook(collector.record_text_correction)
-    except Exception as exc:
-        logger.debug("Training capture not started: %s", exc)
-
-
-def _on_segments(abs_segments: list) -> None:
-    """Forward worker segments to the training collector for timing/PHI scrub."""
-    try:
-        from src.training.collector import get_correction_collector
-        get_correction_collector().update_segments(abs_segments)
-    except Exception as exc:
-        logger.debug("Segment forwarding to collector failed: %s", exc)
-
-
-def _prepare_training_audio() -> None:
-    """De-identify the session audio while the temp WAV still exists.
-
-    Runs when transcription ends but *before* the WAV is deleted. The session
-    stays open so spelling fixes made during review are still captured; the
-    voice-command hook is detached since voice edits only occur while recording.
-    """
-    try:
-        from src.training.collector import get_correction_collector
-        from src.dictation.postprocess.voice_commands import set_correction_hook
-        get_correction_collector().prepare_audio()
-        set_correction_hook(None)
-    except Exception as exc:
-        logger.debug("Training audio prepare failed: %s", exc)
-
-
-def finalize_training_capture() -> None:
-    """Persist captured corrections and close the open collector session.
-
-    Called at the next natural boundary, a new recording (see
-    ``_start_training_capture``) or window close, so review-time corrections
-    are included.
-    """
-    try:
-        from src.training.collector import get_correction_collector
-        get_correction_collector().finalize_session()
-    except Exception as exc:
-        logger.debug("Training capture finalize failed: %s", exc)
-
-
 def _abandon_unfinished_session(window: MainWindow) -> None:
-    """Cut the previous session loose, if its polish is still running.
+    """Retire the previous session, if any part of it still exists.
 
-    Record now comes back before the polish finishes, so this is reachable:
-    Stop, then Record again a few seconds later. The old worker must not be
-    able to write into the new recording's document, so its signals are
-    disconnected *before* anything of the new session exists: that, not a
-    flag checked later, is what makes it impossible. The parts of the shutdown
-    that still matter for the abandoned run (its audio, its log record) are
-    done here, since ``_complete_finish`` will never run for it.
+    Record comes back before the polish finishes, so this is reachable: Stop,
+    then Record (or F5) a few seconds later. The old worker must not be able to
+    write into the new recording's document, so its signals are disconnected
+    *before* anything of the new session exists. The test is "does a worker
+    still exist", not a sequence number: the numbers are cleared while the
+    polish is still running, which is how a polish used to survive into the
+    next recording. Its threads are owned by the window, so dropping the
+    references here never destroys a running thread; each deletes itself when
+    it finishes. The parts of the shutdown that still matter for the abandoned
+    run (its audio, its log record) are done here, since ``_complete_finish``
+    will never run for it.
     """
-    # Both are cleared by _complete_finish, so either one still set is the
-    # signal that a session is outstanding. Checked before touching the worker:
-    # after a normal finish it has been deleteLater'd, and every call on the
-    # dead wrapper, including disconnect, raises.
-    if window._final_seq is None and window._handback_seq is None:
+    if window.live_worker is None and window.pp_worker is None:
         return
 
-    worker = getattr(window, "live_worker", None)
+    worker = window.live_worker
     if worker is not None:
         try:
             for signal, slot in (
                 (worker.partial, window._on_partial_text),
+                (worker.handback, window._on_handback),
                 (worker.progress, window._on_worker_progress),
                 (worker.finished, window._on_transcription_finished),
-                (worker.segments, _on_segments),
+                (worker.segments, training_capture.on_segments),
             ):
                 try:
                     signal.disconnect(slot)
@@ -135,27 +66,78 @@ def _abandon_unfinished_session(window: MainWindow) -> None:
         except RuntimeError as exc:
             logger.debug("Previous worker already gone: %s", exc)
 
-    pp_worker = getattr(window, "pp_worker", None)
+    pp_worker = window.pp_worker
     if pp_worker is not None:
         try:
             pp_worker.processed.disconnect(window._on_processed_text)
         except (RuntimeError, TypeError):
             pass
-    thread = getattr(window, "pp_thread", None)
+    thread = window.pp_thread
     if thread is not None:
         thread.quit()
-        thread.wait(2000)
+    # Still running for a moment (a decode, a pipeline pass). The window keeps
+    # them until they end, so closing it can wait for them: a thread destroyed
+    # with its window while running aborts the process.
+    window._retiring_threads.extend(t for t in (window.pp_thread, window.live_thread) if t is not None)
     window.pp_worker = None
     window.pp_thread = None
 
     window._handback_seq = None
-    window._handed_over_text = None
     window._final_seq = None
     window._post_dictation_snapshot = window.editor.toPlainText()
-    _prepare_training_audio()
+    training_capture.prepare_training_audio()
     _record_the_run(window)   # reads live_worker for its chunk count: before the clear
     cleanup_temp_audio(window)
     window.live_worker = None
+    window.live_thread = None
+    _close_dictation_region(window)
+
+
+def session_may_write(window: MainWindow) -> bool:
+    """May the dictation session still write into the document?
+
+    While recording, yes: it owns its region. From Stop on, only while the
+    editor still holds exactly what the session last wrote. The radiologist
+    has the report from the moment it is handed back, so any change they make
+    (typing, a template, a release) ends the session's right to rewrite it,
+    for good: overwriting a report someone has corrected is the worst outcome
+    this feature could have. Comparing with the session's own last write,
+    rather than a snapshot taken at hand-back, means a pass that lands late or
+    a hand-back that never lands cannot switch the guard off or fake an edit.
+    """
+    if window.recorder.is_recording:
+        return True
+    if window._session_yielded:
+        return False
+    last = window._session_last_written
+    if last is not None and window.editor.toPlainText() != last:
+        window._session_yielded = True
+        return False
+    return True
+
+
+def yield_document(window: MainWindow) -> None:
+    """The radiologist has taken the report (released it): no more rewrites."""
+    if window.live_worker is not None or window.pp_worker is not None:
+        window._session_yielded = True
+
+
+def insert_before_dictation(window: MainWindow, text: str) -> None:
+    """Put *text* (a template, a quick phrase) just before the dictated region.
+
+    Anything inside the region is rewritten by the next live cycle. The region
+    start stays put when text is written AT it (see _open_dictation_region),
+    so after inserting there the start is moved past the new text by hand.
+    """
+    start = window._dictation_start
+    if start is None:
+        window.editor.textCursor().insertText(text)
+        return
+    position = start.position()
+    cursor = window.editor.textCursor()
+    cursor.setPosition(position)
+    cursor.insertText(text)
+    start.setPosition(position + len(text))
 
 
 def _open_dictation_region(window: MainWindow) -> None:
@@ -260,24 +242,27 @@ def on_start_recording(window: MainWindow) -> None:
     active_model_path = active_voice_model_path()
 
     # Begin capturing corrections for cloud training (no-op without consent).
-    _start_training_capture(window, path, model_size)
+    training_capture.start_training_capture(window, path, model_size)
 
-    # Post-processing runs on its own thread so the ten-stage pipeline can never
+    # Post-processing runs on its own thread so the correction pipeline can never
     # block the UI (see postprocess_worker). Fresh per recording: no stale
     # incremental cache can survive into the next report.
     perf.reset()
     # Open the run record beside perf.reset(): both mark "a new dictation starts
     # here", and the record is what survives the next reset (see run_log).
     window._run_record = run_log.start(
-        "desktop", model=model_size, engine=str(window.settings.get("asr_engine", "")),
+        "desktop", model=model_size, engine=str(window.settings.get("asr_engine")),
     )
     window._audio_stopped_at = None
     window._partial_seq = 0
     window._applied_seq = 0
     window._final_seq = None
     window._handback_seq = None
-    window._handed_over_text = None
-    window.pp_thread = QThread()
+    window._session_last_written = None
+    window._session_yielded = False
+    # Owned by the window: a thread object dropped while it still runs is a
+    # crash ("QThread: Destroyed while thread is still running").
+    window.pp_thread = QThread(window)
     window.pp_worker = PostprocessWorker()
     window.pp_worker.moveToThread(window.pp_thread)
     # Bound QObject slots, not lambdas: a signal connected to a plain callable
@@ -285,9 +270,10 @@ def on_start_recording(window: MainWindow) -> None:
     # (worker) thread: mutating the editor off the UI thread. See MainWindow.
     window.pp_worker.processed.connect(window._on_processed_text)
     window.pp_thread.finished.connect(window.pp_worker.deleteLater)
+    window.pp_thread.finished.connect(window.pp_thread.deleteLater)
     window.pp_thread.start()
 
-    window.live_thread = QThread()
+    window.live_thread = QThread(window)
     window.live_worker = LiveTranscribeWorker(
         path, window.settings.get, model_path=active_model_path,
     )
@@ -296,9 +282,11 @@ def on_start_recording(window: MainWindow) -> None:
     window.live_worker.partial.connect(window._on_partial_text)
     window.live_worker.handback.connect(window._on_handback)
     window.live_worker.progress.connect(window._on_worker_progress)
-    window.live_worker.segments.connect(_on_segments)
+    window.live_worker.segments.connect(training_capture.on_segments)
     window.live_worker.finished.connect(window._on_transcription_finished)
-    window.live_worker.finished.connect(window.live_thread.quit)
+    # Direct: QThread.quit is thread-safe, and queued it would wait for the UI
+    # thread, which on close is the one blocked waiting for this thread.
+    window.live_worker.finished.connect(window.live_thread.quit, Qt.ConnectionType.DirectConnection)
     window.live_worker.finished.connect(window.live_worker.deleteLater)
     window.live_thread.finished.connect(window.live_thread.deleteLater)
     window.live_thread.start()
@@ -371,6 +359,14 @@ def on_partial_text(
     if window.pp_worker is None:
         return
     window._partial_seq += 1
+    if not window.recorder.is_recording:
+        # A decode that was in flight at Stop lands after the hand-back was
+        # queued. It is newer text, so it becomes the hand-back: processed whole
+        # and the pass that gives Record back. Queued as an ordinary partial it
+        # replaced the hand-back in the latest-only mailbox, and the hand-back
+        # never landed.
+        window._handback_seq = window._partial_seq
+        committed_len = 0
     window.pp_worker.submit(
         full_transcript,
         committed_len,
@@ -383,64 +379,50 @@ def on_partial_text(
 def on_processed_text(
     window: MainWindow, processed: str, changes: list, seq: int
 ) -> None:
-    """Apply a processed transcript to the editor (UI thread).
+    """Apply a processed transcript to the dictated region (UI thread).
 
-    Replaces the dictated region with the latest transcription: Whisper
-    re-segments non-deterministically, so everything from ``_dictation_start_pos``
-    onwards is rewritten rather than appended.
+    Only the region between ``_dictation_start`` and ``_dictation_end`` is
+    replaced; text after it is never touched.
     """
     # Results can only move forward. A pass that finishes after a newer one has
     # already been applied would otherwise rewind the editor to older text.
     if seq <= window._applied_seq:
         return
     window._applied_seq = seq
+    is_handback = seq == window._handback_seq
+    is_final = seq == window._final_seq
 
-    # The polish arrives *after* the report was handed back, so the radiologist
-    # may have been editing it the whole time it ran. Their words win: silently
-    # replacing a clinical report someone has already corrected is the worst
-    # outcome this feature could have. Same rule as the web front-end: a rule
-    # written into only one of the two is a rule that is missing from one.
-    # Every pass after the handback is guarded, not just the final one: the
-    # polish emits its own update on the way through, and that one would reach
-    # the editor first. The marker is left standing so each later pass is
-    # refused too: it is cleared only when the session closes.
-    handed_over = getattr(window, "_handed_over_text", None)
-    if handed_over is not None and window.editor.toPlainText() != handed_over:
-        if seq == window._final_seq:
-            window._show_status(
-                "Kept your edits - the improved version was discarded", 4000, state="ok"
-            )
-            _complete_finish(window)
-        return
+    if session_may_write(window):
+        if changes:
+            # Accumulate unique corrections for the post-recording banner.
+            seen = getattr(window, "_corrections_seen", None)
+            if seen is None:
+                seen = window._corrections_seen = set(window._corrections_pending)
+            window._corrections_pending.extend(build_changes(seen, changes))
+        if processed:
+            with perf.stage("ui.apply_partial"):
+                _replace_dictation_region(window, processed)
+            if not is_final:
+                window._show_status("Receiving...", 800, state="rec")
+    elif is_final:
+        window._show_status(
+            "Kept your edits - the improved version was discarded", 4000, state="ok"
+        )
 
-    if changes:
-        # Accumulate unique corrections for the post-recording banner.
-        seen = getattr(window, "_corrections_seen", None)
-        if seen is None:
-            seen = window._corrections_seen = set(window._corrections_pending)
-        window._corrections_pending.extend(build_changes(seen, changes))
-
-    if processed:
-        with perf.stage("ui.apply_partial"):
-            _replace_dictation_region(window, processed)
-        if seq != window._final_seq:
-            window._show_status("Receiving...", 800, state="rec")
-
-    # The handback has landed: the report is readable and editable, so Record
-    # comes back now rather than after the polish. The session is NOT closed
-    # here: the polish is still running and still owns the teardown.
-    if seq == window._handback_seq:
+    # The hand-back has been processed: the report is the radiologist's, so
+    # Record comes back now rather than after the polish. Whether or not it was
+    # written (they may already be editing), the session is NOT closed here: the
+    # polish is still running and still owns the teardown.
+    if is_handback:
         window._handback_seq = None
-        # What the radiologist was handed. Anything different when the polish
-        # lands means they have edited it since, and it is no longer replaceable.
-        window._handed_over_text = window.editor.toPlainText()
         window.btn_record.setEnabled(True)
-        window._status.last_progress = ("Improving accuracy...", "busy")
-        window._show_status("Improving accuracy...", state="busy")
+        if not is_final:
+            window._status.last_progress = ("Improving accuracy...", "busy")
+            window._show_status("Improving accuracy...", state="busy")
 
-    # The authoritative full-document pass has landed: the text on screen is
-    # now the finished report, so the rest of the shutdown can run.
-    if seq == window._final_seq:
+    # The authoritative full-document pass has landed (or been refused): the
+    # rest of the shutdown can run.
+    if is_final:
         _complete_finish(window)
 
 
@@ -489,16 +471,21 @@ def _replace_dictation_region(window: MainWindow, processed: str) -> None:
     while same < limit and region[same] == processed[same]:
         same += 1
 
-    cursor = window.editor.textCursor()
+    cursor = QTextCursor(window.editor.document())
     window.editor.blockSignals(True)
     cursor.beginEditBlock()
     cursor.setPosition(start + same)
     cursor.setPosition(end, cursor.MoveMode.KeepAnchor)
     cursor.insertText(processed[same:])
     cursor.endEditBlock()
-    window.editor.setTextCursor(cursor)
+    if window.recorder.is_recording:
+        # The caret follows the dictation while it is spoken. After Stop it is
+        # the radiologist's: a polish landing must not move it, or the next
+        # dictation goes wherever the polish left it.
+        window.editor.setTextCursor(cursor)
     window.editor.blockSignals(False)
-    window._on_text_changed()
+    window._session_last_written = window.editor.toPlainText()
+    window._on_text_changed(by_dictation=True)
 
 
 def _apply_finished_ai_cleanup(window: MainWindow) -> None:
@@ -560,10 +547,17 @@ def _complete_finish(window: MainWindow) -> None:
         thread.wait(5000)
         window.pp_thread = None
     window.pp_worker = None
+    # Both deleted themselves on finishing; a reference kept past that point
+    # is a dead object the next close or recording would call into.
+    window.live_worker = None
+    window.live_thread = None
     window._final_seq = None
     window._handback_seq = None
-    window._handed_over_text = None
     window._last_raw_transcript = ""
+    # The overlays paused while the session wrote; the report they missed is
+    # the finished one (a final pass identical to the hand-back writes nothing).
+    window.finding_gutter.schedule_refresh()
+    window.term_marks.schedule_rescan()
 
     # The 'hard' cleanup level's AI polish runs here, once, on the finished
     # report: kept out of the per-chunk live path (CLAUDE.md invariant).
@@ -581,7 +575,7 @@ def _complete_finish(window: MainWindow) -> None:
     _close_dictation_region(window)
     # De-identify the session audio while the WAV still exists; the collector
     # session stays open so spelling fixes made during review are captured too.
-    _prepare_training_audio()
+    training_capture.prepare_training_audio()
     _record_the_run(window)
     cleanup_temp_audio(window)
     check_accent_suggestion(window)
@@ -655,71 +649,6 @@ def show_corrections_banner(window: MainWindow) -> None:
     window._corrections_seen = set()
 
 
-def confirm_release(window: MainWindow) -> bool:
-    """Run both release rules and return True if the report may leave.
-
-    The desktop shape of the shared gate in ``features/report_release.py``: the
-    rules and the audit trail live there, alongside the web app's 409. Called
-    from every exit (copy / save / export) immediately before the text leaves,
-    so a field or finding typed in after dictation ended is still caught.
-
-    Unfilled fields are asked about first, because that is the only answer that
-    can cancel: cancelling must never leave a findings acknowledgement in the
-    audit log for a report that then did not leave. The findings answer itself
-    never withholds the report, both answers proceed and only the audit entry
-    differs, so False here always means "the radiologist cancelled".
-
-    The scan runs through ``window.findings`` so the answer given here is the
-    same state the gutter marks and the count pill show: acknowledging settles
-    the pill, and a finding typed in afterwards puts it back to outstanding.
-    The dialog itself still appears at every exit, answered or not: asking
-    twice costs a click, and not asking could cost a phone call.
-    """
-    if not confirm_report_checks(window):
-        return False
-
-    window.findings.update(window.editor.toPlainText())
-    check = window.findings.check
-    # Captured before the dialog: msg.exec() runs a nested event loop, and the
-    # gutter's debounced re-scan can fire inside it and replace window.findings
-    # .check. Answering and auditing from these locals means the radiologist's
-    # answer always applies to exactly what they were shown.
-    outstanding = window.findings.outstanding
-    if not check.needs_acknowledgement:
-        window.finding_gutter.show_state()
-        return True
-
-    dialog = CommunicationDialog(window, check, str(window.settings.get("radiologist_name") or ""))
-    acknowledged = dialog.exec() == QDialog.DialogCode.Accepted
-    comm = dialog.communication() if acknowledged else None
-    if comm is not None:
-        if comm.radiologist:
-            window.settings.set("radiologist_name", comm.radiologist)
-        if dialog.add_to_report.isChecked():
-            # Before the caller reads the text, so the sentence leaves with it.
-            # One undoable edit at the end of the report.
-            text = window.editor.toPlainText()
-            updated = add_communication_statement(
-                text, communication_statement(check.findings, comm)
-            )
-            if updated != text:
-                cursor = window.editor.textCursor()
-                cursor.beginEditBlock()
-                cursor.movePosition(cursor.MoveOperation.End)
-                cursor.movePosition(cursor.MoveOperation.Start, cursor.MoveMode.KeepAnchor)
-                cursor.insertText(updated)
-                cursor.endEditBlock()
-    # Only what was still outstanding is audited: re-exporting a report whose
-    # findings were already communicated must not log a second phone call.
-    record_release(
-        outstanding, window._get_patient_info().get("id", ""), acknowledged, comm
-    )
-    if acknowledged:
-        window.findings.acknowledge(check)
-    window.finding_gutter.show_state()
-    return True
-
-
 def setup_level_timer(window: MainWindow) -> None:
     """Create the microphone level update timer."""
     window._level_timer = QTimer(window)
@@ -739,7 +668,9 @@ def update_level_display(window: MainWindow) -> None:
     if clipping:
         set_level_state(window._level_bar, "clipping")
         window._show_status("Microphone clipping: reduce input gain", 1500, state="warn")
-    elif level < 0.03:
+    elif getattr(window.recorder, "is_quiet", False):
         set_level_state(window._level_bar, "low")
+        window._show_status("Microphone is very quiet: check it is the right one, and its level",
+                            1500, state="warn")
     else:
         set_level_state(window._level_bar, "healthy")

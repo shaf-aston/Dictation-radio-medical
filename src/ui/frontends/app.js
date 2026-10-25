@@ -2,6 +2,17 @@ const THEME_STORAGE_KEY = window.__THEME_STORAGE_KEY__;
 const BOOTSTRAP = window.__BOOTSTRAP__;
 const PATIENT_STORAGE_KEY = "radio-dictate-web-patient";
 let isRecording = false;
+// A dictation owns the report from Record until its text is handed back:
+// idle → starting → recording → finishing → idle. Only idle may start one, and
+// nothing else may write the report, or let it leave, until it is idle again.
+// Record pressed while the last one was finishing threw its hand-back away
+// (usually the impression), and any other write was overwritten by the next
+// live update.
+let sessionPhase = 'idle';
+// Which report the server's findings state belongs to (state.findings_for):
+// a new one on load, New report, Clear and a template, so an acknowledgement
+// given for one patient can never answer for the next.
+let reportId = newReportId();
 let undoStack = [''];
 let undoIndex = 0;
 let themeRequestInFlight = false;
@@ -35,13 +46,9 @@ const exportWordBtn = document.getElementById('exportWordBtn');
 const templateSelect = document.getElementById('templateSelect');
 const loadTemplateBtn = document.getElementById('loadTemplateBtn');
 const loadTemplateText = document.getElementById('loadTemplateText');
-const patientName = document.getElementById('patientName');
-const patientId = document.getElementById('patientId');
-const patientDob = document.getElementById('patientDob');
-const patientStudyDate = document.getElementById('patientStudyDate');
-const patientReferrer = document.getElementById('patientReferrer');
-const patientAccession = document.getElementById('patientAccession');
-const patientSex = document.getElementById('patientSex');
+// One input per field of core/patient_schema.py, each naming its key, so a new
+// field is markup only (a test checks the keys match the schema).
+const patientInputs = [...document.querySelectorAll('[data-patient]')];
 const modelSelect = document.getElementById('modelSelect');
 const parakeetSelect = document.getElementById('parakeetSelect');
 const languageInput = document.getElementById('languageInput');
@@ -188,26 +195,12 @@ function savePatientDraft() {
 }
 
 function collectPatientInfo() {
-    return {
-        name: patientName.value.trim(),
-        id: patientId.value.trim(),
-        dob: patientDob.value.trim(),
-        study_date: patientStudyDate.value.trim(),
-        referring: patientReferrer.value.trim(),
-        accession: patientAccession.value.trim(),
-        sex: patientSex.value,
-    };
+    return Object.fromEntries(patientInputs.map((el) => [el.dataset.patient, el.value.trim()]));
 }
 
 function applyPatientInfo(info) {
     const data = Object.assign({}, BOOTSTRAP.patient_defaults || {}, info || {});
-    patientName.value = data.name || '';
-    patientId.value = data.id || '';
-    patientDob.value = data.dob || '';
-    patientStudyDate.value = data.study_date || '';
-    patientReferrer.value = data.referring || '';
-    patientAccession.value = data.accession || '';
-    patientSex.value = data.sex || '';
+    patientInputs.forEach((el) => { el.value = data[el.dataset.patient] || ''; });
 }
 
 function populateModelOptions() {
@@ -349,17 +342,52 @@ function announceReportChanged() {
     scheduleFindings();
 }
 
-function setEditorValue(value, { moveCaretToEnd = true } = {}) {
-    editor.value = value;
-    if (moveCaretToEnd && typeof editor.setSelectionRange === 'function') {
-        const end = editor.value.length;
-        editor.setSelectionRange(end, end);
-    }
+function newReportId() {
+    return window.crypto && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function sessionOpen() {
+    return sessionPhase !== 'idle';
+}
+
+function setSessionPhase(phase) {
+    sessionPhase = phase;
+    editor.readOnly = phase !== 'idle';
+    // The button is Record when idle and Stop while recording; in between it
+    // is neither.
+    dictateBtn.disabled = phase === 'starting' || phase === 'finishing';
+    syncReportButtons();
+    syncTemplateButton();
+}
+
+function refuseWhileDictating() {
+    if (!sessionOpen()) return false;
+    showStatus('Finish dictating first', 'is-busy', 2000);
+    return true;
+}
+
+// The one way a whole new report replaces the editor: New report, Clear and a
+// template. Never while a dictation owns the editor; asks first when *ask* is
+// given; stays one undo step away; and starts a new report, so the findings
+// answered for the old one stay with it.
+function replaceReport(text, { ask = '', caret = 'end' } = {}) {
+    if (refuseWhileDictating()) return false;
+    if (ask && !confirm(ask)) return false;
+    flushLearning();
+    forgetReport(reportId);
+    reportId = newReportId();
+    editor.value = text;
+    const pos = caret === 'start' ? 0 : text.length;
+    editor.setSelectionRange(pos, pos);
     pushUndoState();
     announceReportChanged();
+    return true;
 }
 
 function insertTextAtCursor(text) {
+    if (refuseWhileDictating()) return;
     const current = editor.value;
     const start = typeof editor.selectionStart === 'number' ? editor.selectionStart : current.length;
     const end = typeof editor.selectionEnd === 'number' ? editor.selectionEnd : current.length;
@@ -422,14 +450,17 @@ function applyBootstrapState() {
 }
 
 function syncReportButtons() {
-    exportWordBtn.disabled = !BOOTSTRAP.docx_available || reportRequestInFlight;
+    // A half-dictated report must not leave the app, nor be replaced under the
+    // dictation writing it.
+    const busy = reportRequestInFlight || sessionOpen();
+    exportWordBtn.disabled = !BOOTSTRAP.docx_available || busy;
     exportWordBtn.title = BOOTSTRAP.docx_available
         ? 'Export a Word document'
         : 'Install python-docx to enable Word export';
-    saveTxtBtn.disabled = reportRequestInFlight;
-    newReportBtn.disabled = reportRequestInFlight;
-    clearBtn.disabled = reportRequestInFlight;
-    copyBtn.disabled = reportRequestInFlight;
+    saveTxtBtn.disabled = busy;
+    newReportBtn.disabled = busy;
+    clearBtn.disabled = busy;
+    copyBtn.disabled = busy;
 }
 
 function schedulePreferenceSave() {
@@ -521,9 +552,10 @@ async function reloadMacros() {
         if (!response.ok) {
             throw new Error(result.detail || 'Macro reload failed');
         }
+        // Same shape as the preferences answer: {macros: {regions, selected_region}}.
         BOOTSTRAP.macros = result.macros || BOOTSTRAP.macros;
         populateMacroRegions();
-        macroRegionSelect.value = result.selected_region || macroRegionSelect.value;
+        macroRegionSelect.value = BOOTSTRAP.macros.selected_region || macroRegionSelect.value;
         renderMacros(currentMacroRegion());
         showStatus('Phrases reloaded', 'is-ok', 1500);
     } catch (err) {
@@ -568,6 +600,7 @@ function postReport(url, answers) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             text: editor.value,
+            report_id: reportId,
             patient: collectPatientInfo(),
             acknowledged: answers.acknowledged,
             proceed_with_warnings: answers.proceed_with_warnings,
@@ -592,22 +625,11 @@ async function readReleaseGate(response) {
     }
 }
 
-// Cancellable: No means the report does not leave. What is listed comes from
-// the server, so the browser holds no copy of the rules (report_release.py).
+// Cancellable: No means the report does not leave. The question, wording
+// included, comes from the server (report_release.ReportWarnings.message), so
+// the browser holds no copy of the rules or of how they are put.
 function confirmReportChecks(gate) {
-    const short = (line) => (line.length > 90 ? line.slice(0, 89) + '…' : line);
-    const issues = gate.issues || [];
-    const fields = gate.fields || [];
-    const parts = [];
-    if (issues.length) {
-        parts.push('Worth a second look:\n' + issues.slice(0, 8).map((i) => `  • ${short(i)}`).join('\n'));
-    }
-    if (fields.length) {
-        parts.push(`${fields.length} unfilled template field(s):\n`
-            + fields.slice(0, 10).map((f) => `  • ${short(f)}`).join('\n')
-            + (fields.length > 10 ? '\n  …' : ''));
-    }
-    return window.confirm(parts.join('\n\n') + '\n\nRelease the report anyway?');
+    return window.confirm(gate.message);
 }
 
 // Never cancellable: the report is not withheld, only the audit entry differs.
@@ -632,8 +654,7 @@ function localMinute(date) {
 }
 
 function askCommunication(gate) {
-    document.getElementById('commTitle').textContent =
-        gate.worst_level === 1 ? 'Life-threatening finding' : 'Urgent finding';
+    document.getElementById('commTitle').textContent = gate.title;
     document.getElementById('commSummary').textContent = gate.summary
         + '\n\nConfirm it was communicated to the referring clinician.';
     document.getElementById('commAt').value = localMinute(new Date());
@@ -660,7 +681,7 @@ function askCommunication(gate) {
                     const response = await fetch('/api/report/communication', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ text: editor.value, communication }),
+                        body: JSON.stringify({ text: editor.value, report_id: reportId, communication }),
                     });
                     if (!response.ok) throw new Error(`HTTP ${response.status}`);
                     const { text } = await response.json();
@@ -755,7 +776,7 @@ async function downloadReport(kind) {
 }
 
 function syncTemplateButton() {
-    loadTemplateBtn.disabled = templateLoadInFlight || !templateSelect.value;
+    loadTemplateBtn.disabled = templateLoadInFlight || !templateSelect.value || sessionOpen();
     loadTemplateBtn.title = templateSelect.value
         ? `Load ${templateSelect.value}`
         : 'Select a template first';
@@ -769,7 +790,12 @@ function setTemplateLoadingState(isLoading) {
 
 async function loadSelectedTemplate() {
     const name = templateSelect.value;
-    if (!name || templateLoadInFlight) {
+    if (!name || templateLoadInFlight || refuseWhileDictating()) {
+        return;
+    }
+    // Asked before the fetch, so a slow server cannot put a question in front
+    // of a report that has meanwhile changed.
+    if (editor.value.trim() && !confirm(`Replace the current report with ${name}? Undo brings it back.`)) {
         return;
     }
 
@@ -785,19 +811,13 @@ async function loadSelectedTemplate() {
             throw new Error(result.detail || 'Template load failed');
         }
 
-        editor.value = result.content || '';
-        announceReportChanged();
         // The top of the template, not the bottom. A freshly loaded report is
         // something you read down from the first heading; dropping the caret at
         // the end scrolled the first line half out of view and left the
         // radiologist looking at "IMPRESSION: 1." before they had read anything.
-        if (typeof editor.setSelectionRange === 'function') {
-            editor.setSelectionRange(0, 0);
-        }
+        if (!replaceReport(result.content || '', { caret: 'start' })) return;
         editor.scrollTop = 0;
         editor.focus();
-        undoStack = [editor.value];
-        undoIndex = 0;
         showStatus('Template loaded', 'is-ok', 2000);
     } catch (err) {
         showError('Template load failed: ' + err.message);
@@ -809,7 +829,7 @@ async function loadSelectedTemplate() {
 // Track text changes for undo and persist patient fields locally.
 editor.addEventListener('input', pushUndoState);
 editor.addEventListener('input', updateWordCount);
-[patientName, patientId, patientDob, patientStudyDate, patientReferrer, patientAccession, patientSex].forEach((field) => {
+patientInputs.forEach((field) => {
     field.addEventListener('input', () => {
         savePatientDraft();
     });
@@ -817,29 +837,16 @@ editor.addEventListener('input', updateWordCount);
 
 newReportBtn.addEventListener('click', () => {
     const hasContent = editor.value.trim() !== '' || Object.values(collectPatientInfo()).some(Boolean);
-    if (hasContent && !confirm('Clear the current report and patient information?')) {
-        return;
-    }
-    flushLearning();
-    editor.value = '';
-    undoStack = [''];
-    undoIndex = 0;
+    const ask = hasContent ? 'Clear the current report and patient information?' : '';
+    if (!replaceReport('', { ask })) return;
     editor.focus();
     resetPatientInfo();
     hideStatus();
-    announceReportChanged();
-    resetFindings();
 });
 
-// Clear with confirmation
 clearBtn.addEventListener('click', () => {
     if (editor.value.trim() === '') return;
-    if (confirm('Are you sure you want to clear all text? This cannot be undone.')) {
-        flushLearning();
-        setEditorValue('');
-        hideStatus();
-        resetFindings();
-    }
+    if (replaceReport('', { ask: 'Clear all text? Undo brings it back.' })) hideStatus();
 });
 
 saveTxtBtn.addEventListener('click', () => { flushLearning(); downloadReport('txt'); });
@@ -951,7 +958,7 @@ function selectField(forward) {
 }
 
 editor.addEventListener('keydown', (e) => {
-    if (isRecording) return;
+    if (sessionOpen() || dialogOpen()) return;
     const forward = keyMatches(e, 'next_field');
     if ((forward || keyMatches(e, 'previous_field')) && selectField(forward)) {
         e.preventDefault();
@@ -977,29 +984,40 @@ editor.addEventListener('keydown', (e) => {
     hint.replaceChildren(...parts);
 })();
 
-// Keyboard shortcuts
+function dialogOpen() {
+    return Boolean(document.querySelector('.scrim:not([hidden])'));
+}
+
+// Every app shortcut, in one place, under three rules. Nothing fires behind an
+// open dialog (F2 used to start recording under the critical-findings
+// question). A key held down repeats, and a toggle must not: a held F2 started
+// and stopped a recording within 120 ms. And the report's own editing keys act
+// only in the report: Ctrl+Z in the patient's name field undid the report.
+// The buttons it presses refuse for themselves when disabled.
 document.addEventListener('keydown', (e) => {
-    if (keyMatches(e, 'record_toggle')) {
+    if (dialogOpen()) return;
+    const inReport = e.target === editor;
+    const toggle = keyMatches(e, 'record_toggle')
+        || (e.code === 'Space' && e.target === document.body && !sessionOpen());
+    if (toggle) {
         e.preventDefault();
-        dictateBtn.click();
+        if (!e.repeat) dictateBtn.click();
         return;
     }
-    if (e.ctrlKey || e.metaKey) {
-        if (e.key === 'z' && !isRecording) { e.preventDefault(); undo(); }
-        if (e.key === 'y' && !isRecording) { e.preventDefault(); redo(); }
-        if (e.key === 'n') { e.preventDefault(); newReportBtn.click(); }
-        if (e.key === 's') { e.preventDefault(); saveTxtBtn.click(); }
-        if (e.shiftKey && e.key.toLowerCase() === 'w') { e.preventDefault(); exportWordBtn.click(); }
-        if (e.key === 't') { e.preventDefault(); loadTemplateBtn.click(); }
-        if (e.key === 'r') { e.preventDefault(); reloadMacrosBtn.click(); }
-    }
-    if (e.code === 'Space' && e.target === document.body && !isRecording) {
-        e.preventDefault();
-        dictateBtn.click();
-    }
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const key = e.key.toLowerCase();
+    const press = (button) => { e.preventDefault(); if (!e.repeat) button.click(); };
+    if (key === 'z' && inReport) { e.preventDefault(); undo(); }
+    else if (key === 'y' && inReport) { e.preventDefault(); redo(); }
+    else if (key === 'n') press(newReportBtn);
+    else if (key === 's') press(saveTxtBtn);
+    else if (key === 'w' && e.shiftKey) press(exportWordBtn);
+    else if (key === 't') press(loadTemplateBtn);
+    else if (key === 'r') press(reloadMacrosBtn);
 });
 
 function undo() {
+    if (sessionOpen()) return;
     if (undoIndex > 0) {
         undoIndex--;
         editor.value = undoStack[undoIndex];
@@ -1009,6 +1027,7 @@ function undo() {
 }
 
 function redo() {
+    if (sessionOpen()) return;
     if (undoIndex < undoStack.length - 1) {
         undoIndex++;
         editor.value = undoStack[undoIndex];
@@ -1171,9 +1190,10 @@ function peakLevel(frame) {
 // level themselves, and software gain raises the noise between words as much
 // as the speech. What cannot be fixed afterwards is clipping (lost waveform)
 // and a level so low it sits in the microphone's own hiss, so those are said.
-const CLIP_PEAK = 0.99;
-const QUIET_PEAK = 0.03;          // about -30 dBFS
-const QUIET_AFTER_SEC = 4;
+// The thresholds are the server's (dictation/mic.py), the desktop's too.
+const CLIP_PEAK = BOOTSTRAP.mic.clip_peak;
+const QUIET_PEAK = BOOTSTRAP.mic.quiet_peak;
+const QUIET_AFTER_SEC = BOOTSTRAP.mic.quiet_after_sec;
 const mic = { loudest: 0, samples: 0, clipped: 0, warned: false };
 
 function watchLevel(frame, peak) {
@@ -1556,7 +1576,7 @@ function openSocket() {
         } else if (msg.type === 'error') {
             devMark('browser', msg.message || 'dictation failed', {}, { level: 'error' });
             showError(msg.message || 'Dictation failed.');
-            finishSession(null);
+            teardownMic().then(() => finishSession(null));
         }
     };
 
@@ -1565,9 +1585,11 @@ function openSocket() {
     // and both firing on the same failure raced to set the status text.
     // Only this recording's socket may end it: the previous one closing when its
     // polish finishes used to switch off the microphone mid-dictation.
-    const current = () => isRecording && socket === liveSocket;
+    const current = () => sessionOpen() && socket === liveSocket;
     socket.onerror = () => { if (current()) showError('Lost the connection to the dictation service.'); };
-    socket.onclose = () => { if (current()) teardownMic(); };
+    // Closed before handing the report back: keep what arrived, and give the
+    // editor back rather than leaving it locked to a session that is gone.
+    socket.onclose = () => { if (current()) teardownMic().then(() => finishSession(null)); };
     return socket;
 }
 
@@ -1595,6 +1617,7 @@ async function connectDictationSocket(attemptsLeft = 2) {
 // each per partial, which would both blow the 50-entry history in seconds and
 // spend the whole machine re-scanning half-sentences.
 function finishSession(okMessage) {
+    setSessionPhase('idle');
     stopTimer();
     setRecordingUi(false);
     previewText = '';
@@ -1661,7 +1684,13 @@ async function teardownMic() {
 
 // -- start / stop / cancel --------------------------------------------------
 
+// A stream to record instead of the microphone, once: set by the developer
+// Test voice (speechtest.js), which the app runs without.
+let substituteMic = null;
+
 async function startRecording() {
+    if (sessionOpen()) return;
+    setSessionPhase('starting');
     devRecordingStarted();
     // Before this, the button, the timer and the status all stayed idle while
     // the microphone permission, the audio graph and the socket were awaited:
@@ -1677,6 +1706,7 @@ async function startRecording() {
     } catch (err) {
         console.error('Could not start live dictation:', err);
         await teardownMic();
+        setSessionPhase('idle');
         showError('Could not start dictation: ' + (err.message || 'unknown error'));
         return;
     }
@@ -1688,7 +1718,7 @@ async function startRecording() {
         // transcription: send unaltered audio), and gain control also drifts
         // the microphone level during a session. Echo cancellation has nothing
         // to cancel: this page plays no sound.
-        micStream = speechTestStream || await navigator.mediaDevices.getUserMedia({
+        micStream = substituteMic || await navigator.mediaDevices.getUserMedia({
             audio: {
                 channelCount: 1,
                 echoCancellation: false,
@@ -1696,12 +1726,13 @@ async function startRecording() {
                 autoGainControl: false,
             },
         });
-        speechTestStream = null;
+        substituteMic = null;
     } catch (err) {
         devMark('browser', 'microphone refused', {}, { level: 'error' });
         console.error('Microphone access denied:', err);
         showError('Microphone access denied. Allow microphone permissions in your browser settings, then try again.');
         await teardownMic();  // closes the audio graph built above
+        setSessionPhase('idle');
         tlStep('Microphone refused');
         sessionTimeline.hidden = true;
         return;
@@ -1752,6 +1783,7 @@ async function startRecording() {
     } catch (err) {
         console.error('Could not start live dictation:', err);
         await teardownMic();
+        setSessionPhase('idle');
         showError('Could not start dictation: ' + (err.message || 'unknown error'));
         return;
     }
@@ -1763,6 +1795,7 @@ async function startRecording() {
     // report its own, and text from the last one has already been read.
     uncertainWords = new Set();
     isRecording = true;
+    setSessionPhase('recording');
     setRecordingUi(true);
     startTimer();
     devMark('browser', 'recording started', {}, { ms: performance.now() - dev.recordStart });
@@ -1771,52 +1804,11 @@ async function startRecording() {
     showStatus('Listening', 'is-rec');
 }
 
-// ---------------------------------------------------------------------------
-// Test voice (developer tool, src/devtools/speech_test.py). The server speaks
-// the typed text; the WAV is played into the ordinary recording path as if it
-// were the microphone, and Stop is pressed when it ends. Delete this block,
-// the speechTestStream use in startRecording and the form in app.html to
-// remove the feature.
-// ---------------------------------------------------------------------------
-
-let speechTestStream = null;
-
-document.getElementById('speechTestForm').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const text = document.getElementById('speechTestText').value.trim();
-    const btn = document.getElementById('speechTestBtn');
-    if (!text || isRecording) return;
-    btn.disabled = true;
-    try {
-        const response = await fetch('/api/dev/speak', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
-        });
-        if (!response.ok) throw new Error((await response.json()).detail || response.statusText);
-        const audio = new Audio(URL.createObjectURL(await response.blob()));
-        // Play for an instant so the stream has a track, then rewind and wait
-        // until recording is live: otherwise the opening words are lost.
-        await audio.play();
-        audio.pause();
-        audio.currentTime = 0;
-        speechTestStream = audio.captureStream();
-        audio.addEventListener('ended', () => {
-            // A second of silence first, so the last words are not cut off.
-            setTimeout(() => { if (isRecording) stopRecording(); }, 1000);
-        }, { once: true });
-        devMark('browser', 'test voice playing', { sec: Math.round(audio.duration) });
-        await startRecording();
-        if (isRecording) await audio.play();
-    } catch (err) {
-        showError('Test voice failed: ' + err.message);
-    } finally {
-        btn.disabled = false;
-    }
-});
-
 async function stopRecording() {
-    if (!isRecording) return;
+    if (sessionPhase !== 'recording') return;
+    // Owned until the hand-back ('stopped') arrives: it carries the last
+    // section, which a recording started meanwhile would have thrown away.
+    setSessionPhase('finishing');
     stopPressedAt = performance.now();
     devMark('browser', 'stop pressed', { updates: dev.updates });
     await teardownMic();
@@ -1846,6 +1838,7 @@ async function cancelRecording() {
     livePreview.hidden = true;
     stopTimer();
     setRecordingUi(false);
+    setSessionPhase('idle');
     // Discard means discard: the session it described is gone, so its timeline
     // goes with it rather than sitting under a report it no longer describes.
     sessionTimeline.hidden = true;
@@ -1854,7 +1847,8 @@ async function cancelRecording() {
 }
 
 dictateBtn.addEventListener('click', () => {
-    if (isRecording) stopRecording(); else startRecording();
+    if (sessionPhase === 'recording') stopRecording();
+    else if (sessionPhase === 'idle') startRecording();
 });
 cancelBtn.addEventListener('click', cancelRecording);
 
@@ -2099,18 +2093,26 @@ function placeTermPop() {
     termPop.style.top = `${Math.round(top)}px`;
 }
 
+// Is the word a suggestion was looked up for still where it was? Script writes
+// (the polish, undo, the communication sentence) move text without an input
+// event, and replacing by stale offsets rewrites the wrong characters.
+function stillThere(range) {
+    return Boolean(range) && !sessionOpen()
+        && editor.value.slice(range.start, range.end) === range.word;
+}
+
 function applyTermSuggestion(term) {
     const range = termPopSelection;
     hideTermPop();
-    if (!range) return;
-    learnChoice(editor.value.slice(range.start, range.end), term);
+    if (!stillThere(range)) return;
+    learnChoice(range.word, term);
     editor.value = editor.value.slice(0, range.start) + term + editor.value.slice(range.end);
     const caret = range.start + term.length;
     editor.setSelectionRange(caret, caret);
     editor.focus();
     pushUndoState();
     noteLookupUsed();
-    scheduleMarks();
+    announceReportChanged();
 }
 
 // ---------------------------------------------------------------------------
@@ -2137,8 +2139,8 @@ let marksRequest = 0;
 let uncertainWords = new Set();
 // The spans painted last, so a click on an underlined word can open its fixes.
 let markedSpans = [];
-let lookupUses = BOOTSTRAP.term_lookup_uses || 0;
-const lookupHintUses = BOOTSTRAP.term_lookup_hint_uses || 3;
+// Whether the marks still explain themselves (term_lookup.lookup_hint_active).
+let lookupHintActive = Boolean(BOOTSTRAP.lookup_hint_active);
 
 function clearMarks() {
     if (marksTimer) {
@@ -2204,7 +2206,7 @@ function paintMarks(spans) {
     const parts = [];
     if (spans.length) {
         parts.push(`${spans.length} ${spans.length === 1 ? 'word' : 'words'} to check`
-            + (lookupUses < lookupHintUses ? ': highlight one to see alternatives' : ''));
+            + (lookupHintActive ? ': highlight one to see alternatives' : ''));
     }
     if (unsure) {
         // A whole phrase, not a tail. When there are no suspect terms this is
@@ -2224,7 +2226,7 @@ function syncMarksScroll() {
 async function rescanMarks() {
     // Recording rewrites the report every second; marks under moving text are
     // noise, and the spans would be stale before they were painted.
-    if (isRecording) {
+    if (sessionOpen()) {
         clearMarks();
         return;
     }
@@ -2255,10 +2257,10 @@ function scheduleMarks() {
 }
 
 async function noteLookupUsed() {
-    if (lookupUses >= lookupHintUses) return;
-    lookupUses += 1;
+    if (!lookupHintActive) return;
     try {
-        await fetch('/api/terms/used', { method: 'POST' });
+        const response = await fetch('/api/terms/used', { method: 'POST' });
+        if (response.ok) lookupHintActive = Boolean((await response.json()).hint_active);
     } catch (err) {
         console.warn('Could not record lookup use:', err);
     }
@@ -2315,26 +2317,15 @@ function paintFindings(data) {
     });
 
     findingsPill.dataset.findings = data.state || 'clear';
+    // The words are the server's (OutstandingFindings.label), the same the
+    // desktop pill shows.
+    findingsPill.textContent = data.label || '';
     const count = data.count || 0;
-    if (!count) {
-        // "No findings", never a red zero: a warning shown on every clear
-        // report is one that stops being read on the report that has one.
-        findingsPill.textContent = 'No findings';
-        // A phone bar has no room for the sentence, so the pill carries a
-        // count the stylesheet can show instead. The full wording stays as the
-        // tooltip -- a number nobody can expand is not a warning.
-        findingsPill.dataset.short = '0';
-        findingsPill.title = 'No critical or urgent findings in this report';
-        return;
-    }
     const outstanding = findings.filter((f) => f.outstanding).length;
-    const shown = outstanding || count;
-    const noun = shown === 1 ? 'finding' : 'findings';
-    findingsPill.textContent = outstanding
-        ? `${shown} ${noun} to communicate`
-        : `${shown} ${noun} acknowledged`;
-    findingsPill.dataset.short = String(shown);
-    findingsPill.title = findingsPill.textContent;
+    // A phone bar has no room for the sentence, so the pill carries a count the
+    // stylesheet can show instead; the full wording stays as the tooltip.
+    findingsPill.dataset.short = String(outstanding || count);
+    findingsPill.title = count ? findingsPill.textContent : 'No critical or urgent findings in this report';
 }
 
 async function rescanFindings() {
@@ -2342,14 +2333,14 @@ async function rescanFindings() {
     // stale before they were drawn. Stand down: and leave the last answer on
     // screen rather than replacing it with "No findings", which would claim a
     // report is clear at the exact moment nothing is re-checking it.
-    if (isRecording) return;
+    if (sessionOpen()) return;
     findingsRequest += 1;
     const request = findingsRequest;
     try {
         const response = await fetch('/api/report/findings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: editor.value }),
+            body: JSON.stringify({ text: editor.value, report_id: reportId }),
         });
         if (request !== findingsRequest) return;   // a newer edit won
         if (!response.ok) return;
@@ -2366,12 +2357,17 @@ function scheduleFindings() {
     findingsTimer = setTimeout(rescanFindings, FINDINGS_DELAY_MS);
 }
 
-async function resetFindings() {
-    // A new report: the previous patient's acknowledgements must not answer for
-    // this one's identical finding.
+// The report was replaced: the server can forget its findings and answers.
+// The page has already moved to a new report id, so this is housekeeping, not
+// what keeps one patient's answers from the next.
+async function forgetReport(id) {
     findingsRequest += 1;
     try {
-        const response = await fetch('/api/report/findings/reset', { method: 'POST' });
+        const response = await fetch('/api/report/findings/reset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ report_id: id }),
+        });
         if (response.ok) paintFindings(await response.json());
     } catch (err) {
         console.warn('Could not reset findings:', err);
@@ -2423,7 +2419,7 @@ function showTermPop(result, range) {
 async function lookupSelectedTerm() {
     // Recording rewrites the report every second; a panel pinned to text that
     // is moving underneath it is noise. Lookups are for reviewing.
-    if (isRecording || document.activeElement !== editor) {
+    if (sessionOpen() || document.activeElement !== editor) {
         hideTermPop();
         return;
     }
@@ -2436,8 +2432,8 @@ async function lookupSelectedTerm() {
     let end = editor.selectionEnd;
     while (start < end && /\s/.test(raw[start])) start += 1;
     while (end > start && /\s/.test(raw[end - 1])) end -= 1;
-    const range = { start, end, marked: markedSpans.some((m) => m.start === start && m.end === end) };
     const selected = raw.slice(start, end);
+    const range = { start, end, word: selected, marked: markedSpans.some((m) => m.start === start && m.end === end) };
     if (!selected) {
         hideTermPop();
         return;
@@ -2469,7 +2465,7 @@ function initTermPop() {
     // One click on an underlined word selects it, which opens its fixes. The
     // marks sit behind the textarea, so the click is matched by caret offset.
     editor.addEventListener('click', () => {
-        if (isRecording || editor.selectionStart !== editor.selectionEnd) return;
+        if (sessionOpen() || editor.selectionStart !== editor.selectionEnd) return;
         const at = editor.selectionStart;
         const hit = markedSpans.find((m) => at >= m.start && at <= m.end);
         if (hit) editor.setSelectionRange(hit.start, hit.end);
@@ -2477,8 +2473,8 @@ function initTermPop() {
     document.getElementById('tpKeep').addEventListener('click', () => {
         const range = termPopSelection;
         hideTermPop();
-        if (!range) return;
-        const word = editor.value.slice(range.start, range.end);
+        if (!stillThere(range)) return;
+        const word = range.word;
         uncertainWords.delete(word.toLowerCase());
         learnChoice(word, null).then(scheduleMarks);
         editor.setSelectionRange(range.end, range.end);
@@ -2555,7 +2551,7 @@ initFindingMarks();
 const DEV_STORAGE_KEY = 'radio-dictate-web-dev';
 const DEV_POLL_MS = 700;          // how often the server diary is drained
 const DEV_PERF_MS = 2500;         // the rolling averages move slowly
-const DEV_MAX_LINES = 800;        // scroll-back, matched to the server's ring
+const DEV_MAX_LINES = BOOTSTRAP.event_log_max || 1000;  // scroll-back: the server's ring
 const DEV_SLOW_MS = 1500;         // a decode over this is worth the eye landing on
 const DEV_LONG_CHARS = 220;       // past this a line is folded until clicked
 

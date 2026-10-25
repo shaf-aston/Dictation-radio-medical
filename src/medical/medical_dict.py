@@ -31,7 +31,7 @@ import logging
 import pickle
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Set
+from typing import TYPE_CHECKING, Any, List, Optional, Set, Tuple, Union
 
 if TYPE_CHECKING:
     from symspellpy import SymSpell
@@ -55,10 +55,10 @@ logger = logging.getLogger(__name__)
 # at every cold start (its C-extension pulls in a large module tree) for a path
 # that never executes in the fully-installed config: so it is loaded lazily on
 # first use. `_rapidfuzz()` caches the result; None means "not installed".
-_RAPIDFUZZ: "Optional[object]" = None  # (process, fuzz) once loaded; False if absent
+_RAPIDFUZZ: "Optional[Union[Tuple[Any, Any], bool]]" = None  # (process, fuzz) once loaded; False if absent
 
 
-def _rapidfuzz():  # type: ignore[no-untyped-def]
+def _rapidfuzz() -> Optional[Tuple[Any, Any]]:
     """Lazy-load rapidfuzz. Returns (process, fuzz) or None if not installed."""
     global _RAPIDFUZZ
     if _RAPIDFUZZ is None:
@@ -67,7 +67,7 @@ def _rapidfuzz():  # type: ignore[no-untyped-def]
             _RAPIDFUZZ = (process, fuzz)
         except ImportError:
             _RAPIDFUZZ = False
-    return _RAPIDFUZZ or None
+    return _RAPIDFUZZ if isinstance(_RAPIDFUZZ, tuple) else None
 
 # Lazy-loaded singleton state
 _TERMS: Optional[Set[str]] = None                # Membership: generic ∪ lexicon
@@ -216,13 +216,28 @@ def is_english_word(word: str) -> Optional[bool]:
     return bool(any(_ENGLISH.known([v]) for v in us_variants(word)))
 
 
-def get_correction_targets() -> List[str]:
-    """Curated radiology lexicon used as the fuzzy corrector's snap targets.
+def is_known_word(word: str) -> bool:
+    """True when *word* is a real word: standard English or a known medical term.
 
-    Kept separate from :func:`get_medical_terms` on purpose: a typo is only ever
-    snapped to a genuine radiology term from this clean list, never to the
-    generic wordlist's chemistry/drug/obscure-procedure entries that previously
-    caused over-correction. Loads on first use; empty if the lexicon is absent.
+    The one answer to "may this word be rewritten?". A word that is real must
+    not be rewritten by a rule that cannot see its context (a learned
+    correction, a mark), because swapping one real word for another is a
+    change of meaning, not a fix. Without the English checker the answer is
+    True: the safe choice is to leave a word alone.
+    """
+    lowered = word.lower()
+    if lowered in get_medical_terms():
+        return True
+    english = is_english_word(lowered)
+    return True if english is None else english
+
+
+def get_correction_targets() -> List[str]:
+    """The curated radiology lexicon (~870 terms).
+
+    Boosted in the SymSpell index so a tie prefers a radiology spelling; the
+    four-letter gate's only targets; Parakeet's hotwords; and the eval's
+    medical-term list. Loads on first use; empty if the lexicon is absent.
     """
     global _CORRECTION_TARGETS
     if _CORRECTION_TARGETS is not None:

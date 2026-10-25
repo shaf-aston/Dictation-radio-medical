@@ -41,13 +41,12 @@ Cleanup levels
 ``cleanup_level`` lets the dictating radiologist control how much the pipeline
 rewrites their words:
 
-* ``"soft"``: only structural cleanup (stages 0-4, 9): hallucination
-  removal, spoken voice/punctuation commands, whitespace, measurement
-  formatting, and capitalisation. Skips terminology, accent, fuzzy-dictionary,
-  and learned-correction stages (5-8): the stages that rewrite a word based
-  on similarity to a vocabulary, so the dictated words pass through almost
-  verbatim.
-* ``"medium"`` (default): the full ten-stage pipeline above, unchanged.
+* ``"soft"``: skips the stages in ``_SOFT_SKIP_STAGES`` (terminology, accent,
+  split-compound rejoin, fuzzy dictionary, context fix, learned corrections):
+  the ones that rewrite a word by its similarity to a vocabulary, so the
+  dictated words pass through almost verbatim. UK spelling and the voice and
+  phrase commands still run.
+* ``"medium"`` (default): the full pipeline above, unchanged.
 * ``"hard"``: identical to ``"medium"`` here. The extra AI polish it names
   is not a pipeline stage: the desktop offers it once on the finished report,
   through a review dialog (``ui/dialogs.offer_ai_cleanup``), so it is never
@@ -81,7 +80,7 @@ from src.dictation.postprocess.context_correct import (
     apply_context_correction,
     rejoin_split_compounds,
 )
-from src.features.accent_corrections import apply_accent_corrections
+from src.dictation.postprocess.accent import apply_accent_corrections
 from src.features.adaptive_learning import apply_learned_corrections
 from src.dictation.postprocess.analysis import PipelineAnalyzer
 from src.core import perf
@@ -182,7 +181,7 @@ def postprocess_transcript(
     confidence_ceiling: Optional[float] = None,
     vetoed_out: Optional[List[str]] = None,
 ) -> str:
-    """Run the pipeline on a raw Whisper transcript.
+    """Run the pipeline on a raw recogniser transcript.
 
     Args:
         text:   Raw transcript from Whisper (single chunk or full document).

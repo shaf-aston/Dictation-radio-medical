@@ -44,3 +44,14 @@ def test_recent_reports_survive_another_writer(settings_path):
     a.add_recent_report("/r/one.txt")
     b.set("theme", "light")
     assert json.loads(settings_path.read_text())["recent_reports"] == ["/r/one.txt"]
+
+
+def test_a_file_that_does_not_parse_is_kept_not_overwritten(tmp_path):
+    from src.core.json_store import read_json, write_json
+    path = tmp_path / "dictation_settings.json"
+    broken = '{"radiologist_name": "Dr Shah", "web_port": 8005,}'  # one trailing comma
+    path.write_text(broken)
+    assert read_json(path, {}) == {}
+    write_json(path, {"theme": "light"})
+    (kept,) = tmp_path.glob("dictation_settings.json.corrupt-*")
+    assert kept.read_text() == broken

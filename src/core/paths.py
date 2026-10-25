@@ -2,7 +2,8 @@
 File and path management - centralized control of all project files.
 
 Directory structure:
-- data/temp/          Temporary audio files (cleaned on startup + after use)
+- data/temp/<pid>-*/  Temporary audio, one folder per running app (a folder
+                      is removed once its app has exited)
 - data/autosave/      Auto-saved reports (retention: 30 days)
 - data/cache/         ALL rebuildable caches (SymSpell index, Whisper model
                       downloads, imaging embeddings). Safe to delete whole:
@@ -15,8 +16,14 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
+import shutil
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional, Tuple
+
+from src.core.file_lock import FileLock
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +46,36 @@ def _data_dir() -> Path:
     path.mkdir(exist_ok=True)
     return path
 
-def temp_dir() -> Path:
-    """Temp audio files (cleared on startup, after use)"""
+_OWNER = ".owner"
+_temp_session: Optional[Tuple[Path, FileLock]] = None
+
+
+def _temp_root() -> Path:
     path = _data_dir() / "temp"
     path.mkdir(exist_ok=True)
     return path
+
+
+def temp_dir() -> Path:
+    """This process's own folder for temp audio, under ``data/temp/``.
+
+    The desktop app and the web app share the data folder, and each clears
+    old temp audio when it starts. With one shared folder, starting the web
+    app deleted the WAV the desktop was recording into. Each process now holds
+    a lock on its own folder for as long as it runs; only a folder whose lock
+    is free (its process has exited) is ever cleared.
+    """
+    global _temp_session
+    root = _temp_root()
+    if _temp_session is None or _temp_session[0].parent != root:
+        # Created and locked as one step, so no cleanup sees it unowned.
+        with FileLock(root / ".lock"):
+            folder = root / f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+            folder.mkdir()
+            owner = FileLock(folder / _OWNER)
+            owner.acquire()
+        _temp_session = (folder, owner)
+    return _temp_session[0]
 
 def autosave_dir() -> Path:
     """Auto-saved dictation reports"""
@@ -98,7 +130,6 @@ def imaging_embeddings_dir() -> Path:
 
 def clear_cache() -> None:
     """Delete every cached artefact under data/cache/ (all rebuildable)."""
-    import shutil
     try:
         shutil.rmtree(cache_dir(), ignore_errors=True)
         logger.info("Cleared cache directory")
@@ -362,6 +393,9 @@ def settings_file() -> Path:
 # Report file naming
 # ---------------------------------------------------------------------------
 
+_MAX_ID_CHARS = 64
+
+
 def report_filename(
     patient_info: dict, ext: str, prefix: str = "", fallback_id: str = "report"
 ) -> str:
@@ -370,12 +404,15 @@ def report_filename(
     The desktop save dialog, the web download header, and autosave each built
     this name themselves and drifted apart. One builder, one naming scheme.
 
-    The patient ID is sanitised: it lands in a filename (and, on the web, in a
-    ``Content-Disposition`` header), so path separators, quotes, and control
-    characters must not survive it.
+    The patient ID lands in a filename and, on the web, in a
+    ``Content-Disposition`` header, which is Latin-1. So only ASCII letters,
+    digits, ``-`` and ``_`` survive, and at most 64 of them: "李12345" made the
+    web export fail with a 500, and a 250-character ID made autosave fail
+    silently (the name was too long for the file system).
     """
     raw = str(patient_info.get("id") or "").strip()
-    pid = "".join(ch if (ch.isalnum() or ch in "-_") else "_" for ch in raw).strip("_")
+    pid = "".join(ch if (ch.isascii() and (ch.isalnum() or ch in "-_")) else "_" for ch in raw)
+    pid = "_".join(part for part in pid.split("_") if part)[:_MAX_ID_CHARS].strip("_")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"{prefix}{pid or fallback_id}_{timestamp}{ext}"
 
@@ -391,15 +428,25 @@ def create_temp_wav() -> str:
     return str(path)
 
 def cleanup_temp_files() -> None:
-    """Delete all files in temp/ directory."""
+    """Delete the temp folders of apps that have exited; never a running one's."""
     try:
+        root = _temp_root()
         count = 0
-        for file in temp_dir().iterdir():
-            if file.is_file():
-                file.unlink()
-                count += 1
+        with FileLock(root / ".lock"):
+            for entry in root.iterdir():
+                if entry.name == ".lock":
+                    continue
+                if not entry.is_dir():  # loose files: the layout before per-app folders
+                    entry.unlink()
+                    count += 1
+                    continue
+                owner = FileLock(entry / _OWNER)
+                if owner.acquire(timeout=0):  # free: its app has exited
+                    owner.release()
+                    shutil.rmtree(entry, ignore_errors=True)
+                    count += 1
         if count > 0:
-            logger.info("Cleaned up %d temp audio file(s)", count)
+            logger.info("Cleaned up %d temp audio item(s)", count)
     except Exception as exc:
         logger.warning("Temp cleanup failed: %s", exc)
 
@@ -446,7 +493,6 @@ def _remove_legacy_cache_locations() -> None:
     embeddings in data/imaging/embeddings/. Both now live under
     :func:`cache_dir`; the old copies are stale derived data, safe to drop.
     """
-    import shutil
     try:
         count = 0
         for legacy in (
@@ -463,7 +509,6 @@ def _remove_legacy_cache_locations() -> None:
 
 def _remove_legacy_temp_files() -> None:
     """Remove leftover temp files and directories (tmpclaude-*, etc)."""
-    import shutil
     try:
         root = _project_root()
         patterns = ["tmpclaude-*", "tmp*-cwd"]

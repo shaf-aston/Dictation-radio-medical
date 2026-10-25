@@ -42,35 +42,35 @@ def build_live_session(settings) -> LiveSession:
 
 
 def record_web_run(
-    settings, prefs: dict, text: str, *, elapsed: float, audio_sec: float,
-    finalise_sec: float = 0.0, chunk_count: int = 0,
+    settings, prefs: dict, text: str, session: LiveSession, *,
+    elapsed: float, finalise_sec: float = 0.0,
 ) -> None:
-    """Write one run record for a browser dictation (see features/run_log).
+    """Write one run record for a browser dictation, as the desktop does.
 
     *finalise_sec* is how long after the last word the final text arrived:
-    for streaming, that number is the whole point.
+    for streaming, that number is the whole point. The word count, stage
+    timings, decode ratio and stored text are filled in by run_log.finish,
+    the same as for the desktop, so the two rows on /developer mean the same.
     """
+    audio_sec = session.audio_sec
     record = run_log.start(
-        "web", model=str(prefs.get("model_size", "")), engine=str(settings.get("asr_engine", "")),
+        "web", model=str(prefs.get("model_size", "")), engine=str(settings.get("asr_engine")),
     )
     record.audio_sec = audio_sec
     record.duration_sec = round(elapsed, 3)
     record.finalise_sec = round(finalise_sec, 3)
-    record.chunk_count = chunk_count
-    record.word_count = len(text.split())
-    if audio_sec > 0:
-        record.decode_ratio = round(elapsed / audio_sec, 3)
-    record.text = text if bool(settings.get("run_log_store_text", True)) else ""
-    run_log.write(record, settings)
+    record.chunk_count = session.chunks_decoded
+    session.record_decode_ratio()
+    run_log.finish(record, text, settings)
     # The one line that summarises the whole recording, so the console ends
     # with the verdict rather than leaving it to be added up by eye.
     event_log.emit(
         "run", "recording finished",
         audio_sec=round(audio_sec, 1), wall_sec=round(elapsed, 1),
         polish_sec=round(finalise_sec, 1), words=record.word_count,
-        chunks=chunk_count,
+        chunks=record.chunk_count,
         words_per_min=round(record.word_count / (audio_sec / 60), 1) if audio_sec > 1 else None,
-        wall_per_audio_sec=record.decode_ratio,
+        wall_per_audio_sec=round(elapsed / audio_sec, 3) if audio_sec > 0 else None,
     )
 
 
@@ -242,11 +242,9 @@ async def dictate_socket(ws: WebSocket) -> None:
                     "uncertain": list(session.uncertain_words),
                 })
                 record_web_run(
-                    settings, prefs, text_out,
+                    settings, prefs, text_out, session,
                     elapsed=time.time() - started,
-                    audio_sec=session.audio_sec,
                     finalise_sec=time.time() - audio_ended,
-                    chunk_count=session.chunks_decoded,
                 )
                 return
             if command == "cancel":
@@ -257,7 +255,7 @@ async def dictate_socket(ws: WebSocket) -> None:
     except Exception as exc:
         logger.error("Live dictation failed: %s", exc, exc_info=True)
         event_log.emit("live", f"dictation failed: {exc}", level="error")
-        await send({"type": "error", "message": "Dictation failed. Your audio is still in the browser: press Retry."})
+        await send({"type": "error", "message": "Dictation stopped. The text so far is kept: record again to continue."})
     finally:
         if cycle_task is not None and not cycle_task.done():
             cycle_task.cancel()

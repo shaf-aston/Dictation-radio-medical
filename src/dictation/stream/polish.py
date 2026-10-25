@@ -20,7 +20,7 @@ import numpy as np
 
 from src.dictation.asr.types import AsrResult, AsrSegment, Word
 from src.dictation.stream.ledger import ChunkLedger
-from src.dictation.stream.rules import mean_confidence
+from src.dictation.stream.rules import mean_confidence, speech_span
 from src.dictation.stream.segmenter import Chunk
 from src.dictation.stream.vad import detect_speech
 
@@ -39,14 +39,12 @@ OnDecoded = Callable[[AsrResult, Optional[int], int, int], None]
 #: under that pad therefore buys back whole calls, and lets the accurate model
 #: read a paragraph instead of context-free fragments.
 #:
-#: How much it buys depends entirely on how long the chunks are, which is a
-#: setting and not a constant. With the shipped defaults (``chunk_min_sec``
-#: 6.0, ``chunk_soft_max_sec`` 15.0) a chunk is most of this ceiling on its
-#: own, so a run is usually one or two chunks and the saving is small. Where
-#: the settings file lowers them (2.0 / 5.0, the policy this project's eval
-#: measured as best) chunks are a few seconds each, a run holds five to ten of
-#: them, and the saving is large: a three-minute dictation goes from tens of
-#: full encoder passes to a handful.
+#: How much it buys depends entirely on how long the chunks are. With the
+#: shipped 2 / 5 s policy (the one this project's eval measured as best) chunks
+#: are a few seconds each, a run holds five to ten of them, and the saving is
+#: large: a three-minute dictation goes from tens of full encoder passes to a
+#: handful. On old installs still pinned to 6 / 15 s a chunk is most of this
+#: ceiling on its own, so a run is one or two chunks and the saving is small.
 BATCH_MAX_SEC = 25.0
 
 #: Why :func:`_split` could not divide a batch. The first two are statements
@@ -209,8 +207,7 @@ def _decode_one(
     if not len(clip):
         return
     result = decode(clip, "final.polish")
-    if result is not None:
-        ledger.replace(i, result.text, mean_confidence(result))
+    if result is not None and ledger.replace(i, result.text, mean_confidence(result)):
         on_decoded(result, i, c.start_sample, c.end_sample)
 
 
@@ -312,17 +309,22 @@ def polish(
                 if cancelled():
                     return done
                 c = ledger.committed[i]
-                ledger.replace(i, part.text, mean_confidence(part))
-                on_decoded(part, i, c.start_sample, c.end_sample)
+                if ledger.replace(i, part.text, mean_confidence(part)):
+                    on_decoded(part, i, c.start_sample, c.end_sample)
         done += len(run)
 
     start, end = ledger.open_start_sample, len(audio)
     tail = audio[start:end]
-    if cancelled() or not len(tail) or not detect_speech(tail):
+    marks = detect_speech(tail) if len(tail) and not cancelled() else []
+    if not marks:
         return len(targets)
     on_progress("Improving the last section")
     result = decode(tail, "final.tail")
     if result is not None and (text := result.text.strip()):
-        ledger.commit(Chunk(start, end, closed=True), text, mean_confidence(result))
+        span = speech_span(marks, 0, len(tail))
+        ledger.commit(
+            Chunk(start, end, closed=True), text, mean_confidence(result),
+            speech=(span[0] + start, span[1] + start) if span else None,
+        )
         on_decoded(result, None, start, end)
     return len(targets)
