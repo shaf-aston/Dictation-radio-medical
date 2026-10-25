@@ -158,6 +158,7 @@ class MainWindow(QMainWindow):
     # Set per recording by recording_session.
     _record_started: float
     _run_record: Optional[run_log.RunRecord]
+    _run_chunks: int
     _audio_stopped_at: Optional[float]
 
     def __init__(self) -> None:

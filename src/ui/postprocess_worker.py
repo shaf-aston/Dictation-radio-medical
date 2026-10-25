@@ -103,13 +103,6 @@ class PostprocessWorker(QObject):
             processed, changes = text, []
         self.processed.emit(processed, list(changes), seq)
 
-    @Slot()
-    def reset(self) -> None:
-        """Drop cached prefix state (new recording)."""
-        with self._lock:
-            self._pending = None
-        self._incremental.reset()
-
 
 def build_changes(existing_seen: set, changes: List[str]) -> List[str]:
     """Return the changes in *changes* not already in *existing_seen*, marking them.

@@ -129,7 +129,9 @@ def describe_engine(settings: Settings) -> str:
     label = "Parakeet + radiology terms" if name == "parakeet-hotwords" else "Parakeet"
     chosen = settings.get("parakeet_model")
     if chosen != STANDARD:
-        label += f" ({chosen} not installed)"
+        # Installed but unused means the runtime a fine-tune needs is missing.
+        why = "needs onnx-asr" if _tuned_dir(settings) is not None else "not installed"
+        label += f" ({chosen} {why})"
     return label
 
 

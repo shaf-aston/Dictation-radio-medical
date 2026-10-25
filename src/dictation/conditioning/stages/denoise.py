@@ -26,8 +26,9 @@ class Denoise:
                 return 1.0   # digital silence says nothing about the room yet
             # Start from the first frames, not from zero: until speech starts
             # they are the room.
-            self._smooth = power.copy()
             self._floor = power.copy()
+        if self._smooth is None:
+            self._smooth = power.copy()
         # A few frames averaged, or the floor would sit on the deepest dips of
         # a random noise spectrum and remove almost nothing.
         self._smooth = self._smoothing * self._smooth + (1.0 - self._smoothing) * power

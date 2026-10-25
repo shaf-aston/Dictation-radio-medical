@@ -547,6 +547,8 @@ def _complete_finish(window: MainWindow) -> None:
         thread.wait(5000)
         window.pp_thread = None
     window.pp_worker = None
+    # The run record's chunk count, read while the worker is still referenced.
+    window._run_chunks = getattr(window.live_worker, "committed_chunks", 0) or 0
     # Both deleted themselves on finishing; a reference kept past that point
     # is a dead object the next close or recording would call into.
     window.live_worker = None
@@ -601,10 +603,11 @@ def _record_the_run(window: MainWindow) -> None:
         if stopped is not None:
             record.audio_sec = round(stopped - started, 3)
             record.finalise_sec = round(now - stopped, 3)
-    # Read defensively: the worker is torn down around this point, and a
-    # missing chunk count must not cost the whole record.
+    # The worker is already released on a normal finish (_complete_finish kept
+    # its count); an abandoned session still holds it.
     worker = getattr(window, "live_worker", None)
-    record.chunk_count = getattr(worker, "committed_chunks", 0) or 0
+    record.chunk_count = (getattr(worker, "committed_chunks", 0) if worker is not None
+                          else getattr(window, "_run_chunks", 0)) or 0
     run_log.finish(record, window.editor.toPlainText(), window.settings)
 
 

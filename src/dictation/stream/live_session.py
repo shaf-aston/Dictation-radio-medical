@@ -117,6 +117,8 @@ class LiveSession:
             initial_prompt=build_context_prompt(),
         )
         knobs.update(overrides)
+        logged: Dict[str, Any] = {k: v for k, v in knobs.items()
+                                  if isinstance(v, (str, int, float)) and k != "initial_prompt"}
         # Every front-end builds here, so this is the one honest place to say
         # which knobs a recording actually ran with.
         event_log.emit(
@@ -128,8 +130,7 @@ class LiveSession:
             chunk_soft_max_sec=policy.soft_max_sec,
             chunk_force_cut_sec=policy.force_cut_sec,
             preview_min_tail_sec=plan.preview_min_tail_sec,
-            **{k: v for k, v in knobs.items()
-               if isinstance(v, (str, int, float)) and k != "initial_prompt"},
+            **logged,
         )
         return cls(
             live_engine, final_engine,
@@ -780,10 +781,7 @@ class LiveSession:
         # the same audio into the same words. Then only audio never decoded at
         # all is worth a call, plus the chunks either side of a forced cut,
         # which decoded together are different audio from either alone.
-        same_model = (
-            engine_identity(self.final_engine) == engine_identity(self.live_engine)
-            and _ignores_beam(self.final_engine)
-        )
+        same_model = not self._polish_worthwhile()
         if same_model:
             event_log.emit("live", "polish skipped, final engine is the live engine")
         # The tail closed at Stop was decoded fast on purpose; a confident fast

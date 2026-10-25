@@ -18,7 +18,7 @@ import anyio
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from src.core import event_log
+from src.core import event_log, perf
 from src.cloud.framework.registry import active_voice_model_path
 from src.dictation.stream.live_session import LiveSession
 from src.features import run_log, template_fields
@@ -78,6 +78,9 @@ def record_web_run(
 async def dictate_socket(ws: WebSocket) -> None:
     await ws.accept()
     generation = state.next_dictation()
+    # A new dictation's stage timings start from zero, as on the desktop: the
+    # run record snapshots them at the end (run_log.finish).
+    perf.reset()
     settings = state.settings()
     prefs = state.current_preferences()
     session = build_live_session(settings)
