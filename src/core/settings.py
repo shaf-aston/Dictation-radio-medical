@@ -104,6 +104,11 @@ _DEFAULTS: dict = {
     # real preview by that much. Measured: the opening cycle decoded 0.048s of
     # audio for 1.15s of machine. Below this many seconds of open tail, wait.
     "preview_min_tail_sec": 1.0,
+    # "instant": show what the newest decode heard straight away, after the
+    # words two decodes already agree on; only those newest words may still
+    # change in place. "confirmed": agreed words only, stiller but a decode
+    # later per word (src/dictation/stream/tail.py).
+    "preview_mode": "instant",
     # committed chunks below this mean word confidence get one re-decode after stop
     "polish_confidence_ceiling": 0.75,
     # ...and, with this on, most of them get it WHILE you are still dictating:

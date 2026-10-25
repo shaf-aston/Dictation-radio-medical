@@ -13,8 +13,15 @@ from src.dictation.stream.policy import (
 )
 
 
-def _caps(fixed):
-    return EngineCaps(word_confidence=True, hotwords=False, cost=CostModel(fixed))
+def _caps(fixed, network=True):
+    return EngineCaps(word_confidence=True, hotwords=False, cost=CostModel(fixed), network=network)
+
+
+def test_a_cheap_local_engine_previews_early_but_keeps_long_chunks():
+    """Short chunks measured less accurate on Parakeet (see plan_for)."""
+    plan = plan_for(_caps(0.1, network=False))
+    assert plan.row == "cheap" and plan.preview_min_tail_sec < 1.0
+    assert (plan.policy.min_sec, plan.policy.soft_max_sec, plan.policy.force_cut_sec) == LOCAL_POLICY
 
 
 def test_cloud_engine_gets_short_chunks():

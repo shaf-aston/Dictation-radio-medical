@@ -43,7 +43,7 @@ from src.dictation.stream.rules import (
     speech_span,
 )
 from src.dictation.stream.segmenter import Chunk, ChunkPolicy
-from src.dictation.stream.tail import LocalAgreement2
+from src.dictation.stream.tail import PREVIEW_INSTANT, LocalAgreement2
 from src.dictation.stream.vad import SAMPLE_RATE, SpeechMark, detect_speech
 
 logger = logging.getLogger(__name__)
@@ -113,6 +113,7 @@ class LiveSession:
             uncertain_word_confidence=float(get("uncertain_word_confidence")),
             streaming=bool(get("asr_streaming")),
             background_polish=bool(get("background_polish")),
+            preview_mode=str(get("preview_mode")),
             polish_vad_filter=bool(get("vad_filter")),
             initial_prompt=build_context_prompt(),
         )
@@ -160,6 +161,7 @@ class LiveSession:
         on_decoded: Optional[Callable[[AsrResult, int], None]] = None,
         streaming: bool = bool(get_default("asr_streaming")),
         background_polish: bool = bool(get_default("background_polish")),
+        preview_mode: str = str(get_default("preview_mode")),
         conditioner: Optional[Chain] = None,
     ) -> None:
         # Cleans each block before it is stored, so every listener (VAD, decode,
@@ -223,7 +225,7 @@ class LiveSession:
         self._bg_applied: set = set()   # re-decoded by the accurate engine, frozen
 
         self._ledger = ChunkLedger(policy, pause_threshold=pause_threshold, sr=sr)
-        self._agreement = LocalAgreement2()
+        self._agreement = LocalAgreement2(show_unconfirmed=preview_mode == PREVIEW_INSTANT)
         self._post = IncrementalPostprocessor(accent=accent, cleanup_level=cleanup_level)
 
         # Amortised-doubling buffer: appending a block is O(block), not O(total),
