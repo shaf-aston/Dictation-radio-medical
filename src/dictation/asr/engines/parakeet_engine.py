@@ -35,9 +35,9 @@ from pathlib import Path
 from typing import Any, List, Optional, Sequence, Tuple
 
 from src.dictation.asr.types import (
-    LOCAL_DECODE_COST,
     AsrResult,
     AsrSegment,
+    CostModel,
     EngineCaps,
     ProviderUnavailable,
     TranscribeContext,
@@ -67,6 +67,9 @@ _LOCAL_ARCH = "nemo-conformer-tdt"
 
 #: Parakeet's fixed input rate. Anything else is resampled by onnx-asr.
 SAMPLE_RATE = 16000
+
+#: What one call costs (see :meth:`ParakeetEngine.capabilities`).
+PARAKEET_DECODE_COST = CostModel(fixed_sec=0.2, per_audio_sec=0.16)
 
 #: onnx-asr has already turned SentencePiece's U+2581 word marker into a plain
 #: leading space by the time tokens reach us, so a piece that starts with a
@@ -124,10 +127,11 @@ class ParakeetEngine:
         return ("parakeet", str(self.model_dir or self.model_name), self.quantization)
 
     def capabilities(self) -> EngineCaps:
-        # No 30s pad (a CTC/TDT model prices by audio length), but its cost on
-        # this project's hardware has never been measured, so it declares the
-        # conservative local price rather than guessing a cheaper one.
-        return EngineCaps(word_confidence=True, hotwords=False, cost=LOCAL_DECODE_COST)
+        # No 30s pad: a TDT model prices by audio length. Measured 2026-10-25
+        # on this machine (16 threads, another program busy), best of five:
+        # 0.5s audio 0.29s, 2s 0.47s, 8s 1.45s, a fit of 0.19s + 0.155s per
+        # second. Cheap, so the live loop previews from half a second of tail.
+        return EngineCaps(word_confidence=True, hotwords=False, cost=PARAKEET_DECODE_COST)
 
     def transcribe(self, audio: Any, ctx: TranscribeContext) -> AsrResult:
         source = _as_input(audio)
