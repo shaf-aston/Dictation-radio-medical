@@ -22,6 +22,10 @@ def _terms(text: str) -> list:
         ("Large right pneumothorax.", [("pneumothorax", 1, False)]),
         ("Small subdural haematoma.", [("subdural haematoma", 1, False)]),
         ("Acute appendicitis.", [("acute appendicitis", 2, False)]),
+        # Free air is a perforation, however it is worded.
+        ("Free air under the diaphragm.", [("free air", 1, False)]),
+        ("Free intraperitoneal air.", [("free intraperitoneal air", 1, False)]),
+        ("No free air.", []),
         # A clean denial is not an alert, at either level. Every normal chest
         # report says "no pneumothorax"; alerting on it trains the click-away.
         ("No pneumothorax.", []),
