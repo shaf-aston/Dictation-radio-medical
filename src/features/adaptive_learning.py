@@ -272,31 +272,6 @@ class AdaptiveLearning:
         combined = list(dict.fromkeys(custom + freq_terms_sorted))[:80]
         return " ".join(combined) if combined else ""
 
-    # ------------------------------------------------------------------
-    # Text change tracking (for passive learning)
-    # ------------------------------------------------------------------
-
-    def track_edit(self, old_text: str, new_text: str) -> None:
-        """Track user edits to learn corrections passively.
-
-        Called when user manually edits the transcription. Detects
-        single-word substitutions and learns them as corrections.
-        """
-        if not old_text or not new_text:
-            return
-        # Aligned by a real diff, not position: zipping the two word lists
-        # paired "meniscus" with "medial" when one word was inserted ("the
-        # meniscus" -> "the medial meniscus") and learned that as a fix.
-        edits, fixes = _word_fixes(old_text, new_text)
-        if len(edits) == 1 and len(fixes) == 1:
-            wrong, right = fixes[0]
-            if self._is_valid_correction(wrong, right):
-                self.learn_correction(wrong, right)
-        # Record frequency of terms in new text
-        for word in new_text.lower().split():
-            if len(word) >= _MIN_WORD_LENGTH and word.isalpha():
-                self.record_term_usage(word)
-
     def _is_valid_correction(self, old: str, new: str) -> bool:
         """Check if a word change looks like a real correction."""
         # Both must be mostly alphabetic
@@ -452,22 +427,6 @@ def apply_learned_corrections(text: str) -> str:
     return get_adaptive_learning().apply_learned_corrections(text)
 
 
-def learn_from_edit(old_text: str, new_text: str) -> None:
-    """Track an edit for passive learning.
-
-    Also feeds the corrected text to the context model's on-device learned
-    corpus (de-duplicated, so the debounced repeat calls are harmless) so
-    real-word disambiguation improves for this radiologist's own reports over
-    time. Best-effort: a failure here never blocks the primary edit tracking.
-    """
-    get_adaptive_learning().track_edit(old_text, new_text)
-    try:
-        from src.dictation.postprocess.context_model import append_learned_text
-        append_learned_text(new_text)
-    except Exception as exc:  # learning is an enhancement, never load-bearing
-        logger.debug("Context-corpus learning skipped: %s", exc)
-
-
 def learn_from_session(dictated: str, final: str) -> int:
     """Learn the one-word fixes the radiologist made to a finished dictation.
 
@@ -475,12 +434,24 @@ def learn_from_session(dictated: str, final: str) -> int:
     was committed. Every one-word-for-one-word change that passes the same
     "looks like a real correction" test the live tracker uses is learned, so
     the next dictation corrects it on its own. Returns how many were learned.
+
+    Both front-ends learn here, once per committed report, never per
+    keystroke: a typo fixed a second later is not a correction. The final
+    text also feeds the term counts and the context model's on-device corpus.
     """
     learning = get_adaptive_learning()
     learned = 0
     for wrong, right in _word_fixes(dictated, final)[1]:
         if learning._is_valid_correction(wrong, right):
             learned += learning.learn_correction(wrong, right)
+    for word in final.lower().split():
+        if len(word) >= _MIN_WORD_LENGTH and word.isalpha():
+            learning.record_term_usage(word)
+    try:
+        from src.dictation.postprocess.context_model import append_learned_text
+        append_learned_text(final)
+    except Exception as exc:  # learning is an enhancement, never load-bearing
+        logger.debug("Context-corpus learning skipped: %s", exc)
     return learned
 
 

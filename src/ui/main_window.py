@@ -46,7 +46,7 @@ from src.medical import macros
 from src.medical.macros import reload_macros
 from src.medical.term_lookup import lookup_hint_active, note_lookup_used
 from src.core.paths import startup_cleanup, autosave_dir, macros_file, templates_dir
-from src.features.adaptive_learning import get_adaptive_learning, learn_from_edit
+from src.features.adaptive_learning import get_adaptive_learning, learn_from_session
 from src.features import audit_log, run_log
 
 # View construction
@@ -208,14 +208,6 @@ class MainWindow(QMainWindow):
         # Snapshot of the editor right after dictation finishes; diffed against
         # the delivered text at commit time to log what the radiologist changed.
         self._post_dictation_snapshot: Optional[str] = None
-        # Debounce adaptive learning: only call learn_from_edit 500 ms after the
-        # last keystroke, not on every character (avoids blocking the UI thread).
-        self._learn_prev_text: str = ""
-        self._learn_curr_text: str = ""
-        self._learn_timer = QTimer(self)
-        self._learn_timer.setSingleShot(True)
-        self._learn_timer.setInterval(500)
-        self._learn_timer.timeout.connect(self._flush_learn)
 
         # Orders status messages so a timed revert cannot overwrite a newer
         # one (src/ui/status.py).
@@ -865,21 +857,7 @@ class MainWindow(QMainWindow):
         self.finding_gutter.schedule_refresh()
         self.term_marks.schedule_rescan()
 
-        # Passive learning: track user edits (debounced: fires 500 ms after
-        # the last keystroke rather than on every character).
-        # A dictation write (the hand-back, the polish) is the machine's text,
-        # not the radiologist's edit: learning from it taught the learner the
-        # polish's own corrections.
-        if (not by_dictation and not self.recorder.is_recording
-                        and self._last_editor_text
-                        and self.settings.get("learning_enabled")) and text != self._last_editor_text:
-            self._learn_prev_text = self._last_editor_text
-            self._learn_curr_text = text
-            self._learn_timer.start()
         self._last_editor_text = text
-
-    def _flush_learn(self) -> None:
-        learn_from_edit(self._learn_prev_text, self._learn_curr_text)
 
     def flush_dictation_edits(self) -> None:
         """Log how the last dictation's output differs from the delivered text.
@@ -898,7 +876,9 @@ class MainWindow(QMainWindow):
             return
         with contextlib.suppress(Exception):
             from src.features.edit_tracking import record_session_edits
-            record_session_edits(snapshot, self.editor.toPlainText())
+            final = self.editor.toPlainText()
+            record_session_edits(snapshot, final)
+            learn_from_session(snapshot, final)
 
     # ------------------------------------------------------------------
     # Window close – persist settings
