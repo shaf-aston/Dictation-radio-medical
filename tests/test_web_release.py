@@ -21,8 +21,8 @@ CLEAN = "EXAMINATION: MRI Right Knee\nFINDINGS:\nNormal.\nIMPRESSION:\n1. Normal
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(audit_log, "_log_path", tmp_path / "audit.log")
-    state.findings.reset()
-    return fastapi_testclient.TestClient(web_app.app)
+    state._findings.clear()
+    return fastapi_testclient.TestClient(web_app.app, base_url="http://127.0.0.1:8005")
 
 
 def _audit(tmp_path):
@@ -91,6 +91,35 @@ def test_acknowledgement_audits_who_how_and_when(client, tmp_path):
     ]
 
 
+def _acks(tmp_path):
+    return [(e["patient_id"], e["term"]) for e in _audit(tmp_path)
+            if e["action"] == "critical_finding_acknowledged"]
+
+
+def test_an_answer_belongs_to_its_own_report(client, tmp_path):
+    # Two patients, the same finding, one after the other (a reload, a second
+    # tab or a new report): each is asked, and each call is audited.
+    for report_id, patient in (("r1", "A"), ("r2", "B")):
+        sent = {"report_id": report_id, "patient": {"id": patient}}
+        assert _check(client, LEVEL_1, **sent).status_code == 409
+        assert _check(client, LEVEL_1, acknowledged=True, communication=COMM, **sent).status_code == 200
+    assert _acks(tmp_path) == [("A", "pneumothorax"), ("B", "pneumothorax")]
+
+
+def test_only_findings_still_outstanding_are_asked_and_written(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(state.settings(), "set", lambda *a, **k: None)
+    sent = {"report_id": "r1", "patient": {"id": "A"}}
+    _check(client, LEVEL_1, acknowledged=True, communication=COMM, **sent)
+    assert _check(client, LEVEL_1, **sent).status_code == 200  # nothing new: no question
+    more = LEVEL_1.replace("IMPRESSION:", "Pneumoperitoneum.\nIMPRESSION:")
+    assert _check(client, more, **sent).json()["detail"]["reason"] == "critical_findings"
+    statement = client.post("/api/report/communication", json={
+        "text": more, "report_id": "r1", "communication": COMM}).json()["statement"]
+    assert "pneumothorax" not in statement and statement
+    assert _check(client, more, acknowledged=True, communication=COMM, **sent).status_code == 200
+    assert [t for _, t in _acks(tmp_path)][0] == "pneumothorax" and len(_acks(tmp_path)) == 2
+
+
 def test_every_exit_is_audited(client, tmp_path):
     client.post("/api/report/check", json={"text": CLEAN, "patient": {"id": "P1"}})
     client.post("/api/report/save-txt", json={"text": CLEAN, "patient": {"id": "P1"}})
@@ -101,3 +130,88 @@ def test_every_exit_is_audited(client, tmp_path):
         {"report_exported"} if report.DOCX_AVAILABLE else set()
     )
     assert expected <= actions
+
+
+# -- only this machine's own page is answered (DNS rebinding, cross-site socket) --
+
+@pytest.mark.parametrize("headers, status", [
+    ({}, 200),
+    ({"host": "localhost:8005"}, 200),
+    ({"origin": "http://127.0.0.1:8005"}, 200),
+    ({"host": "evil.example:8005"}, 403),               # rebinding: the page's own name
+    ({"origin": "https://evil.example"}, 403),          # another site's page
+    ({"origin": "null"}, 403),
+])
+def test_only_this_machines_own_page_is_answered(client, headers, status):
+    assert client.get("/api/runs", headers=headers).status_code == status
+
+
+def test_another_sites_page_cannot_open_the_dictation_socket(client):
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("ws://127.0.0.1:8005/ws/dictate", headers={"origin": "https://evil.example"}) as ws:
+            ws.receive_json()
+
+
+@pytest.mark.parametrize("pid", ["李12345", "x" * 250, "../../etc/passwd", 'a"b\r\nc'])
+def test_any_patient_id_exports(client, pid):
+    response = client.post("/api/report/save-txt", json={"text": CLEAN, "patient": {"id": pid}})
+    assert response.status_code == 200
+    name = response.headers["content-disposition"].split('filename="')[1].rstrip('"')
+    assert name.isascii() and "/" not in name and len(name) < 100
+
+
+def test_a_request_naming_no_report_remembers_nothing(client, tmp_path):
+    _check(client, LEVEL_1, acknowledged=True, communication=COMM, patient={"id": "A"})
+    assert _check(client, LEVEL_1, patient={"id": "B"}).status_code == 409
+
+
+def test_reloading_phrases_answers_in_the_preferences_shape(client, tmp_path, monkeypatch):
+    from src.core import paths
+    monkeypatch.setattr(paths, "macros_file", lambda: tmp_path / "missing.json")
+    got = client.post("/api/macros/reload")  # no file: the built-in phrases, not a 500
+    assert got.status_code == 200 and got.json()["macros"]["regions"]
+
+
+def test_page_data_cannot_end_the_inline_script(client, monkeypatch):
+    from src.ui.web import pages
+    name = '<!--<script></script>&'
+    monkeypatch.setattr(pages, "bootstrap_payload", lambda: {"name": name})
+    html = client.get("/").text
+    start = html.index("window.__BOOTSTRAP__=") + len("window.__BOOTSTRAP__=")
+    injected = html[start:html.index(";", start)]
+    assert "<" not in injected and ">" not in injected and "&" not in injected
+    assert json.loads(injected) == {"name": name}
+
+
+def test_both_front_ends_show_the_servers_words(client):
+    checks = _check(client, CLEAN + "\n[Right / Left]").json()["detail"]
+    assert checks["message"].endswith("Release the report anyway?")
+    assert "1 unfilled template field(s)" in checks["message"]
+    assert _check(client, LEVEL_1).json()["detail"]["title"] == "Life-threatening finding"
+    strip = client.post("/api/report/findings", json={"text": LEVEL_1, "report_id": "r"}).json()
+    assert strip["label"] == "1 finding to communicate"
+    assert client.post("/api/report/findings", json={"text": CLEAN}).json()["label"] == "No findings"
+
+
+def test_the_marks_hint_retires_after_the_set_number_of_uses():
+    from src.medical.term_lookup import lookup_hint_active, note_lookup_used
+
+    class Store(dict):
+        def set(self, key, value):
+            self[key] = value
+
+    settings = Store(term_lookup_uses=0, term_lookup_hint_uses=2)
+    assert lookup_hint_active(settings.get)
+    assert note_lookup_used(settings) is True
+    assert note_lookup_used(settings) is False
+    assert note_lookup_used(settings) is False and settings["term_lookup_uses"] == 2
+
+
+def test_the_web_patient_form_has_exactly_the_schemas_fields():
+    import re
+
+    from src.core.patient_schema import PATIENT_KEYS
+    from src.ui.web.pages import frontend_file
+    keys = tuple(re.findall(r'data-patient="([a-z_]+)"', frontend_file("app.html")))
+    assert keys == PATIENT_KEYS

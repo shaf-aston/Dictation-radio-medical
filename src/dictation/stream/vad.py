@@ -13,9 +13,9 @@ from typing import List
 
 import numpy as np
 
-#: Silero VAD is hardwired to 16kHz inside faster_whisper; the recorder
-#: (src/dictation/audio.py) already captures at this rate, so no resampling
-#: seam exists anywhere in this pipeline.
+#: Silero VAD is hardwired to 16kHz inside faster_whisper. The desktop recorder
+#: captures at this rate and the browser sends it (resampling in resampler.js
+#: only where its audio context cannot run at 16kHz).
 SAMPLE_RATE = 16000
 
 

@@ -30,7 +30,7 @@ import threading
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-from src.dictation.asr.engines.parakeet_engine import merge_pieces
+from src.dictation.asr.engines.parakeet_engine import MIN_SAMPLES, merge_pieces
 from src.dictation.asr.types import (
     LOCAL_DECODE_COST,
     AsrResult,
@@ -95,7 +95,9 @@ class ParakeetHotwordEngine:
         return ("parakeet-hotwords", REPO_ID, self.hotword_score)
 
     def capabilities(self) -> EngineCaps:
-        return EngineCaps(word_confidence=True, hotwords=True, cost=LOCAL_DECODE_COST)
+        # Beam-search scores here include the hotword bonus, so they are not
+        # probabilities: words carry timings, and no confidence.
+        return EngineCaps(word_confidence=False, hotwords=True, cost=LOCAL_DECODE_COST)
 
     def preload(self) -> None:
         if self._recogniser is not None:
@@ -121,7 +123,7 @@ class ParakeetHotwordEngine:
                 samples = samples.mean(axis=1)
         else:
             samples, rate = np.asarray(audio, dtype=np.float32), SAMPLE_RATE
-        if samples.size == 0:
+        if samples.size < MIN_SAMPLES:
             return AsrResult(text="")
 
         self.preload()
@@ -132,7 +134,7 @@ class ParakeetHotwordEngine:
         text = (result.text or "").strip()
         if not text:
             return AsrResult(text="")
-        words = merge_pieces(result.tokens, result.timestamps, result.ys_log_probs)
+        words = merge_pieces(result.tokens, result.timestamps, None)
         end = words[-1].end if words else 0.0
         return AsrResult(text=text, segments=(AsrSegment(text=text, start=0.0, end=end, words=words),))
 

@@ -89,3 +89,53 @@ def test_corpus_false_alarms_by_kind_of_clean_report():
     assert alarms["unrecorded"][0] == 0    # sex not given
     # Known limit: a side word in passing ("lies left side down") is flagged.
     assert alarms["passing"][0] == alarms["passing"][1]
+
+
+def _messages(text, sex=""):
+    return [i.message for i in check_report(text, sex)]
+
+
+def test_side_warning_quotes_the_sentence():
+    text = "EXAMINATION: MRI Right Knee\nFINDINGS: The left meniscus is torn.\nIMPRESSION: Tear."
+    assert _messages(text) == ['Exam is RIGHT, but this says left: "FINDINGS: The left meniscus is torn."']
+
+
+def test_an_exam_of_both_sides_is_not_checked_for_side():
+    assert exam_side("EXAMINATION: XR Both Knees (right painful)") is None
+
+
+@pytest.mark.parametrize(
+    "sex, body, message",
+    [
+        ("Male", "The uterus is normal.", 'Patient is male, but the report describes "uterus"'),
+        ("M", "Ovarian cyst.", 'Patient is male, but the report describes "Ovarian"'),
+        ("Female", "The prostate is enlarged.", 'Patient is female, but the report describes "prostate"'),
+        ("female", "Scrotal oedema.", 'Patient is female, but the report describes "Scrotal"'),
+    ],
+)
+def test_sex_warning_names_the_patient_and_the_word(sex, body, message):
+    assert _messages(body, sex) == [message]
+
+
+@pytest.mark.parametrize(
+    "text, message",
+    [
+        ("FINDINGS: Normal.", "The report has findings but no impression"),
+        ("FINDINGS: Normal.\nCONCLUSION:\n1.\n", "The conclusion is empty"),
+    ],
+)
+def test_impression_warning_wording(text, message):
+    assert _messages(text) == [message]
+
+
+def test_each_wrong_sex_word_is_named_once():
+    assert _messages("The uterus and the ovary. The uterus again.", "M") == [
+        'Patient is male, but the report describes "uterus"',
+        'Patient is male, but the report describes "ovary"',
+    ]
+
+
+def test_a_long_sentence_is_quoted_to_eighty_characters():
+    sentence = "The left " + "very " * 30 + "long sentence."
+    (message,) = _messages("EXAMINATION: MRI Right Knee\n" + sentence)
+    assert message == f'Exam is RIGHT, but this says left: "{sentence[:80]}"'

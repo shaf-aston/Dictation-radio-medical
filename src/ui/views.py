@@ -9,7 +9,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
-    QWidget, QTextEdit, QPushButton, QVBoxLayout, QHBoxLayout, QComboBox,
+    QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QComboBox,
     QLabel, QLineEdit, QCheckBox, QFrame, QScrollArea, QSplitter,
     QSizePolicy, QMenu, QProgressBar,
 )
@@ -20,10 +20,12 @@ from src.dictation.asr import voice_model
 from src.dictation.asr.factory import describe_engine
 from src.dictation.asr.models import SUPPORTED_MODELS, resolve_model
 from src.dictation.postprocess import CLEANUP_LEVEL_LABELS
-from src.features.accent_corrections import ACCENT_LABELS
+from src.dictation.postprocess.accent import ACCENT_LABELS
 from src.medical import macros
 from src.core.paths import templates_dir
+from src.core.patient_schema import PATIENT_KEYS
 from src.ui.collapsible import Section
+from src.ui.report_editor import ReportEditor
 from src.ui.finding_marks import FindingGutter
 from src.ui.styles import set_findings_state, set_level_state, set_status_state
 from src.features.report_manager import DOCX_AVAILABLE
@@ -93,14 +95,14 @@ def build_panels(window: MainWindow) -> QWidget:
 
     window.template_section = Section(
         "Template and text size", build_template_panel(window),
-        window.settings.get("panel_template_open", True),
+        window.settings.get("panel_template_open"),
     )
     window.patient_panel = build_patient_panel(window)
     window.patient_section = Section("Patient details", window.patient_panel)
     window.patient_section.header.setToolTip("Show or hide the patient fields (Ctrl+P)")
     window.settings_section = Section(
         "Dictation settings", build_settings_panel(window),
-        window.settings.get("panel_settings_open", False),
+        window.settings.get("panel_settings_open"),
     )
 
     for section in (window.template_section, window.patient_section, window.settings_section):
@@ -138,6 +140,14 @@ def build_patient_panel(window: MainWindow) -> QFrame:
     window.patient_sex = QComboBox()
     window.patient_sex.addItems(["", "F", "M", "X"])
     window.patient_sex.setToolTip("Sex: used to check for organs of the other sex")
+    # The form by schema key: what reads, clears and fills it iterates this.
+    window.patient_inputs = {
+        "name": window.patient_name, "id": window.patient_id, "dob": window.patient_dob,
+        "study_date": window.patient_study_date, "referring": window.patient_referrer,
+        "accession": window.patient_accession, "sex": window.patient_sex,
+    }
+    if tuple(window.patient_inputs) != PATIENT_KEYS:
+        raise RuntimeError(f"Patient form {tuple(window.patient_inputs)} != schema {PATIENT_KEYS}")
 
     row1.addWidget(QLabel("Name:"))
     row1.addWidget(window.patient_name)
@@ -268,24 +278,24 @@ def build_settings_panel(window: MainWindow) -> QFrame:
     window.engine_label = QLabel(describe_engine(window.settings))
     window.engine_label.setToolTip("What is transcribing right now")
 
-    window.language_input = QLineEdit(window.settings.get("language", "en"))
+    window.language_input = QLineEdit(window.settings.get("language"))
     window.language_input.setFixedWidth(44)
     window.language_input.setToolTip("ISO language code, e.g. 'en'")
 
     window.accent_combo = QComboBox()
     for key, label in ACCENT_LABELS.items():
         window.accent_combo.addItem(label, key)
-    saved_accent = window.settings.get("accent", "neutral")
+    saved_accent = window.settings.get("accent")
     idx = window.accent_combo.findData(saved_accent)
     if idx >= 0:
         window.accent_combo.setCurrentIndex(idx)
-    window.accent_combo.setToolTip("Accent correction profile for Whisper error patterns")
+    window.accent_combo.setToolTip("Accent profile: fixes the words a recogniser often mishears in this accent")
     window.accent_combo.setFixedWidth(110)
 
     window.cleanup_combo = QComboBox()
     for key, label in CLEANUP_LEVEL_LABELS.items():
         window.cleanup_combo.addItem(label, key)
-    saved_cleanup = window.settings.get("cleanup_level", "medium")
+    saved_cleanup = window.settings.get("cleanup_level")
     idx = window.cleanup_combo.findData(saved_cleanup)
     if idx >= 0:
         window.cleanup_combo.setCurrentIndex(idx)
@@ -298,7 +308,7 @@ def build_settings_panel(window: MainWindow) -> QFrame:
 
     window.vad_checkbox = QCheckBox("Filter silence (VAD)")
     window.vad_checkbox.setToolTip("Voice activity detection - filters silence (recommended)")
-    window.vad_checkbox.setChecked(window.settings.get("vad_filter", True))
+    window.vad_checkbox.setChecked(window.settings.get("vad_filter"))
 
     layout.addWidget(QLabel("Voice model:"))
     layout.addWidget(window.parakeet_combo)
@@ -369,7 +379,7 @@ def build_editor_panel(window: MainWindow) -> QWidget:
     layout.setSpacing(4)
 
     # Main editor
-    window.editor = QTextEdit()
+    window.editor = ReportEditor()
     window.editor.setPlaceholderText(
         "Dictated text appears here, at the cursor.\n\n"
         "F5 = Start recording   F6 = Stop   F2 = Start / stop\n"
@@ -377,7 +387,7 @@ def build_editor_panel(window: MainWindow) -> QWidget:
         "Say \"scratch that\" to remove the last sentence, or\n"
         "\"insert\" and a quick phrase's name to write the phrase."
     )
-    font = QFont("Consolas", window.settings.get("font_size", 13))
+    font = QFont("Consolas", window.settings.get("font_size"))
     window.editor.setFont(font)
     window.editor.textChanged.connect(window._on_text_changed)
 
@@ -571,7 +581,7 @@ def build_menu(window: MainWindow) -> None:
 
 def _add_action(menu: QMenu, label: str, slot, shortcut: str = "") -> QAction:
     """Add an action to a menu."""
-    action = QAction(label)
+    action = QAction(label, menu)  # owned by the menu: unowned, Python frees it at once
     if shortcut:
         action.setShortcut(QKeySequence(shortcut))
     action.triggered.connect(slot)

@@ -118,3 +118,29 @@ def test_a_voice_that_fails_to_load_leaves_the_previous_one_chosen(monkeypatch, 
     with pytest.raises(RuntimeError):
         voice_model.switch(settings, tune)
     assert settings["parakeet_model"] == "standard"
+def test_a_word_confidence_must_be_a_probability():
+    from src.dictation.asr.types import Word
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        Word("pneumothorax", 0.0, 1.0, 1.67)       # a hotword-boosted beam score
+    assert Word("pneumothorax", 0.0, 1.0, None).confidence is None
+
+
+def test_pieces_without_probabilities_give_words_without_confidence():
+    from src.dictation.asr.engines.parakeet_engine import merge_pieces
+    from src.dictation.asr.types import AsrSegment
+    words = merge_pieces([" no", " eff", "usion"], [0.0, 0.4, 0.6], None)
+    assert [w.text for w in words] == ["no", "effusion"]
+    assert all(w.confidence is None for w in words)
+    assert AsrSegment("no effusion", 0.0, 1.0, words).confidence is None
+
+
+def test_the_hotword_engine_claims_no_word_confidence():
+    assert ParakeetHotwordEngine().capabilities().word_confidence is False
+
+
+def test_audio_shorter_than_the_encoder_input_decodes_to_nothing():
+    import numpy as np
+    from src.dictation.asr.engines.parakeet_engine import MIN_SAMPLES, _as_input
+    assert _as_input(np.zeros(MIN_SAMPLES - 1, np.float32)) is None
+    assert _as_input(np.zeros(MIN_SAMPLES, np.float32)) is not None

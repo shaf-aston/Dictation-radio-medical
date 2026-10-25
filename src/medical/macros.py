@@ -5,6 +5,8 @@ Loads from data/macros.json for user editability.
 Each entry is [button_label, report_text].
 """
 
+from __future__ import annotations
+
 import logging
 from typing import Dict, List, Tuple
 
@@ -30,31 +32,35 @@ def _load_macros() -> MacroLibrary:
         logger.error("Malformed macros file: %s", exc)
         return {}
 
+#: The phrases used when there is no usable ``macros.json``.
+_BUILT_IN: MacroLibrary = {
+    "General": [
+        ("Normal study", "No acute abnormality identified."),
+        ("No fracture", "No acute fracture or dislocation."),
+    ],
+    "Knee": [
+        ("ACL intact", "Anterior cruciate ligament intact."),
+    ],
+}
+
+
+def _library() -> MacroLibrary:
+    """The file's phrases, or the built-in ones: one rule for start-up and reload."""
+    if loaded := _load_macros():
+        return loaded
+    logger.warning("No usable %s; using the built-in phrases", macros_file())
+    return dict(_BUILT_IN)
+
+
 def reload_macros() -> None:
-    """Hot-reload macros from JSON. Updates global MACROS and REGION_ORDER."""
+    """Re-read the phrases (a new library object, which voice commands notice)."""
     global MACROS, REGION_ORDER
+    MACROS = _library()
+    REGION_ORDER = list(MACROS.keys())
+    logger.info("Reloaded %d macro regions", len(MACROS))
 
-    if new_macros := _load_macros():
-        MACROS = new_macros
-        REGION_ORDER = list(MACROS.keys())
-        logger.info(f"Reloaded {len(MACROS)} macro regions")
-    else:
-        raise ValueError("Failed to load macros from JSON")
 
-MACROS: MacroLibrary = _load_macros()
-
-# Fallback if load fails
-if not MACROS:
-    logger.warning("Using fallback macros")
-    MACROS = {
-        "General": [
-            ("Normal study", "No acute abnormality identified."),
-            ("No fracture", "No acute fracture or dislocation."),
-        ],
-        "Knee": [
-            ("ACL intact", "Anterior cruciate ligament intact."),
-        ],
-    }
+MACROS: MacroLibrary = _library()
 
 # Region display order
 REGION_ORDER: List[str] = list(MACROS.keys())

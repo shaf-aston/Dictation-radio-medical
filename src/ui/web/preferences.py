@@ -14,7 +14,7 @@ from src.dictation.asr.factory import describe_engine
 from src.dictation.asr.models import SUPPORTED_MODELS
 from src.dictation.postprocess.pipeline import CLEANUP_LEVELS
 from src.features import audit_log
-from src.features.accent_corrections import ACCENT_LABELS
+from src.dictation.postprocess.accent import ACCENT_LABELS
 from src.features.clinical_disclaimer import mark_shown
 from src.medical import macros
 from src.ui.web import state
@@ -69,18 +69,8 @@ async def set_preferences(payload: PreferencesUpdate):
         macro_region = macros.REGION_ORDER[0]
     settings = state.settings()
     voice_changed = payload.parakeet_model != settings.get("parakeet_model")
-    if voice_changed:
-        # Loads the new voice before answering (the page shows "Loading voice
-        # model" meanwhile), so the next dictation does not pay for the load.
-        try:
-            await anyio.to_thread.run_sync(voice_model.switch, settings, payload.parakeet_model)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail="Unknown voice model") from exc
-        except Exception as exc:
-            logger.error("Voice model %r failed to load: %s", payload.parakeet_model, exc, exc_info=True)
-            raise HTTPException(
-                status_code=503, detail="That voice model could not be loaded; the previous one is kept",
-            ) from exc
+    # Saved first: a voice that fails to load must not cost the other fields
+    # the page already shows as chosen.
     settings.batch_set({
         "model_size": model_size,
         "language": language,
@@ -89,6 +79,20 @@ async def set_preferences(payload: PreferencesUpdate):
         "cleanup_level": cleanup_level,
         "last_macro_region": macro_region,
     })
+    if voice_changed:
+        # Loads the new voice before answering (the page shows "Loading voice
+        # model" meanwhile), so the next dictation does not pay for the load.
+        try:
+            await anyio.to_thread.run_sync(voice_model.switch, settings, payload.parakeet_model)
+        except ValueError as exc:
+            state.drop_engine(model_size)
+            raise HTTPException(status_code=422, detail="Unknown voice model") from exc
+        except Exception as exc:
+            state.drop_engine(model_size)
+            logger.error("Voice model %r failed to load: %s", payload.parakeet_model, exc, exc_info=True)
+            raise HTTPException(
+                status_code=503, detail="That voice model could not be loaded; the previous one is kept",
+            ) from exc
     # Drop the cached engines so the next request builds the newly chosen model.
     state.drop_engine(None if voice_changed else model_size)
     return {
@@ -106,7 +110,7 @@ async def reload_macros_route():
     except Exception as exc:
         logger.error("Failed to reload macros: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to reload macros") from exc
-    return state.macros_payload()
+    return {"macros": state.macros_payload()}
 
 
 def _resolve_template_path(template_name: str) -> Path:

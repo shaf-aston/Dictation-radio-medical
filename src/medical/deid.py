@@ -24,7 +24,7 @@ import hashlib
 import logging
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from src.core.patient_schema import IDENTIFYING_KEYS
 
@@ -40,22 +40,70 @@ class PrivacyError(Exception):
 
 
 # Generic PHI patterns applied regardless of the known patient_info fields.
+# Every way a date is written, not a list of formats: numbers in any order
+# and separator ("1960-02-01", "01.02.1960", "3/4/2024"), and a month name
+# with a day and a year in either order ("1 Feb 1960", "February 1st, 1960").
+_MONTH = (
+    r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|"
+    r"Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?"
+)
+_DAY = r"\d{1,2}(?:st|nd|rd|th)?"
 _DATE_PATTERNS = [
-    re.compile(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b"),
+    re.compile(r"\b\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\b"),
     re.compile(
-        r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
-        r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
-        r"Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}\b",
-        re.IGNORECASE,
+        rf"\b(?:{_DAY}\s+(?:of\s+)?)?{_MONTH}\s+(?:{_DAY},?\s+)?\d{{4}}\b", re.IGNORECASE
     ),
 ]
-# Accession / MRN / NHS-style identifiers: optional letter prefix + 6–10 digits.
-_ID_PATTERN = re.compile(r"\b[A-Z]{0,3}\d{6,10}\b")
+# Accession / MRN / NHS-style numbers: an optional letter prefix, then digit
+# groups that may be split by a space, hyphen or slash ("ACC2024-5566",
+# "943 476 5919"). Counted as an identifier at six digits or more, so a
+# measurement ("12 mm", "15 20 mm") never is.
+_ID_PATTERN = re.compile(r"\b[A-Z]{0,5}[-/]?\d{2,}(?:[ \-/]\d{2,})*\b")
+_ID_MIN_DIGITS = 6
+
+#: What the scrubbers put in place of what they remove. Never itself a leak,
+#: so validation ignores it: otherwise a patient called "Ted" fails every
+#: check on the "ted" inside "[REDACTED]" and nothing can ever be sent.
+_PLACEHOLDER = re.compile(r"\[(?:REDACTED|DATE|ID|PHI-\d+)\]")
+_TOKEN = "[PHI-{}]"
+_LABEL = {"identifier": "[REDACTED]", "date": "[DATE]", "id": "[ID]"}
 
 # Fields of patient_info that are treated as direct identifiers. Derived from
 # the shared schema so a new patient field is scrubbed by default, rather than
 # silently sailing through to an upload because this list wasn't updated.
 _PHI_FIELDS = IDENTIFYING_KEYS
+#: A name part shorter than this ("Li", "Jo") is matched only as the whole
+#: value: two letters as a free word would redact every "jo" and "li".
+_MIN_NAME_PART = 3
+#: An identifier this short, with separators removed, cannot be searched for
+#: on its own without matching ordinary numbers.
+_MIN_ID_CHARS = 5
+
+
+def _digits(text: str) -> int:
+    return sum(ch.isdigit() for ch in text)
+
+
+def _value_pattern(value: str) -> Optional[re.Pattern]:
+    """How one patient-info value is found in text, decided by its shape.
+
+    With digits it is an identifier: matched whatever separators the text puts
+    between its characters ("MRN12345678" = "MRN-1234-5678"). Without, it is a
+    name: each part matched as a whole word in any order or case ("Jane Doe"
+    finds "Doe, Jane", "Mrs Doe", "Jane"), never inside another word ("Ann"
+    is not in "anular").
+    """
+    if any(ch.isdigit() for ch in value):
+        chars = re.findall(r"[A-Za-z0-9]", value)
+        if len(chars) < 2:
+            return None
+        body = r"[\s\-./]*".join(re.escape(ch) for ch in chars)
+        return re.compile(rf"(?<![A-Za-z0-9]){body}(?![A-Za-z0-9])", re.IGNORECASE)
+    parts = [p for p in re.findall(r"[^\W\d_]+", value) if len(p) >= _MIN_NAME_PART]
+    if not parts:
+        return re.compile(rf"\b{re.escape(value)}\b", re.IGNORECASE) if len(value) >= 2 else None
+    alternatives = "|".join(re.escape(p) for p in sorted(set(parts), key=len, reverse=True))
+    return re.compile(rf"\b(?:{alternatives})\b", re.IGNORECASE)
 
 
 class DeIdentifier:
@@ -63,44 +111,93 @@ class DeIdentifier:
 
     def __init__(self, patient_info: Optional[Dict[str, str]] = None) -> None:
         self._patient_info = patient_info or {}
-        # Pre-compile word-boundary patterns for each non-empty identifier so we
-        # can both redact and later validate against the same set.
-        self._identifier_patterns: List[re.Pattern] = []
-        for field in _PHI_FIELDS:
-            value = (self._patient_info.get(field) or "").strip()
-            if len(value) >= 2:
-                self._identifier_patterns.append(
-                    re.compile(re.escape(value), re.IGNORECASE)
-                )
+        values = [(self._patient_info.get(f) or "").strip() for f in _PHI_FIELDS]
+        self._identifier_patterns: List[re.Pattern] = [
+            p for p in (_value_pattern(v) for v in values if len(v) >= 2) if p is not None
+        ]
+        # What validate_clean looks for, independently of the patterns above:
+        # name words, and identifiers with every separator removed.
+        self._name_words = {
+            p.casefold() for v in values if not any(ch.isdigit() for ch in v)
+            for p in re.findall(r"[^\W\d_]+", v) if len(p) >= _MIN_NAME_PART
+        }
+        self._compact_ids = {
+            c for v in values if any(ch.isdigit() for ch in v)
+            if len(c := re.sub(r"[^a-z0-9]", "", v.casefold())) >= _MIN_ID_CHARS
+        }
 
     # ------------------------------------------------------------------
     # Text
     # ------------------------------------------------------------------
 
+    def _spans(self, text: str) -> List[Tuple[int, int, str]]:
+        """Every identifier in *text*: ``(start, end, kind)``, in order, not
+        overlapping. The one place that decides what is PHI; both scrubs use it.
+        """
+        found: List[Tuple[int, int, str]] = []
+        for kind, patterns in (
+            ("identifier", self._identifier_patterns),
+            ("date", _DATE_PATTERNS),
+            ("id", (_ID_PATTERN,)),
+        ):
+            for pattern in patterns:
+                for m in pattern.finditer(text):
+                    if kind == "id" and _digits(m.group(0)) < _ID_MIN_DIGITS:
+                        continue
+                    if not any(m.start() < e and s < m.end() for s, e, _ in found):
+                        found.append((m.start(), m.end(), kind))
+        return sorted(found)
+
+    def _replace_spans(self, text: str, label) -> str:
+        out, pos = [], 0
+        for start, end, kind in self._spans(text):
+            out.append(text[pos:start])
+            out.append(label(kind, text[start:end]))
+            pos = end
+        out.append(text[pos:])
+        return "".join(out)
+
     def deidentify_text(self, text: str) -> str:
         """Return *text* with patient identifiers, dates, and IDs redacted."""
         if not text:
             return text
-        scrubbed = text
-        for pat in self._identifier_patterns:
-            scrubbed = pat.sub("[REDACTED]", scrubbed)
-        for pat in _DATE_PATTERNS:
-            scrubbed = pat.sub("[DATE]", scrubbed)
-        scrubbed = _ID_PATTERN.sub("[ID]", scrubbed)
-        return scrubbed
+        return self._replace_spans(text, lambda kind, _original: _LABEL[kind])
 
     def validate_clean(self, text: str) -> bool:
-        """Return True only if no known patient identifier remains verbatim.
+        """Return True only if no known patient identifier remains, in any form.
+
+        Checked a different way from the scrub, so it is a second opinion and
+        not the scrub's patterns run twice: every word of the text against the
+        patient's name words, and the text with all separators removed against
+        each identifier with its separators removed.
 
         Raises :class:`PrivacyError` if a known identifier survived: callers
         should treat the record as un-uploadable.
         """
-        for pat in self._identifier_patterns:
-            if pat.search(text):
-                raise PrivacyError(
-                    "Patient identifier survived de-identification; record dropped."
-                )
+        text = _PLACEHOLDER.sub(" ", text).casefold()
+        words = set(re.findall(r"[^\W\d_]+", text))
+        compact = re.sub(r"[^a-z0-9]", "", text)
+        if words & self._name_words or any(i in compact for i in self._compact_ids):
+            raise PrivacyError(
+                "Patient identifier survived de-identification; record dropped."
+            )
         return True
+
+    def pseudonymise(self, text: str) -> Tuple[str, Dict[str, str]]:
+        """Scrub *text* reversibly, for a round trip that must come back whole.
+
+        The same spans :meth:`deidentify_text` removes become numbered tokens
+        (``[PHI-1]``), and the map from token to original is returned so
+        :func:`restore` can put the radiologist's own text back.
+        """
+        originals: Dict[str, str] = {}
+
+        def keep(_kind: str, original: str) -> str:
+            token = _TOKEN.format(len(originals) + 1)
+            originals[token] = original
+            return token
+
+        return self._replace_spans(text, keep), originals
 
     # ------------------------------------------------------------------
     # Audio
@@ -155,6 +252,18 @@ class DeIdentifier:
         return str(out_path)
 
     def _contains_phi(self, text: str) -> bool:
-        if not text:
-            return False
-        return any(pat.search(text) for pat in self._identifier_patterns)
+        """The audio is silenced exactly where the text would be scrubbed."""
+        return bool(text) and bool(self._spans(text))
+
+
+def restore(text: str, originals: Dict[str, str]) -> Optional[str]:
+    """Put back what :meth:`DeIdentifier.pseudonymise` took out, or None.
+
+    None unless every token comes back exactly once and no unknown token
+    appears: a token dropped, doubled or invented means the text that came
+    back cannot be mapped onto the report safely.
+    """
+    found = re.findall(r"\[PHI-\d+\]", text)
+    if sorted(found) != sorted(originals):
+        return None
+    return re.sub(r"\[PHI-\d+\]", lambda m: originals[m.group(0)], text)

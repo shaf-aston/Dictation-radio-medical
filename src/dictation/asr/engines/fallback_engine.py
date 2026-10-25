@@ -5,7 +5,7 @@ rate limit, an optional package not installed), and dictation must never
 stop because of it. Each entry is tried in the order given; a failure moves
 to the next entry, never mid-chunk quality grading, the app has no ground
 truth to grade a decode against, only whether the call itself succeeded.
-Mirrors ``llm_cleanup.py``'s "degrade, don't crash" rule stretched across
+Mirrors ``features/ai_cleanup.py``'s "degrade, don't crash" rule stretched across
 more than two tiers, so adding provider #4 later is one line in
 ``factory.py``, not a new wrapper class.
 """
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Providers rejected with ProviderUnavailable this process (dead API key, auth
 # failure): permanent until restart, and shared across every ChainEngine
-# instance. web_app builds one ChainEngine per model name (live + polish), so
+# instance. ui/web/state.get_engine builds one ChainEngine per model name (live + polish), so
 # without this each instance paid its own 401 round trip on every decode --
 # the per-instance drop below only ever helped the instance that had already
 # eaten the cost once. Keyed by provider name, not by instance.

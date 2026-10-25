@@ -45,15 +45,19 @@ def _fire_correction_hook(wrong: str, correct: str) -> None:
 # 1. Voice correction commands
 # ---------------------------------------------------------------------------
 
+#: One spoken word: letters, digits, apostrophes and hyphens, and a decimal
+#: number whole ("2.5"). Starting only where a word starts keeps the match
+#: linear on long input, and keeps "2.5" from being split at its point.
+_WORD = r"(?<![\w'.-])[A-Za-z0-9'-]+(?:\.\d+)?"
 _CORRECTION_PATTERN1 = re.compile(
-    r"([A-Za-z0-9'-]+)(\s*)(?:[,.!?;:]*)\s+(?:correct(?:\s+the)?\s+word)(?:\s+to)?\s+([A-Za-z0-9'-]+)\b",
+    rf"({_WORD})(\s*)(?:[,.!?;:]*)\s+(?:correct(?:\s+the)?\s+word)(?:\s+to)?\s+({_WORD})\b",
     re.IGNORECASE,
 )
 _CORRECTION_PATTERN2 = re.compile(
-    r"(?:^|[\s\n])(?:correct(?:\s+the)?\s+word)(?:\s+to)?\s+([A-Za-z0-9'-]+)\b",
+    rf"(?:^|[\s\n])(?:correct(?:\s+the)?\s+word)(?:\s+to)?\s+({_WORD})\b",
     re.IGNORECASE,
 )
-_PREV_WORD_PATTERN = re.compile(r"\b([A-Za-z0-9'-]+)\b(?!.*\b[A-Za-z0-9'-]+\b)")
+_PREV_WORD_PATTERN = re.compile(rf"({_WORD})(?!.*[A-Za-z0-9])", re.DOTALL)
 
 
 def _correction1_repl(m: re.Match) -> str:
@@ -88,10 +92,20 @@ def apply_correction_commands(text: str) -> str:
 # 2. Spoken punctuation → symbols
 # ---------------------------------------------------------------------------
 
+# A sentence cannot end on these, so a punctuation word right after one is an
+# ordinary word: "over a period of", "the rectum and colon", "a comma shaped
+# lesion", "a new line has been placed". One rule for every command, not a
+# list of nouns per command.
+_FUNCTION_WORDS = frozenset(
+    "a an the this that these those its their his her our your any each every some "
+    "of in on at to for with without by from into onto via per and or nor but no".split()
+)
+_LAST_WORD = re.compile(r"([A-Za-z]+)[^\S\n]*$")
+
 # Anatomical/medical adjectives that turn "colon" and "period" into nouns.
 _COLON_ANATOMY_BEFORE = re.compile(
-    r"\b(?:ascending|descending|transverse|sigmoid|hepatic|splenic|"
-    r"the|entire|proximal|distal|redundant|tortuous|dilated|normal)\s+$",
+    r"\b(?:ascending|descending|transverse|sigmoid|hepatic|splenic|left|right|"
+    r"entire|proximal|distal|redundant|tortuous|dilated|normal)\s+$",
     re.IGNORECASE,
 )
 _PERIOD_MEDICAL_BEFORE = re.compile(
@@ -99,10 +113,21 @@ _PERIOD_MEDICAL_BEFORE = re.compile(
     r"follow-up|refractory|latent|incubation)\s+$",
     re.IGNORECASE,
 )
+#: Where a heading's label starts: "Clinical history colon" -> "Clinical history:".
+_LABEL_START = re.compile(r"[.\n:;!?]")
+_MAX_LABEL_WORDS = 4
+
+
+def _after_function_word(before: str) -> bool:
+    last = _LAST_WORD.search(before)
+    return bool(last) and last.group(1).lower() in _FUNCTION_WORDS
 
 
 def _replace_colon(match: re.Match) -> str:
-    if _COLON_ANATOMY_BEFORE.search(match.string[:match.start()]):
+    """A colon ends a short label (a heading), never a sentence about the colon."""
+    before = match.string[:match.start()]
+    label = _LABEL_START.split(before)[-1].split()
+    if not 1 <= len(label) <= _MAX_LABEL_WORDS or _COLON_ANATOMY_BEFORE.search(before):
         return match[0]
     return ":"
 
@@ -113,29 +138,50 @@ def _replace_period(match: re.Match) -> str:
     return "."
 
 
-_SPOKEN_PATTERNS: List[Tuple[Pattern, Union[str, Callable[[re.Match], str]]]] = [
-    (re.compile(r"\bfull[- ]?stop\b", re.IGNORECASE), "."),
-    (re.compile(r"\bperiod\b", re.IGNORECASE), _replace_period),
-    (re.compile(r"\bcomma\b", re.IGNORECASE), ","),
-    (re.compile(r"\bnew\s+line\b", re.IGNORECASE), "\n"),
-    (re.compile(r"\bnewline\b", re.IGNORECASE), "\n"),
-    (re.compile(r"\bnew\s+paragraph\b", re.IGNORECASE), "\n\n"),
-    (re.compile(r"\bopen\s+bracket\b", re.IGNORECASE), "("),
-    (re.compile(r"\bclose\s+bracket\b", re.IGNORECASE), ")"),
-    (re.compile(r"\bquestion\s+mark\b", re.IGNORECASE), "?"),
-    (re.compile(r"\bexclamation\s+mark\b", re.IGNORECASE), "!"),
-    (re.compile(r"\bcolon\b", re.IGNORECASE), _replace_colon),
-    (re.compile(r"\bsemi[- ]?colon\b", re.IGNORECASE), ";"),
-    (re.compile(r"\bhyphen\b", re.IGNORECASE), "-"),
-    (re.compile(r"\bdash\b", re.IGNORECASE), " – "),
-    (re.compile(r"\b(?:new|next)\s+section\b", re.IGNORECASE), "\n\n"),
+def _command(replacement: Union[str, Callable[[re.Match], str]]) -> Callable[[re.Match], str]:
+    def apply(match: re.Match) -> str:
+        if _after_function_word(match.string[:match.start()]):
+            return match[0]
+        return replacement(match) if callable(replacement) else replacement
+    return apply
+
+
+_SPOKEN_PATTERNS: List[Tuple[Pattern, Callable[[re.Match], str]]] = [
+    (re.compile(pattern, re.IGNORECASE), _command(replacement))
+    for pattern, replacement in (
+        (r"\bfull[- ]?stop\b", "."),
+        (r"\bperiod\b", _replace_period),
+        (r"\bcomma\b", ","),
+        (r"\bnew\s+line\b", "\n"),
+        (r"\bnewline\b", "\n"),
+        (r"\bnew\s+paragraph\b", "\n\n"),
+        (r"\bopen\s+bracket\b", "("),
+        (r"\bclose\s+bracket\b", ")"),
+        # Before a word it marks a query and stays on that word: "?PE".
+        (r"\bquestion\s+mark[^\S\n]+(?=\w)", " ?"),
+        (r"\bquestion\s+mark\b", "?"),
+        (r"\bexclamation\s+mark\b", "!"),
+        # Before "colon", which would otherwise turn "semi-colon" into "semi-:".
+        (r"\bsemi[- ]?colon\b", ";"),
+        (r"\bcolon\b", _replace_colon),
+        # Joins the words either side: "ultrasound hyphen guided" is one word.
+        (r"\s*\bhyphen\b\s*", "-"),
+        (r"\bdash\b", " – "),
+        (r"\b(?:new|next)\s+section\b", "\n\n"),
+    )
 ]
+
+
+#: Every spoken punctuation command, as one pattern. What a command writes
+#: (a break, a stop) joins with the text on either side, so the live
+#: post-processor never splits its text beside one (incremental.py).
+SPOKEN_COMMANDS = "|".join(f"(?:{pattern.pattern})" for pattern, _ in _SPOKEN_PATTERNS)
 
 
 def apply_spoken_commands(text: str) -> str:
     """Replace spoken punctuation tokens with their symbol equivalents."""
     for pattern, repl in _SPOKEN_PATTERNS:
-        text = pattern.sub(repl, text)  # type: ignore[call-overload]
+        text = pattern.sub(repl, text)
     return text
 
 

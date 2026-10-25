@@ -39,7 +39,12 @@ def _write(action: str, detail: Dict[str, Any]) -> None:
         "action": action,
         **detail,
     }
-    append_jsonl(_get_log_path(), [entry])
+    if not append_jsonl(_get_log_path(), [entry]):
+        # The action itself goes ahead (a report is never withheld for want of
+        # a log line) but a missing audit entry must not pass as a routine
+        # warning. The entry's details may identify the patient, so only the
+        # action is named here.
+        logger.error("Audit entry NOT written: %s at %s", action, entry["ts"])
 
 
 # ---------------------------------------------------------------------------

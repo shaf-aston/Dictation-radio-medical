@@ -1,23 +1,19 @@
-"""Pure decisions both live loops make: no state, no I/O, no Qt, no sockets.
+"""Pure decisions the live loop makes: no state, no I/O, no Qt, no sockets.
 
-The desktop worker and the web session each own a loop, and each has to answer
-the same four questions: what prompt do we prime the decoder with, how sure was
-the decoder, is this clip silent, and is the preview still worth its price.
-Those answers live here so neither loop is the other's dependency: the desktop
-used to import them from the web session's module, which read backwards and
-made a front-end look like core.
+What prompt to prime the decoder with, how sure the decoder was, which words to
+flag, is there speech, how loud, and is the preview worth its price.
 """
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Optional, Sequence, Tuple
 
 import numpy as np
 
 from src.dictation.asr.types import AsrResult
 from src.dictation.stream.vad import SpeechMark
 from src.dictation.asr.prompt import RADIOLOGY_PROMPT
-from src.features.adaptive_learning import get_custom_prompt_suffix
+from src.features.adaptive_learning import get_custom_prompt_terms
 
 
 def build_context_prompt() -> str:
@@ -37,7 +33,7 @@ def build_context_prompt() -> str:
     about 216 tokens) push almost the entire shipped dictionary out of the
     decoder, which is invisible from the outside.
     """
-    if custom_terms := get_custom_prompt_suffix():
+    if custom_terms := get_custom_prompt_terms():
         return f"{custom_terms} {RADIOLOGY_PROMPT}"
     return RADIOLOGY_PROMPT
 
@@ -70,7 +66,7 @@ def low_confidence_words(result: AsrResult, ceiling: float) -> set:
     out = set()
     for seg in result.segments:
         for word in seg.words:
-            if word.confidence >= ceiling:
+            if word.confidence is None or word.confidence >= ceiling:
                 continue
             cleaned = word.text.strip().strip(".,;:!?()[]{}\"'").lower()
             if cleaned:
@@ -102,6 +98,18 @@ def has_speech(marks: Sequence[SpeechMark], start: int, end: int) -> bool:
     redundant, and the VAD is the one the segmenter already trusts to cut on.
     """
     return any(m.start_sample < end and m.end_sample > start for m in marks)
+
+
+def speech_span(marks: Sequence[SpeechMark], start: int, end: int) -> Optional[Tuple[int, int]]:
+    """Where the VAD heard speech inside ``[start, end)``, or None.
+
+    What a pause is measured from: chunks tile the audio with no gaps, so the
+    silence between two chunks' speech is invisible in their boundaries.
+    """
+    inside = [m for m in marks if m.start_sample < end and m.end_sample > start]
+    if not inside:
+        return None
+    return max(start, inside[0].start_sample), min(end, inside[-1].end_sample)
 
 
 def should_skip_preview(preview_cost_sec: float, max_lag_sec: float) -> bool:

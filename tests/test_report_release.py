@@ -122,3 +122,51 @@ def test_audit_records_recipient_method_time_and_radiologist(audit_file):
     assert (entry["recipient"], entry["method"], entry["communicated_at"], entry["radiologist"]) == (
         "Dr Patel", "telephone", "2026-10-23T14:20", "Dr Shah"
     )
+
+
+def test_three_findings_are_listed_with_commas_and_a_final_and():
+    check = check_release("Tension pneumothorax. Acute appendicitis. Volvulus.")
+    assert communication_statement(check.findings, COMM).startswith(
+        "Findings of tension pneumothorax, acute appendicitis and volvulus were communicated"
+    )
+
+
+def test_statement_without_a_radiologist_name_ends_at_the_date():
+    comm = Communication("Dr Patel", "telephone", COMM.at)
+    statement = communication_statement(check_release("Tension pneumothorax.").findings, comm)
+    assert statement.endswith("at 14:20 on 23/10/2026.")
+
+
+def test_acknowledgement_without_details_is_audited_with_blank_fields(audit_file):
+    record_release(check_release("Tension pneumothorax.").findings, "P1", True)
+    (entry,) = _entries(audit_file)
+    assert (entry["recipient"], entry["method"], entry["communicated_at"], entry["radiologist"]) == (
+        "", "", "", ""
+    )
+
+
+def test_override_names_every_finding_once(audit_file):
+    record_release(check_release("Tension pneumothorax. Volvulus.").findings, "P1", False)
+    (entry,) = _entries(audit_file)
+    assert entry["terms"] == "Tension pneumothorax; Volvulus"
+
+
+def test_the_count_display_reads_clear_outstanding_then_acknowledged():
+    state = OutstandingFindings()
+    state.update("Normal study.")
+    assert (state.state, state.count) == ("clear", 0)
+    state.update("Tension pneumothorax.")
+    assert state.state == "outstanding"
+    state.acknowledge()
+    assert state.state == "acknowledged"
+
+
+def test_a_broken_consistency_check_never_blocks_a_report(monkeypatch):
+    from src.features import report_checks
+    from src.features.report_release import report_warnings
+
+    def broken(*_a, **_k):
+        raise RuntimeError("checker fault")
+    monkeypatch.setattr(report_checks, "check_report", broken)
+    found = report_warnings("MRI [Right / Left] knee.")
+    assert found.issues == () and found.fields == ("Right / Left",)

@@ -37,11 +37,13 @@ from contextlib import contextmanager
 from typing import Any, Deque, Dict, Iterator, List, Optional
 
 from src.core import perf
+from src.core.settings import get_default
 
-# How many events are kept. One dictation cycle emits a handful, so a thousand
-# is several minutes of live dictation: long enough to scroll back through the
-# recording you just did, small enough to be free.
-DEFAULT_CAPACITY = 1000
+# How many events are kept (the event_log_max setting; resized by configure).
+# One dictation cycle emits a handful, so the shipped thousand is several
+# minutes of live dictation: long enough to scroll back through the recording
+# you just did, small enough to be free.
+DEFAULT_CAPACITY = int(get_default("event_log_max"))
 
 _lock = threading.Lock()
 _events: Deque[Dict[str, Any]] = deque(maxlen=DEFAULT_CAPACITY)

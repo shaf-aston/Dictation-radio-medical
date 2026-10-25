@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, List
 
-from src.core.json_store import read_json, write_json
+from src.core.json_store import read_json, update_json
 from src.core.paths import settings_file
 
 _DEFAULTS: dict = {
@@ -40,7 +40,9 @@ _DEFAULTS: dict = {
     # correct ones, so it could only subtract. Whisper is confidently wrong often
     # enough that its confidence does not separate a misheard word from a heard
     # one: at least not on synthetic audio, where every word scores high.
-    # Set a float to switch it on; the honest test is the `own` set, real
+    # Read only by the eval harness (scripts/eval/run_eval.py), which passes
+    # word confidences to the pipeline; the app does not, so setting it here
+    # changes nothing in dictation. The honest test is the `own` set, real
     # acoustics, where confidence actually varies. See docs/dictation-accuracy.md.
     "correction_confidence_ceiling": None,
     "theme": "dark",
@@ -86,17 +88,15 @@ _DEFAULTS: dict = {
     # host core count when the model loads, and takes effect on the next app
     # start: the loaded model is cached and is not rebuilt on a settings write.
     "asr_cpu_threads": 8,
-    # --- Live transcription decode quality (see src/dictation/worker.py) ---
+    # --- Live transcription decode quality (LiveSession.from_settings) ---
     "live_beam_size": 2,        # beam=1 caused repetition; beam=2 still real-time
-    # Every decode that is not the live loop: the desktop's post-stop polish and
-    # the web app's one-shot upload. Both are "transcribe this once, properly",
-    # so they share one knob: the web app used to have its own copy of it.
+    # Every decode that is not the live loop: the post-stop and background
+    # polish, in both front-ends. "Transcribe this once, properly".
     "final_beam_size": 5,
-    # The live preview of the still-open tail is dropped once that tail is
-    # longer than this AND the machine is measured to decode slower than speech
-    # (src/dictation/worker.py::should_skip_preview). The preview is never
-    # committed, so this trades early sight of a few words for the committed
-    # chunks arriving on time. 0 keeps the preview no matter how far behind.
+    # A live preview is skipped when the last preview decode took longer than
+    # this many seconds (stream/rules.py::should_skip_preview). The preview is
+    # never committed, so this trades early sight of a few words for the
+    # committed chunks arriving on time. 0 keeps the preview no matter what.
     "preview_max_lag_sec": 3.0,
     # A preview decode costs the same whatever it is handed, because Whisper
     # pads every clip to a 30-second window. So decoding a tail that is barely
@@ -123,7 +123,12 @@ _DEFAULTS: dict = {
     # --- Web front-end (src/ui/web_app.py) ---
     "web_host": "127.0.0.1",    # loopback only: the app is offline by default
     "web_port": 8005,
-    "max_upload_mb": 50,        # reject audio uploads larger than this
+    # Extra host names the web app answers to (it always answers loopback and
+    # web_host). Only for serving it to another machine on purpose.
+    "web_allowed_hosts": [],
+    # Caps one web dictation's audio, in MB of 16-bit PCM (about 26 minutes at
+    # 50). The name is from when the web app uploaded a file.
+    "max_upload_mb": 50,
     # Two models, one dictation. This small one decodes the words that appear
     # while you are still speaking; `model_size` above re-decodes after Stop,
     # where being right matters more than being quick. Whisper's model cache
@@ -164,8 +169,12 @@ _DEFAULTS: dict = {
     "cloud_training_consent": False,   # explicit user consent to upload de-identified data
     "lightning_project_id": "",        # Lightning AI project (API key lives in OS keychain)
     "min_corrections_before_upload": 20,  # don't train on tiny datasets
-    "auto_download_models": True,      # auto-fetch fine-tuned models when jobs finish
     "active_model_version": None,      # active fine-tuned version, or None for base model
+    # --- AI report cleanup (Groq; features/ai_cleanup.py) ---
+    # Off: it sends de-identified text off the device, so it is switched on
+    # by the radiologist, and only works with cloud_training_consent as well.
+    "groq_cleanup_enabled": False,
+    "groq_model": "llama-3.3-70b-versatile",
     # --- Learning & UI state ---
     "learning_enabled": True,          # capture edits for adaptive learning
     "learning_consent_shown": False,   # has user seen the learning consent dialog
@@ -265,11 +274,11 @@ class Settings:
 
     def save(self) -> None:
         """Write this instance's changed keys into the file as it is now."""
-        on_disk = read_json(self._path, {})
-        for key in self._dirty:
-            on_disk[key] = self._data[key]
-        write_json(self._path, on_disk)
-        self._data = on_disk
+        changed = {key: self._data[key] for key in self._dirty}
+        merged = update_json(self._path, {}, lambda on_disk: on_disk.update(changed))
+        if merged is None:
+            return  # still dirty: the next save tries again
+        self._data = merged
         self._dirty = set()
         self._mtime = self._current_mtime()
 

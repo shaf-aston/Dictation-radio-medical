@@ -1,5 +1,5 @@
 # Domain-specific Whisper initial prompt to prime vocabulary for radiology.
-# Loaded by src/dictation/transcriber.py.
+# Loaded by src/dictation/asr/prompt.py.
 #
 # BUDGET: 223 tokens, and this file is sized to fit inside it.
 # faster-whisper keeps only the LAST 223 tokens of initial_prompt
@@ -12,9 +12,9 @@
 # terms come first, the ones Whisper most often mis-hears come last. Generic
 # imaging-physics vocabulary (T2-weighted, Hounsfield, echogenicity...) was
 # dropped outright: it is what used to survive, and it is the least valuable.
-# Learned custom vocabulary (adaptive_learning.get_custom_prompt_suffix) is
-# appended after this file and competes for the same 223 tokens, so pay for any
-# addition here with a deletion.
+# Learned custom vocabulary (adaptive_learning.get_custom_prompt_terms) is
+# placed BEFORE this file (stream/rules.build_context_prompt), so learned terms
+# are what truncation drops first; pay for any addition here with a deletion.
 #
 # Lines beginning with '#' and blank lines are stripped at load time.
 # Remaining content is joined with single spaces.

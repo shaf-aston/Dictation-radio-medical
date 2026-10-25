@@ -37,11 +37,11 @@ from typing import Any, Dict, List, Optional
 from src.core import perf
 from src.core.json_store import append_jsonl, read_jsonl
 from src.core.paths import run_log_path
+from src.core.settings import get_default
 
 logger = logging.getLogger(__name__)
 
 #: Kept if settings carry no value. Bounded so the file cannot grow forever.
-DEFAULT_MAX_RUNS = 200
 
 #: How much the file may overshoot the cap before it is rewritten. Trimming on
 #: every append would rewrite the whole log per run; this amortises it.
@@ -70,8 +70,9 @@ class RunRecord:
     finalise_sec: float = 0.0
     word_count: int = 0
     chunk_count: int = 0
-    #: Decoded seconds per second of audio. Above 1.0 the machine cannot keep
-    #: up with speech. Read from perf's gauge, not recomputed here.
+    #: Seconds of audio decoded per second heard: 1.0 is "decode once", above
+    #: it audio was decoded again (polish, a re-cut). Read from perf's gauge
+    #: (LiveSession.record_decode_ratio), not recomputed here.
     decode_ratio: Optional[float] = None
     stages: Dict[str, Dict[str, float]] = field(default_factory=dict)
     text: str = ""
@@ -79,14 +80,14 @@ class RunRecord:
 
 def _cap(settings: Any) -> int:
     try:
-        value = int(settings.get("run_log_max", DEFAULT_MAX_RUNS))
+        value = int(settings.get("run_log_max"))
     except (TypeError, ValueError):
-        return DEFAULT_MAX_RUNS
+        return int(get_default("run_log_max"))
     return max(1, value)
 
 
 def _wants_text(settings: Any) -> bool:
-    return bool(settings.get("run_log_store_text", True))
+    return bool(settings.get("run_log_store_text"))
 
 
 def start(front_end: str, model: str = "", engine: str = "") -> RunRecord:

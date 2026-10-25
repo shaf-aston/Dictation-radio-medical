@@ -1,9 +1,8 @@
 """The one place that maps an engine name to a concrete AsrEngine.
 
-Everything else, worker.py, web_app.py, the eval harness, asks for an
-engine by name and depends only on the port. Adding engine #2 at M3 means one
-new entry in :data:`_ENGINES`; nothing else in this file, or anywhere
-downstream, changes.
+Everything else (the desktop worker, ``ui/web/state.get_engine``, the eval
+harness) asks for an engine by name and depends only on the port. Adding an
+engine means one new entry in :data:`_ENGINES`; nothing downstream changes.
 """
 
 from __future__ import annotations
@@ -130,7 +129,9 @@ def describe_engine(settings: Settings) -> str:
     label = "Parakeet + radiology terms" if name == "parakeet-hotwords" else "Parakeet"
     chosen = settings.get("parakeet_model")
     if chosen != STANDARD:
-        label += f" ({chosen} not installed)"
+        # Installed but unused means the runtime a fine-tune needs is missing.
+        why = "needs onnx-asr" if _tuned_dir(settings) is not None else "not installed"
+        label += f" ({chosen} {why})"
     return label
 
 

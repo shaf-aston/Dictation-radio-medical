@@ -2,8 +2,7 @@
 
 These are the conventions already in force across `src/`. Descriptive, not
 aspirational: match them so the codebase stays uniform. For architecture and
-module boundaries, and for `.claude/` agents/skills/workflows, see
-[CLAUDE.md](CLAUDE.md).
+module boundaries, see [CLAUDE.md](CLAUDE.md).
 
 ## Language & typing
 
@@ -20,15 +19,17 @@ module boundaries, and for `.claude/` agents/skills/workflows, see
   where useful, the lifecycle/data-flow it participates in). If you can't name
   the responsibility in one line, the module is doing too much.
 - One responsibility per file; sequence/orchestrate in a dedicated file (e.g.
-  `postprocess/pipeline.py`, `cloud/sync_manager.py`) rather than letting layers
+  `postprocess/pipeline.py`, `cloud/framework/sync.py`) rather than letting layers
   reach into each other.
 
 ## Imports
 
 - Standard top-of-file imports for lightweight, always-present dependencies.
 - **Lazily import heavy or optional dependencies inside the function that uses
-  them**: PySide6, `httpx`, `soundfile`, `keyring`, `rapidfuzz`, and the cloud
-  modules are imported at call sites, not module top-level. Keeps the offline
+  them**: `httpx`, `keyring`, `rapidfuzz`, the cloud modules and every optional
+  extra are imported at call sites, not module top-level. (Modules that exist
+  only to drive the GUI or the microphone, such as `dictation/worker.py` and
+  `dictation/audio.py`, import PySide6 / soundfile at the top.) Keeps the offline
   pipeline importable without cloud/GUI deps and keeps startup fast.
 - No unused imports (`ruff` F401 must be clean).
 

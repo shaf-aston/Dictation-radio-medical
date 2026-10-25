@@ -10,9 +10,9 @@ import numpy as np
 import sounddevice as sd
 import soundfile as sf
 
-logger = logging.getLogger(__name__)
+from src.dictation.mic import CLIP_PEAK, QUIET_AFTER_SEC, QUIET_PEAK
 
-_CLIP_THRESHOLD = 0.95   # fraction of full scale; above this = clipping
+logger = logging.getLogger(__name__)
 
 
 class Recorder:
@@ -25,6 +25,8 @@ class Recorder:
         self._recording = False
         self._current_level: float = 0.0   # RMS amplitude 0.0–1.0
         self._is_clipping: bool = False
+        self._loudest: float = 0.0          # loudest sample so far (dictation/mic.py)
+        self._samples: int = 0
 
     @property
     def is_recording(self) -> bool:
@@ -40,11 +42,18 @@ class Recorder:
         """True when the most recent block contained samples near full scale."""
         return self._is_clipping
 
+    @property
+    def is_quiet(self) -> bool:
+        """True once QUIET_AFTER_SEC have passed and nothing has been loud enough."""
+        return self._samples > QUIET_AFTER_SEC * self.samplerate and self._loudest < QUIET_PEAK
+
     def start(self, file_path: str) -> None:
         if self._recording:
             return
         self._current_level = 0.0
         self._is_clipping = False
+        self._loudest = 0.0
+        self._samples = 0
         self._sf = sf.SoundFile(
             file_path,
             mode="w",
@@ -66,7 +75,10 @@ class Recorder:
                 float_data = indata.astype(np.float32)
             rms = float(np.sqrt(np.mean(float_data ** 2)))
             self._current_level = min(rms * 8.0, 1.0)   # scale: 0.125 RMS ≈ full bar
-            self._is_clipping = bool(np.any(np.abs(float_data) >= _CLIP_THRESHOLD))
+            peak = float(np.max(np.abs(float_data))) if float_data.size else 0.0
+            self._is_clipping = peak >= CLIP_PEAK
+            self._loudest = max(self._loudest, peak)
+            self._samples += frames
 
         self._stream = sd.InputStream(
             samplerate=self.samplerate,

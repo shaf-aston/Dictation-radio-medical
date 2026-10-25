@@ -47,7 +47,7 @@ Read this first. For conventions, see [CODING_STANDARDS.md](CODING_STANDARDS.md)
 - **Secrets live in the OS keychain only** (`keyring`), never in
   `dictation_settings.json` or logs. The Lightning project id (not a secret)
   is in settings; the Groq key follows the same rule
-  (`llm_cleanup.get_groq_key`).
+  (`ai_cleanup.get_groq_key`).
 - **Scan suggestions abstain by default and must be localisable**: a finding
   reaches the radiologist only if its label was trained AND its probability ≥
   the calibrated threshold AND Grad-CAM produced a region. Always an assistive
@@ -66,7 +66,8 @@ Read this first. For conventions, see [CODING_STANDARDS.md](CODING_STANDARDS.md)
   (`autosave_dir`, `staging_db_path`, `model_registry_path`, `fine_tuned_dir`,
   `imaging_thresholds_path`, `imaging_overlay_dir`, …).
 - **Every rebuildable cache lives under `data/cache/`** (`cache_dir()`:
-  SymSpell index, Whisper model downloads via `whisper_cache_dir()`, imaging
+  SymSpell index, Whisper model downloads via `whisper_cache_dir()`, Parakeet
+  models via `onnx_asr_cache_dir()` and `cache_dir()/sherpa`, imaging
   embeddings via `imaging_embeddings_dir()`). Deleting the folder is always
   safe: caches rebuild or re-download on next use. Never write derived,
   regenerable data anywhere else.
@@ -77,7 +78,8 @@ Read this first. For conventions, see [CODING_STANDARDS.md](CODING_STANDARDS.md)
 python -m src.ui            # desktop GUI
 python -m src.ui.web_app    # web app on 127.0.0.1:8005
 ruff check src tests scripts
-python -m pytest -q          # safety tables + streaming rules; CI runs both
+python -m pytest -q          # safety tables, properties + streaming rules; CI runs both
+scripts/mutation_test.sh     # would the tests notice a bug? (docs/testing.md)
 npx pyright src              # type check (optional-dep import warnings expected)
 
 # Accuracy + speed measurement: see scripts/eval/CLAUDE.md

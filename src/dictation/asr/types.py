@@ -1,6 +1,6 @@
 """Engine-agnostic transcription result types: the AsrEngine contract.
 
-Every recognition engine (faster-whisper today, ONNX/Parakeet at M3) returns
+Every recognition engine (Parakeet, faster-whisper, Deepgram) returns
 these shapes regardless of its own native API. Confidence is part of the
 contract, not an optional extra: the whole point of this seam is that
 downstream post-processing (M4's token contract) can gate a correction on how
@@ -22,7 +22,17 @@ class Word:
     text: str
     start: float
     end: float
-    confidence: float  # 0..1, e.g. faster-whisper's exp(Word.probability)
+    #: A probability in [0, 1] (faster-whisper's exp(Word.probability)), or
+    #: None when the engine cannot measure one. Checked here, so no engine can
+    #: hand on a score that is not a probability: the hotword decoder's scores
+    #: carry the hotword bonus (up to 2.7), which made every boosted word look
+    #: the most certain of all and switched the confidence polish off.
+    confidence: Optional[float]
+
+    def __post_init__(self) -> None:
+        c = self.confidence
+        if c is not None and not 0.0 <= c <= 1.0 + 1e-6:
+            raise ValueError(f"word confidence {c!r} for {self.text!r} is not a probability")
 
 
 @dataclass(frozen=True)
@@ -43,9 +53,8 @@ class AsrSegment:
         the two would make the M4 correction gate either over- or under-fire
         for every engine that lacks word timestamps.
         """
-        if not self.words:
-            return None
-        return sum(w.confidence for w in self.words) / len(self.words)
+        known = [w.confidence for w in self.words if w.confidence is not None]
+        return sum(known) / len(known) if known else None
 
 
 @dataclass(frozen=True)
@@ -89,7 +98,7 @@ class EngineCaps:
     """What an engine can actually provide: never assume, always check.
 
     ``word_confidence``: real per-word probabilities (not a constant stand-in).
-    ``hotwords``: decoder-level vocabulary biasing (M5).
+    ``hotwords``: decoder-level vocabulary biasing.
     ``cost``: what a call costs (see :class:`CostModel`); the stream layer
     sizes chunks and preview pacing from it (``stream/policy.py``).
     ``streaming``: also implements ``open_stream()`` (a live socket that
@@ -121,9 +130,9 @@ class TranscribeContext:
     condition_on_previous_text: bool = True
     temperature: Optional[Union[float, List[float]]] = None
     # Word-level confidence costs a little extra decode time; callers that
-    # don't need it (nothing downstream reads .words yet) can skip it.
+    # don't need it can skip it (the polish and the doubt marks read .words).
     want_word_confidence: bool = False
-    # Reserved for M5 (lexicon-biased decoding); unused engines ignore it.
+    # Lexicon-biased decoding; engines that cannot do it ignore it.
     hotwords: Optional[Sequence[str]] = None
 
 

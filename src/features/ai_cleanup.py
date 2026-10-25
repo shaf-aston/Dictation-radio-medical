@@ -27,11 +27,11 @@ import logging
 from typing import Any, List, Optional, Tuple, cast
 
 from src.core.keychain import clear_secret, get_secret, store_secret
+from src.core.settings import get_default
 
 logger = logging.getLogger(__name__)
 
 _KEYRING_KEY = "groq_api_key"
-_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 _TIMEOUT = 30.0
 
 _SYSTEM_PROMPT = (
@@ -127,9 +127,13 @@ def clean_with_llm(
         return text, []
 
     # PHI never leaves the device: scrub before sending.
-    from src.medical.deid import DeIdentifier, PrivacyError
+    # Reversibly: what comes back is a cleaned copy of the scrubbed text, and
+    # the radiologist's dates, IDs and names must be put back into it, not
+    # left as placeholders (an accepted cleanup used to turn every date in
+    # the report into "[DATE]").
+    from src.medical.deid import DeIdentifier, PrivacyError, restore
     deid = DeIdentifier(patient_info or {})
-    safe_text = deid.deidentify_text(text)
+    safe_text, originals = deid.pseudonymise(text)
     try:
         deid.validate_clean(safe_text)
     except PrivacyError as exc:
@@ -138,9 +142,9 @@ def clean_with_llm(
 
     try:
         from src.core.settings import Settings
-        model = Settings().get("groq_model", _DEFAULT_MODEL) or _DEFAULT_MODEL
+        model = Settings().get("groq_model") or get_default("groq_model")
     except Exception:
-        model = _DEFAULT_MODEL
+        model = get_default("groq_model")
 
     try:
         from groq import Groq
@@ -169,5 +173,9 @@ def clean_with_llm(
     if not isinstance(cleaned, str) or not cleaned.strip():
         logger.warning("Groq returned no usable text; keeping original")
         return text, []
-    changes = [c for c in payload.get("changes", []) if isinstance(c, str)]
-    return cleaned, changes
+    restored = restore(cleaned, originals)
+    if restored is None:
+        logger.warning("Groq cleanup dropped or altered a protected span; keeping original")
+        return text, []
+    changes = [restore(c, originals) or c for c in payload.get("changes", []) if isinstance(c, str)]
+    return restored, changes

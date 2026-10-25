@@ -1,4 +1,4 @@
-"""Dictation pipeline: audio capture → Whisper → 10-stage post-processing.
+"""Dictation pipeline: audio capture → AsrEngine (Parakeet → Whisper) → post-processing.
 
 This package owns the full speech-to-corrected-text path. UI, settings,
 and domain knowledge (medical dictionary, macros, critical findings)

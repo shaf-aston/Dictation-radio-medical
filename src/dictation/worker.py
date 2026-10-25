@@ -48,7 +48,6 @@ logger = logging.getLogger(__name__)
 # Tuning constants
 # ---------------------------------------------------------------------------
 _MIN_AUDIO_SEC = 0.8     # ignore audio shorter than this
-_POLL_SEC = 0.25         # how often to look for new audio when nothing changed
 
 # Progress states the UI shows while the live loop runs. Public: the desktop
 # window maps them onto the colour of its state pill (ui/main_window.py).
@@ -96,6 +95,8 @@ class LiveTranscribeWorker(QObject):
         # Settings.get: every knob is read once, by LiveSession.from_settings,
         # when run() builds the session.
         self._get = get
+        # How often to look for new audio: the web socket's pace, not its own.
+        self._cycle_sec = float(get("live_cycle_sec"))
         self.model_path = model_path
         self._session: Optional[LiveSession] = None
         self._keep_running = True
@@ -167,7 +168,7 @@ class LiveTranscribeWorker(QObject):
                                 "skipping final polish", self._fed,
                             )
                             break
-                    time.sleep(0.5)
+                    time.sleep(self._cycle_sec)
                     continue
 
                 if self._final_requested:
@@ -177,11 +178,11 @@ class LiveTranscribeWorker(QObject):
                     break
 
                 if not grew:
-                    time.sleep(_POLL_SEC)
+                    time.sleep(self._cycle_sec)
                     continue
                 update = self._session.cycle()
                 if update is None:
-                    time.sleep(_POLL_SEC)
+                    time.sleep(self._cycle_sec)
                     continue
                 self._emit_state(_SESSION_STATES.get(update.state, STATE_LIVE))
                 if self._emit_partial(update.committed, update.preview):
@@ -192,11 +193,7 @@ class LiveTranscribeWorker(QObject):
         finally:
             if self._session is not None:
                 self._session.close()
-            if self._session is not None and self._session.audio_sec > 0:
-                perf.set_gauge(
-                    "stream.decode_ratio",
-                    self._session.decode_audio_sec / self._session.audio_sec,
-                )
+                self._session.record_decode_ratio()
             logger.info(
                 "Worker finished in %.2fs, %d cycles emitted",
                 time.time() - wall_start, cycle_count,

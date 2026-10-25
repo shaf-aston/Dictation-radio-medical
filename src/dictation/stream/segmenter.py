@@ -4,10 +4,9 @@ Turns VAD speech marks (relative to some audio range) into a list of chunk
 boundaries. Every non-final boundary sits at a VAD-confirmed silence gap,
 never at an arbitrary sample offset, so a closed chunk is never cut mid-word
 except via the ``force_cut_sec`` safety valve, which exists only for a single
-unbroken speech run with no silence at all (a long monologue). That is the
-plan's known accepted risk for this milestone (see the M2 pre-mortem in
-CLAUDE.md's linked plan); the confidence-targeted polish after recording
-stops is the safety net for it.
+unbroken speech run with no silence at all (a long monologue). That is an
+accepted risk: a forced cut is marked (``Chunk.forced``), and the polish
+always re-decodes both sides of it.
 
 Trivially unit-testable: feed it marks, check the returned cut points. Takes
 sample counts relative to whatever range the caller is segmenting (the ledger
@@ -20,16 +19,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional
 
+from src.core.settings import get_default
 from src.dictation.stream.vad import SAMPLE_RATE, SpeechMark
 
 
 @dataclass(frozen=True)
 class ChunkPolicy:
-    """Tunable chunk-length targets, in seconds."""
+    """Tunable chunk-length targets, in seconds; the defaults are the shipped settings."""
 
-    min_sec: float = 6.0          # never cut a chunk shorter than this at a pause
-    soft_max_sec: float = 15.0    # prefer cutting by here if a pause is available
-    force_cut_sec: float = 20.0   # hard ceiling: cut here even mid-speech
+    #: Never cut a chunk shorter than this at a pause.
+    min_sec: float = float(get_default("chunk_min_sec"))
+    #: Prefer cutting by here if a pause is available.
+    soft_max_sec: float = float(get_default("chunk_soft_max_sec"))
+    #: Hard ceiling: cut here even mid-speech.
+    force_cut_sec: float = float(get_default("chunk_force_cut_sec"))
     # How much silence must sit after the LAST speech mark before that mark's
     # end counts as a cut point. Without this the final mark can never be a
     # cut (there is no following mark to prove the silence is real), so a
@@ -39,7 +42,7 @@ class ChunkPolicy:
     # 0.6s, not the 0.3s the VAD splits on: detect_speech pads every mark end
     # by speech_pad_ms, so apparent trailing silence understates the real gap,
     # and a breath mid-sentence must not read as the end of a thought.
-    trailing_silence_sec: float = 0.6
+    trailing_silence_sec: float = float(get_default("chunk_trailing_silence_sec"))
 
     def __post_init__(self) -> None:
         """Reject lengths that are out of order or not positive.
@@ -72,6 +75,9 @@ class Chunk:
     start_sample: int
     end_sample: int
     closed: bool
+    #: Ended by the force cut, not at a silence: the words either side of the
+    #: cut may be split mid-word, so the polish always re-decodes across it.
+    forced: bool = False
 
     @property
     def length_samples(self) -> int:
@@ -117,6 +123,13 @@ def cut_chunks(
     soft_s = int(policy.soft_max_sec * sr)
     force_s = int(policy.force_cut_sec * sr)
 
+    # A cut needs a real gap between two VAD marks. Marks can touch (Silero
+    # splits a pause under ~400 ms down the middle), and cutting there too was
+    # tried: replay 2026-10-25 on real voices, WER 28.4% -> 28.9%, with one
+    # clip's opening phrase misheard outright, and no gain on the synthetic
+    # sets. A breath is not the end of a thought. Fluent dictation with no
+    # longer pause still reaches the force cut, and the polish re-decodes both
+    # sides of that (ChunkLedger.forced_cut_indices).
     cut_candidates = [
         marks[i].end_sample
         for i in range(len(marks) - 1)
@@ -147,6 +160,7 @@ def cut_chunks(
         in_range = [c for c in cut_candidates if min_pt <= c < force_pt]
         within_soft = [c for c in in_range if c <= soft_pt]
 
+        forced = False
         if within_soft:
             cut = within_soft[-1]
         elif in_range:
@@ -161,10 +175,11 @@ def cut_chunks(
             # leaves a silent tail that gets force-cut into a silent chunk and
             # decoded for nothing.
             cut = force_pt
+            forced = True
         else:
             break
 
-        chunks.append(Chunk(chunk_start, cut, closed=True))
+        chunks.append(Chunk(chunk_start, cut, closed=True, forced=forced))
         chunk_start = cut
         cut_candidates = [c for c in cut_candidates if c > chunk_start]
         if trailing_cut is not None and trailing_cut <= chunk_start:

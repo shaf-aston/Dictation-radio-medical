@@ -9,6 +9,7 @@ the file that turns into per-user state; nothing else has to learn about it.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from threading import Lock
 from pathlib import Path
 from typing import Optional
@@ -55,7 +56,7 @@ def settings() -> Settings:
 def current_preferences() -> dict:
     current = settings()
     prefs = {key: current.get(key) for key in PREFERENCE_KEYS}
-    macro_region = current.get("last_macro_region", "")
+    macro_region = current.get("last_macro_region")
     if macro_region not in macros.REGION_ORDER and macros.REGION_ORDER:
         macro_region = macros.REGION_ORDER[0]
     prefs["macro_region"] = macro_region
@@ -116,12 +117,38 @@ def drop_engine(model_size: Optional[str] = None) -> None:
 
 # -- the open report ---------------------------------------------------------
 
-#: The report currently open in the browser, and which of its findings have
-#: been answered for. It is the *same* class the desktop reads
-#: (``features/report_release.OutstandingFindings``), so the count, the marks
-#: and the meaning of "acknowledged" cannot drift between the two front-ends.
-#: Reset by ``/api/report/findings/reset`` when a new report starts.
-findings = OutstandingFindings()
+#: How many open reports' answers are remembered (tabs, reloads, past reports).
+_REPORTS_KEPT = 32
+_findings_lock = Lock()
+_findings: "OrderedDict[str, OutstandingFindings]" = OrderedDict()
+
+
+def findings_for(report_id: str) -> OutstandingFindings:
+    """Which findings one report has, and which have been answered for.
+
+    Keyed by the id the page gives each report (on load, New report, a
+    template): one process-wide object carried an acknowledgement across a
+    reload, a second tab or a change of patient, so the next patient's
+    identical finding read as already communicated and was never audited. A
+    report id the server has not seen starts with nothing answered.
+
+    The *same* class the desktop reads (``features/report_release
+    .OutstandingFindings``), so the count, the marks and the meaning of
+    "acknowledged" cannot drift between the two front-ends.
+    """
+    if not report_id:  # a client that names no report gets no memory of one
+        return OutstandingFindings()
+    with _findings_lock:
+        found = _findings.pop(report_id, None) or OutstandingFindings()
+        _findings[report_id] = found
+        while len(_findings) > _REPORTS_KEPT:
+            _findings.popitem(last=False)
+        return found
+
+
+def forget_report(report_id: str) -> None:
+    with _findings_lock:
+        _findings.pop(report_id, None)
 
 #: Bumped by every new dictation. An older one still polishing sees it change
 #: and stops between sections, so its polish stops taking the CPU from the new

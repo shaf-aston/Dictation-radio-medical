@@ -2,13 +2,13 @@
 
 Offline speech-to-text workstation for radiologists. Dictate a report, get clean, correctly spelled medical text.
 
-Transcription runs locally with Parakeet (`onnx-asr`), with Whisper (`faster-whisper`) behind it, so audio and text stay on the machine by default.
+Transcription runs locally with Parakeet (sherpa-onnx, biased toward an ~870-term radiology lexicon), with Whisper (`faster-whisper`) behind it, so audio and text stay on the machine by default.
 
 ## Highlights
 
 - **Live transcription**: text streams in while you speak
-- **Radiology-tuned**: about 200 domain terms prime the recogniser
-- **Correction pipeline**: removes hallucinations, applies voice commands, punctuation, measurements, terminology, accent fixes, fuzzy matching and learned corrections
+- **Radiology-tuned**: an ~870-term radiology lexicon biases Parakeet as it decodes (Whisper fallback: a ~40-term prompt)
+- **Correction pipeline**: removes hallucinations, applies voice commands ("scratch that", "insert <phrase>"), punctuation, measurements, terminology, UK spelling, accent fixes, fuzzy matching, a context real-word fix and learned corrections
 - **Medical dictionary**: fuzzy matching that protects real terms from over-correction
 - **Learns from you**: picks up your edits and applies them next time
 - **Dictate into templates**: text goes in at the cursor; Tab jumps to the next field like `[Right / Left]`, and saying "left" answers it
@@ -34,17 +34,17 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-Requires Python 3.12+. Whisper models download to `~/.cache/huggingface/` on first use.
+Requires Python 3.12+. Models download once into `data/cache/` on first use (safe to delete).
 
 ## Stack
 
-Python, faster-whisper, PySide6, FastAPI with WebSockets, rapidfuzz, SymSpell, python-docx.
+Python, sherpa-onnx / onnx-asr (Parakeet), faster-whisper, PySide6, FastAPI with WebSockets, rapidfuzz, SymSpell, python-docx.
 
 ## Keyboard shortcuts
 
 | Shortcut | Action |
 |---|---|
-| F5 / F6 | Start / stop recording |
+| F5 / F6 | Start / stop recording (desktop; F5 reloads a web page) |
 | F2 | Start or stop recording (desktop and web; a dictation mic's button can send it) |
 | Tab / Shift+Tab | Next / previous template field |
 | Ctrl+S | Save as text |
@@ -70,9 +70,9 @@ Keys are settings (`key_record_toggle`, `key_next_field`, `key_previous_field` i
 |---|---|
 | Templates | add a `.txt` to `src/templates/` |
 | Macros | `data/macros.json` (hot-reloaded) |
-| Medical terms | `src/resources/medical_terms.txt` |
+| Spelling targets | `src/resources/radiology_lexicon.txt` (what a typo is corrected to); `medical_terms.txt` only marks a word as known |
 | Correction rules | `src/dictation/postprocess/` |
-| Fuzzy cutoff | `cutoff` in `src/dictation/postprocess/medical_dict_match.py` |
+| Fuzzy strictness | `_max_edits` in `src/dictation/postprocess/medical_dict_match.py` |
 
 ## Troubleshooting
 
@@ -81,7 +81,7 @@ Keys are settings (`key_record_toggle`, `key_next_field`, `key_previous_field` i
 | Microphone errors | check the input device; close other apps using the mic |
 | Import errors | activate the venv, run `pip install -e .` |
 | Slow transcription | the developer console shows each decode's time; Whisper sizes only matter without Parakeet |
-| Over-correction | raise the fuzzy cutoff or protect the term |
+| Over-correction | add the word to `radiology_lexicon.txt` or a rule to `corrections.yaml`; or use cleanup level Soft |
 
 ## Docs
 

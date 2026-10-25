@@ -50,7 +50,7 @@ def _enabled() -> bool:
     """True unless the user has turned passive learning off."""
     try:
         from src.core.settings import Settings
-        return bool(Settings().get("learning_enabled", True))
+        return bool(Settings().get("learning_enabled"))
     except Exception:
         return True
 
@@ -136,13 +136,3 @@ def edit_stats() -> Dict[str, int]:
     return {"total": len(records), **by_op}
 
 
-def reset_edits() -> None:
-    """Delete the edit log."""
-    try:
-        from src.core.paths import dictation_edits_path
-        path = dictation_edits_path()
-        if path.exists():
-            path.unlink()
-            logger.info("Cleared dictation edit log")
-    except Exception as exc:
-        logger.warning("Could not reset dictation edits: %s", exc)

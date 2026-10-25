@@ -20,7 +20,10 @@ src/
 │                    needs both. Mirrors ordinary log lines in too, so the
 │                    warning and the timing that explains it sit together)
 ├── dictation/   the offline pipeline, has NO cloud dependency
-│   ├── audio.py          microphone capture
+│   ├── audio.py          microphone capture · mic.py (when a microphone is
+│   │                       worth a warning: one rule, read by both front-ends)
+│   ├── warmup.py         start-up warmers (models, VAD, spelling index…) so the
+│   │                       first dictation after a restart is not the slow one
 │   ├── worker.py         desktop QThread: thin adapter feeding LiveSession
 │   │                       the new samples of the growing WAV (never re-reads)
 │   ├── asr/               the AsrEngine swap-seam: port.py
@@ -78,12 +81,15 @@ src/
 │   │                       expander, agc): every step off, read only by
 │   │                       scripts/eval/replay.py until one passes its marks
 │   │                       (docs/audio-conditioning.md)
-│   ├── postprocess/      10-stage correction pipeline (pipeline.py orchestrates)
+│   ├── postprocess/      the correction pipeline (pipeline.pipeline_stages(), in order)
 │   │   └── incremental.py  live path: processes only the un-committed tail,
 │   │                        caching the frozen prefix (see src/dictation/CLAUDE.md)
-│   └── resources/        radiology_prompt.txt (Whisper priming prompt, ~200 terms)
+│   └── resources/        radiology_prompt.txt (Whisper priming prompt, ~40 terms sized
+│                           to the 223-token slot; tests/test_prompt_budget.py)
 ├── ui/          main_window.py · views.py · recording_session.py · dialogs.py
 │   ├── postprocess_worker.py  runs the pipeline OFF the UI thread, latest-only
+│   ├── release_gate.py   the desktop dialogs every exit asks (rules: features/report_release)
+│   ├── training_capture.py  what a recording tells the (opt-in) training collector
 │   ├── web_app.py        assembles the FastAPI app (start-up, routers);
 │   │                       `python -m src.ui.web_app` (host/port from settings)
 │   ├── web/              one router per job, all thin over features/:
@@ -130,11 +136,15 @@ src/
 │   │                       with it (lookup); and which words to highlight at all
 │   │                       (suspect_terms, three gates, the last of which
 │   │                       guarantees every mark has something to offer)
+│   ├── spelling.py       British/US spelling: the uk_spelling stage, and what
+│   │                       lets a British spelling count as a real word
 │   └── deid.py           DeIdentifier + PrivacyError, PHI de-id, the upload
 │                           safety gate; lives here so dictation/training/cloud
 │                           all import it downward without dictation touching
 │                           src.cloud.*
-├── features/    accent_corrections.py · adaptive_learning.py · audit_log.py
+├── features/    adaptive_learning.py · audit_log.py · ai_cleanup.py (the
+│                  optional Groq polish: the one network feature here, kept out
+│                  of dictation/, which stays offline)
 │   ├── template_fields.py  what a template field is ([Right / Left], [X]),
 │   │                       declared once: the release gate, Tab navigation and
 │   │                       pick-list answers ("left") all read it; the web page
@@ -144,6 +154,8 @@ src/
 │   │                       (never withheld; records who was told, how, when)
 │   ├── report_checks.py    side / sex / missing-impression checks, scored on
 │   │                       scripts/eval/report_checks_corpus.py
+│   ├── clinical_disclaimer.py  the first-launch statement, shown by both
+│   ├── edit_tracking.py  what the radiologist changed after a dictation (log)
 │   ├── run_log.py        one capped JSONL record per dictation (timings +
 │   │                       optional report text), the history behind /developer
 │   └── report_manager.py
@@ -169,21 +181,23 @@ src/
 │   ├── tasks/            one plug-in per model type (per-task differences only)
 │   │   ├── base.py       TrainingTask Protocol + JobSpec
 │   │   └── whisper_voice.py · text_corrector.py · scan_finetune.py
-│   └── exceptions.py     CloudError hierarchy (+ ImagingError, GroqError);
-│                          re-exports PrivacyError from medical/deid.py
+│   └── exceptions.py     CloudError hierarchy (+ GroqError); re-exports
+│                          ImagingError (imaging/exceptions.py) and PrivacyError
+│                          (medical/deid.py)
 ├── devtools/    speech_test.py: the "Test voice" in the developer console.
 │                  Types a report, Windows speaks it into dictation in place of
-│                  the mic. Removable: this folder, /api/dev/speak, and the
-│                  speechTest block in app.js + form in app.html
+│                  the mic. Removable: this folder, ui/web/devtools.py,
+│                  frontends/speechtest.js and the form + script tag in app.html
 ├── training/    collector.py · schemas.py · staging_db.py (SQLite)
-├── templates/   plain-text report templates (RSNA / MSK / generic)
+├── templates/   plain-text report templates (RSNA / MSK / ECR / RCR / generic)
 └── resources/   medical_terms.txt (broad generic wordlist, membership net) ·
-                  radiology_lexicon.txt (curated radiology terms, the clean
-                  spelling-correction snap targets)
+                  radiology_lexicon.txt (curated radiology terms: preferred
+                  snap targets, boosted in the SymSpell index; also Parakeet's
+                  hotwords and the eval's medical-term list)
 ```
 
 Other optional, off-by-default add-ons:
-- `dictation/postprocess/llm_cleanup.py`: on-demand Groq report polish (NOT in
+- `features/ai_cleanup.py`: on-demand Groq report polish (NOT in
   the per-chunk pipeline); de-identifies first, key in keychain, consent-gated.
 - `scripts/lightning/`: training entrypoints run ON Lightning AI: `train_whisper`
   + `convert_to_ct2` (voice), `train_text_corrector`, `train_scan_classifier`.

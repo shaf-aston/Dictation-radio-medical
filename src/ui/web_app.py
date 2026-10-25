@@ -6,6 +6,8 @@ apply lives below them in ``features/``, ``medical/`` and ``dictation/``,
 shared with the desktop.
 """
 
+from __future__ import annotations
+
 import logging
 from contextlib import asynccontextmanager
 
@@ -16,6 +18,7 @@ from src.core.logging_setup import setup_logging
 from src.core.paths import startup_cleanup
 from src.dictation.asr.models import resolve_model
 from src.ui.web import diagnostics, dictate, pages, preferences, report, state, terms
+from src.ui.web.local_only import LocalOnlyMiddleware, allowed_hosts
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +36,7 @@ async def lifespan(_: FastAPI):
     state.drop_engine()
     # Same startup housekeeping as the desktop GUI (temp files, old
     # autosaves, legacy cache locations): a web-only user must not miss it.
-    startup_cleanup(settings.get("autosave_retention_days", 30))
+    startup_cleanup(settings.get("autosave_retention_days"))
     warm_up_singletons()
     yield
     logger.info("Shutting down")
@@ -46,17 +49,17 @@ def warm_up_singletons() -> None:
     seconds. Warming at startup on a background thread makes the first real
     request fast. Best-effort: warm-up never blocks or fails app startup.
     """
-    from src.dictation.warmup import postprocess_warmers, transcriber_warmer, warm_up_async
+    from src.dictation.warmup import postprocess_warmers, asr_warmer, warm_up_async
 
     settings = state.settings()
     model_size = resolve_model(settings.get("model_size"))
     live_model_size = resolve_model(settings.get("live_model_size"))
-    warmers = postprocess_warmers() + [transcriber_warmer(model_size)]
+    warmers = postprocess_warmers() + [asr_warmer(model_size)]
     # The live model decodes every word shown while the radiologist is still
     # speaking: leaving it lazy means the FIRST dictation after every
     # restart pays its full model-load cost on that exact path.
     if live_model_size != model_size:
-        warmers.append(transcriber_warmer(live_model_size))
+        warmers.append(asr_warmer(live_model_size))
     warm_up_async(warmers)
 
 
@@ -64,6 +67,14 @@ def create_app() -> FastAPI:
     application = FastAPI(title="Radio Dictate Web", lifespan=lifespan)
     for module in (pages, preferences, report, terms, diagnostics, dictate):
         application.include_router(module.router)
+    # The developer Test voice, when its folder is there (src/devtools).
+    try:
+        from src.ui.web import devtools
+    except ImportError:
+        logger.info("No developer tools installed")
+    else:
+        application.include_router(devtools.router)
+    application.add_middleware(LocalOnlyMiddleware, hosts=allowed_hosts(state.settings().get))
     return application
 
 

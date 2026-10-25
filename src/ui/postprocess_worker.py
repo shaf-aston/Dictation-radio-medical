@@ -3,7 +3,7 @@
 Why this exists
 ---------------
 The live worker re-emits the whole transcript several times a second. Running
-the ten-stage correction pipeline inline in the ``partial`` slot ran it on the
+the correction pipeline inline in the ``partial`` slot ran it on the
 Qt **main thread**: so every cycle the UI stopped repainting and stopped
 accepting input until terminology regexes and the fuzzy medical dictionary had
 finished scanning the entire document. That is the freeze the user feels.
@@ -102,13 +102,6 @@ class PostprocessWorker(QObject):
             logger.warning("Post-processing failed, using raw text: %s", exc)
             processed, changes = text, []
         self.processed.emit(processed, list(changes), seq)
-
-    @Slot()
-    def reset(self) -> None:
-        """Drop cached prefix state (new recording)."""
-        with self._lock:
-            self._pending = None
-        self._incremental.reset()
 
 
 def build_changes(existing_seen: set, changes: List[str]) -> List[str]:

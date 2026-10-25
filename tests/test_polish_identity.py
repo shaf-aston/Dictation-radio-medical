@@ -70,8 +70,10 @@ def test_better_model_still_polishes_weak_chunks():
     assert s._ledger.committed_text == "better"
 
 
-def test_same_local_model_still_polishes_at_the_wider_beam():
-    live, final = _Engine("tiny", network=False), _Engine("tiny", network=False)
+def test_same_local_model_still_polishes():
+    # Even greedy Parakeet: a weak chunk decoded with its neighbours is
+    # different audio, and skipping it measured less accurate.
+    live, final = _Engine("parakeet", network=False), _Engine("parakeet", network=False)
     s = _session(live, final)
     s.finalize()
     assert final.calls == 1

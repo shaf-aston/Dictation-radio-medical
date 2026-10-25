@@ -18,6 +18,7 @@ rather than propagated to the UI thread.
 from __future__ import annotations
 
 import logging
+import shutil
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,14 +81,14 @@ class SyncManager:
             return None
         from src.core.settings import Settings
         s = Settings()
-        min_records = int(s.get("min_corrections_before_upload", 20))
+        min_records = int(s.get("min_corrections_before_upload"))
         if self._db.pending_count() < min_records:
             return None
         try:
             client = self._make_client()
             return self._start_batch(
                 client, task_type,
-                base_model=s.get("model_size", "base"),
+                base_model=s.get("model_size"),
                 min_records=min_records,
             )
         except CloudError as exc:
@@ -165,15 +166,16 @@ class SyncManager:
         for batch in active:
             if not batch.lightning_job_id:
                 continue
+            # One batch's trouble never stops the others being collected.
             try:
                 status = client.get_job_status(batch.lightning_job_id)
-            except CloudError as exc:
+            except Exception as exc:
                 logger.warning("Status check failed for %s: %s", batch.batch_id, exc)
                 continue
-            if status["status"] == "completed":
+            if status.get("status") == "completed":
                 if version := self._download_and_register(client, batch, status):
                     new_versions.append(version)
-            elif status["status"] == "failed":
+            elif status.get("status") == "failed":
                 self._db.update_batch_status(batch.batch_id, BATCH_FAILED)
                 logger.warning("Training job for %s failed: %s",
                                batch.batch_id, status.get("error"))
@@ -192,22 +194,25 @@ class SyncManager:
 
         version = batch.batch_id
         dest = fine_tuned_dir() / version
+        # The job has finished, so retrying cannot fix what it produced: any
+        # failure from here (a corrupt or unsafe archive, a full disk) ends the
+        # batch, and nothing half-extracted is left where a model is looked for.
         try:
             archive = client.download_artifact(artifact_url, dest)
             self._extract_model(archive, dest)
-        except (CloudError, OSError) as exc:
+            ModelRegistry().register_downloaded_model(
+                version=version,
+                local_path=dest,
+                base_model=Settings().get("model_size"),
+                task_type=batch.task_type,
+                correction_count=batch.record_count,
+                lightning_job_id=batch.lightning_job_id,
+            )
+        except Exception as exc:
             logger.warning("Could not retrieve model for %s: %s", batch.batch_id, exc)
+            shutil.rmtree(dest, ignore_errors=True)
             self._db.update_batch_status(batch.batch_id, BATCH_FAILED)
             return None
-
-        ModelRegistry().register_downloaded_model(
-            version=version,
-            local_path=dest,
-            base_model=Settings().get("model_size", "base"),
-            task_type=batch.task_type,
-            correction_count=batch.record_count,
-            lightning_job_id=batch.lightning_job_id,
-        )
         self._db.update_batch_status(batch.batch_id, BATCH_DONE)
         logger.info("Model %s (%s) downloaded and registered",
                     version, batch.task_type)
@@ -242,5 +247,5 @@ class SyncManager:
     def training_progress(self) -> Tuple[int, int]:
         """Return (pending_corrections, threshold) for a progress indicator."""
         from src.core.settings import Settings
-        threshold = int(Settings().get("min_corrections_before_upload", 20))
+        threshold = int(Settings().get("min_corrections_before_upload"))
         return self._db.pending_count(), threshold

@@ -65,6 +65,8 @@ def test_tab_moves_through_fields_in_order_and_stops_at_the_end():
         ("[right/left]", "Right", "right"),
         ("[Right / Left / Bilateral]", "bilateral", "Bilateral"),
         ("[IV contrast administered: yes / no]", "no", "IV contrast administered: no"),
+        # A colon with no choice after it is part of an option, not a prefix.
+        ("[Right / Left: lateral]", "right", "Right"),
         ("[Right / Left]", "left sided", None),
         ("[X]", "3", None),
         ("[Right / Left]", "", None),

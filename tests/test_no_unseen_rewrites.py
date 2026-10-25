@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.dictation.postprocess import llm_cleanup
+from src.features import ai_cleanup
 from src.dictation.postprocess.pipeline import postprocess_transcript
 
 
@@ -24,7 +24,7 @@ def test_the_diagnosis_said_is_the_diagnosis_written(said, accent):
 def test_the_pipeline_never_calls_the_ai(monkeypatch):
     def boom(*_a, **_k):
         raise AssertionError("pipeline reached the network")
-    monkeypatch.setattr(llm_cleanup, "clean_with_llm", boom)
+    monkeypatch.setattr(ai_cleanup, "clean_with_llm", boom)
     assert postprocess_transcript("no effusion", cleanup_level="hard") == "No effusion"
 
 
@@ -52,10 +52,12 @@ def window(qt_app, monkeypatch):
         sent.append(patient_info)
         return "Meniscal tear.", ["grammar"]
 
-    monkeypatch.setattr(llm_cleanup, "is_enabled", lambda: True)
-    monkeypatch.setattr(llm_cleanup, "clean_with_llm", fake_clean)
+    monkeypatch.setattr(ai_cleanup, "is_enabled", lambda: True)
+    monkeypatch.setattr(ai_cleanup, "clean_with_llm", fake_clean)
     return SimpleNamespace(editor=editor, sent=sent, _show_status=lambda *a, **k: None,
-                           _get_patient_info=lambda: PATIENT)
+                           _get_patient_info=lambda: PATIENT,
+                           recorder=SimpleNamespace(is_recording=False),
+                           replace_report=editor.setPlainText)
 
 
 def _answer(monkeypatch, button):
@@ -79,7 +81,7 @@ def test_accepted_cleanup_applies_and_scrubs_with_the_patients_details(window, m
 
 
 def test_automatic_cleanup_is_silent_when_the_feature_is_off(window, monkeypatch):
-    monkeypatch.setattr(llm_cleanup, "is_enabled", lambda: False)
+    monkeypatch.setattr(ai_cleanup, "is_enabled", lambda: False)
     asked = _answer(monkeypatch, dialogs._Yes)
     dialogs.offer_ai_cleanup(window, automatic=True)
     assert not asked and not window.sent

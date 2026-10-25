@@ -5,29 +5,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QDateTime
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QDateTimeEdit,
-    QDialog,
-    QDialogButtonBox,
-    QFormLayout,
-    QLabel,
-    QLineEdit,
     QMessageBox,
-    QVBoxLayout,
-    QWidget,
 )
 
+from src.core.settings import get_default
 from src.features import clinical_disclaimer
 from src.features.adaptive_learning import get_adaptive_learning
-from src.features.report_release import (
-    COMMUNICATION_METHODS,
-    Communication,
-    ReleaseCheck,
-    report_warnings,
-)
 
 if TYPE_CHECKING:
     from src.ui.main_window import MainWindow
@@ -40,7 +24,7 @@ _No = QMessageBox.StandardButton.No
 
 def show_learning_consent_if_needed(window: MainWindow) -> None:
     """Show adaptive learning consent dialog on first launch."""
-    if window.settings.get("learning_consent_shown", False):
+    if window.settings.get("learning_consent_shown"):
         return
     reply = QMessageBox.question(
         window,
@@ -90,8 +74,8 @@ def show_cloud_training_dialog(window: MainWindow) -> None:
     layout.addWidget(blurb)
 
     enable_box = QCheckBox("Enable cloud voice training (upload my corrections)")
-    enable_box.setChecked(bool(s.get("cloud_enabled", False))
-                          and bool(s.get("cloud_training_consent", False)))
+    enable_box.setChecked(bool(s.get("cloud_enabled"))
+                          and bool(s.get("cloud_training_consent")))
     layout.addWidget(enable_box)
 
     form = QFormLayout()
@@ -101,7 +85,7 @@ def show_cloud_training_dialog(window: MainWindow) -> None:
         "•••• stored in OS keychain" if get_api_key() else "Lightning AI API key")
     form.addRow("API key:", key_edit)
 
-    project_edit = QLineEdit(s.get("lightning_project_id", "") or "")
+    project_edit = QLineEdit(s.get("lightning_project_id") or "")
     project_edit.setPlaceholderText("Lightning AI project ID")
     form.addRow("Project ID:", project_edit)
     layout.addLayout(form)
@@ -146,6 +130,7 @@ def show_cloud_training_dialog(window: MainWindow) -> None:
         return
 
     enabled = enable_box.isChecked()
+    was_enabled = bool(s.get("cloud_enabled")) and bool(s.get("cloud_training_consent"))
     s.batch_set({
         "cloud_enabled": enabled,
         "cloud_training_consent": enabled,
@@ -158,6 +143,10 @@ def show_cloud_training_dialog(window: MainWindow) -> None:
     elif not enabled and get_api_key():
         # Disabling cloud training removes the stored credential.
         clear_api_key()
+    if was_enabled and not enabled:
+        from src.training.collector import get_correction_collector
+        removed = get_correction_collector().withdraw_consent()
+        window._show_status(f"Cloud training off: {removed} staged correction(s) deleted", 5000)
 
     from src.features import audit_log
     audit_log.log_cloud_consent(enabled)
@@ -202,8 +191,8 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
         QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QLabel,
         QLineEdit, QVBoxLayout,
     )
-    from src.dictation.postprocess.llm_cleanup import (
-        clear_groq_key, get_groq_key, store_groq_key, _DEFAULT_MODEL,
+    from src.features.ai_cleanup import (
+        clear_groq_key, get_groq_key, store_groq_key,
     )
 
     s = window.settings
@@ -223,7 +212,7 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
     layout.addWidget(blurb)
 
     enable_box = QCheckBox("Enable AI cleanup (sends de-identified report text to Groq)")
-    enable_box.setChecked(bool(s.get("groq_cleanup_enabled", False)))
+    enable_box.setChecked(bool(s.get("groq_cleanup_enabled")))
     layout.addWidget(enable_box)
 
     form = QFormLayout()
@@ -233,7 +222,7 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
         "•••• stored in OS keychain" if get_groq_key() else "Groq API key")
     form.addRow("API key:", key_edit)
 
-    model_edit = QLineEdit(s.get("groq_model", _DEFAULT_MODEL) or _DEFAULT_MODEL)
+    model_edit = QLineEdit(s.get("groq_model") or get_default("groq_model"))
     form.addRow("Model:", model_edit)
     layout.addLayout(form)
 
@@ -249,7 +238,7 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
     enabled = enable_box.isChecked()
     s.batch_set({
         "groq_cleanup_enabled": enabled,
-        "groq_model": model_edit.text().strip() or _DEFAULT_MODEL,
+        "groq_model": model_edit.text().strip() or get_default("groq_model"),
     })
     if new_key := key_edit.text().strip():
         store_groq_key(new_key)
@@ -273,8 +262,11 @@ def offer_ai_cleanup(window: MainWindow, *, automatic: bool) -> None:
     and ID rather than guessing at them. ``automatic`` (after Stop) stays
     quiet when there is nothing to do: no pop-up for a disabled feature.
     """
-    from src.dictation.postprocess.llm_cleanup import clean_with_llm, is_enabled
+    from src.features.ai_cleanup import clean_with_llm, is_enabled
 
+    if window.recorder.is_recording:
+        window._show_status("Stop recording before AI cleanup", 3000, state="warn")
+        return
     text = window.editor.toPlainText()
     if not text.strip():
         if not automatic:
@@ -312,8 +304,8 @@ def offer_ai_cleanup(window: MainWindow, *, automatic: bool) -> None:
         _Yes | _No, _No,
     )
     if reply == _Yes:
-        window.editor.setPlainText(cleaned)
-        window._show_status("AI cleanup applied", 3000)
+        window.replace_report(cleaned)
+        window._show_status("AI cleanup applied  (Ctrl+Z to undo)", 3000)
     else:
         window._show_status("AI cleanup not applied", 2000)
 
@@ -491,104 +483,6 @@ def show_disclaimer_if_needed(window: MainWindow) -> None:
         clinical_disclaimer.DISCLAIMER_TEXT,
     )
     clinical_disclaimer.mark_shown(window.settings)
-
-
-def confirm_report_checks(window: MainWindow) -> bool:
-    """Ask before releasing a report with unfilled fields or a consistency issue.
-
-    The desktop shape of ``report_release.report_warnings``: the rules live
-    there, alongside the web app's 409. This function owns only the message
-    box, including how much fits in it. Returns True to proceed; False means
-    the radiologist went back to fix it and the report stays put.
-    """
-    found = report_warnings(
-        window.editor.toPlainText(), window._get_patient_info().get("sex", "")
-    )
-    if not found:
-        return True
-
-    def short(line: str) -> str:
-        return line if len(line) <= 90 else line[:89] + "…"
-
-    parts = []
-    if found.issues:
-        parts.append("Worth a second look:\n" + "\n".join(f"  • {short(i)}" for i in found.issues[:8]))
-    if found.fields:
-        parts.append(
-            f"{len(found.fields)} unfilled template field(s):\n"
-            + "\n".join(f"  • {short(f)}" for f in found.fields[:10])
-            + ("\n  …" if len(found.fields) > 10 else "")
-        )
-    reply = QMessageBox.warning(
-        window,
-        "Check the report",
-        "\n\n".join(parts) + "\n\nRelease the report anyway?",
-        _Yes | _No,
-        _No,
-    )
-    return reply == _Yes
-
-
-class CommunicationDialog(QDialog):
-    """Ask whether a critical finding was communicated, and to whom, how, when.
-
-    The desktop shape of the web app's #commModal. Never withholds the report:
-    both buttons release it and only the audit entry differs. "Communicated"
-    needs a recipient, because the record it writes says someone was told.
-    """
-
-    def __init__(self, parent: QWidget, check: ReleaseCheck, radiologist: str) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(
-            "Life-threatening finding" if check.worst_level == 1 else "Urgent finding"
-        )
-        layout = QVBoxLayout(self)
-        summary = QLabel(
-            check.summary + "\n\nConfirm it was communicated to the referring clinician."
-        )
-        summary.setWordWrap(True)
-        layout.addWidget(summary)
-
-        form = QFormLayout()
-        self.recipient = QLineEdit()
-        self.recipient.setPlaceholderText("Dr Patel, ED registrar")
-        self.method = QComboBox()
-        self.method.addItems([m[0].upper() + m[1:] for m in COMMUNICATION_METHODS])
-        self.at = QDateTimeEdit(QDateTime.currentDateTime())
-        self.at.setDisplayFormat("dd/MM/yyyy HH:mm")
-        self.radiologist = QLineEdit(radiologist)
-        form.addRow("Told to:", self.recipient)
-        form.addRow("How:", self.method)
-        form.addRow("When:", self.at)
-        form.addRow("Your name:", self.radiologist)
-        layout.addLayout(form)
-        self.add_to_report = QCheckBox("Add this to the report")
-        self.add_to_report.setChecked(True)
-        layout.addWidget(self.add_to_report)
-
-        buttons = QDialogButtonBox()
-        self.btn_communicated = buttons.addButton(
-            "Communicated", QDialogButtonBox.ButtonRole.AcceptRole
-        )
-        buttons.addButton(
-            "Not communicated: release anyway", QDialogButtonBox.ButtonRole.RejectRole
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        self.btn_communicated.setEnabled(False)
-        self.recipient.textChanged.connect(
-            lambda text: self.btn_communicated.setEnabled(bool(text.strip()))
-        )
-        self.recipient.setFocus()
-
-    def communication(self) -> Communication:
-        return Communication(
-            self.recipient.text().strip(),
-            COMMUNICATION_METHODS[self.method.currentIndex()],
-            self.at.dateTime().toPython(),  # type: ignore[arg-type]
-            self.radiologist.text().strip(),
-        )
 
 
 def on_show_learning_stats(window: MainWindow) -> None:

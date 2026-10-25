@@ -190,12 +190,17 @@ def model_dir_for(name: str) -> Optional[Path]:
     return None if name == STANDARD else fine_tuned_dir() / name
 
 
+#: The encoder's smallest input: one output frame is 8 subsampled 10 ms mel
+#: frames. Shorter audio crashes both runtimes (onnx-asr IndexError, sherpa
+#: ConvInteger) instead of decoding to nothing, which the port promises.
+MIN_SAMPLES = int(0.08 * SAMPLE_RATE)
+
+
 def _as_input(audio: Any) -> Any:
     """Normalise the port's audio argument into something onnx-asr accepts.
 
-    Returns ``None`` for empty audio so the caller can skip the model
-    entirely: a zero-length waveform crashes the log-mel preprocessor rather
-    than transcribing to nothing.
+    Returns ``None`` for audio shorter than :data:`MIN_SAMPLES` so the caller
+    skips the model entirely.
     """
     if isinstance(audio, (str, Path)):
         return str(audio)
@@ -203,7 +208,7 @@ def _as_input(audio: Any) -> Any:
     import numpy as np  # noqa: PLC0415 - kept out of module import for symmetry
 
     samples = np.asarray(audio)
-    if samples.size == 0:
+    if samples.size < MIN_SAMPLES:
         return None
     if samples.dtype != np.float32:
         samples = samples.astype(np.float32)
@@ -227,9 +232,9 @@ def merge_pieces(
     and locate words, not to measure the pause between them: which is why the
     streaming layer keeps owning segmentation.
     """
-    if not tokens or not timestamps or not logprobs:
+    if not tokens or not timestamps:
         return ()
-    if not (len(tokens) == len(timestamps) == len(logprobs)):
+    if logprobs is not None and not (len(tokens) == len(timestamps) == len(logprobs)):
         # Fail visibly rather than zip-truncating into silently misaligned
         # confidences, which would mislabel which word the decoder doubted.
         logger.warning(
@@ -253,12 +258,15 @@ def merge_pieces(
         text = "".join(tokens[i] for i in group).strip()
         if not text:
             continue
-        mean_logprob = sum(logprobs[i] for i in group) / len(group)
+        confidence = None
+        if logprobs is not None:
+            # A log-probability is <= 0; int8 rounding can leave a hair above.
+            confidence = min(1.0, math.exp(sum(logprobs[i] for i in group) / len(group)))
         words.append(Word(
             text=text,
             start=float(timestamps[group[0]]),
             end=float(timestamps[group[0]]),
-            confidence=math.exp(mean_logprob),
+            confidence=confidence,
         ))
 
     for i in range(len(words) - 1):
