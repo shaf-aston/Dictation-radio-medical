@@ -30,13 +30,11 @@ def test_without_a_key_the_local_tiers_differ(monkeypatch):
 
 
 class _Engine:
-    def __init__(self, name, network=True, beam_sensitive=False):
+    def __init__(self, name, network=True):
         self.name, self.network, self.calls = name, network, 0
-        self.beam_sensitive = beam_sensitive
 
     def capabilities(self):
-        return EngineCaps(word_confidence=True, hotwords=False, network=self.network,
-                          beam_sensitive=self.beam_sensitive)
+        return EngineCaps(word_confidence=True, hotwords=False, network=self.network)
 
     def identity(self):
         return self.name
@@ -72,14 +70,10 @@ def test_better_model_still_polishes_weak_chunks():
     assert s._ledger.committed_text == "better"
 
 
-def test_same_model_polishes_only_when_the_wider_beam_can_change_its_answer():
-    # Whisper: a wider beam is a better decode, even on the same weights.
-    live, final = _Engine("tiny", network=False, beam_sensitive=True), _Engine("tiny", network=False, beam_sensitive=True)
-    s = _session(live, final)
-    s.finalize()
-    assert final.calls == 1
-    # Greedy or fixed-beam Parakeet: the same weights give the same words.
+def test_same_local_model_still_polishes():
+    # Even greedy Parakeet: a weak chunk decoded with its neighbours is
+    # different audio, and skipping it measured less accurate.
     live, final = _Engine("parakeet", network=False), _Engine("parakeet", network=False)
     s = _session(live, final)
     s.finalize()
-    assert final.calls == 0
+    assert final.calls == 1

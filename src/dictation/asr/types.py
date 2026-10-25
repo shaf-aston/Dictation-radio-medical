@@ -104,9 +104,6 @@ class EngineCaps:
     ``streaming``: also implements ``open_stream()`` (a live socket that
     returns interim and final words as audio arrives).
     ``network``: audio leaves the device when this engine answers.
-    ``beam_sensitive``: a wider beam (``TranscribeContext.beam_size``) can
-    give a different, better decode; the polish re-runs the same model only
-    when it can.
     """
 
     word_confidence: bool
@@ -114,7 +111,6 @@ class EngineCaps:
     cost: CostModel = LOCAL_DECODE_COST
     streaming: bool = False
     network: bool = False
-    beam_sensitive: bool = False
 
 
 @dataclass(frozen=True)

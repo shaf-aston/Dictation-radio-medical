@@ -777,8 +777,8 @@ class LiveSession:
 
         # The polish exists to hand weak chunks to a BETTER decode. When the
         # accurate engine is the live one and the beam does not change its
-        # answer (a cloud model, greedy or fixed-beam Parakeet), it would decode
-        # the same audio into the same words. Then only audio never decoded at
+        # answer (a cloud model), it would decode the same audio into the same
+        # words. Then only audio never decoded at
         # all is worth a call, plus the chunks either side of a forced cut,
         # which decoded together are different audio from either alone.
         same_model = not self._polish_worthwhile()
@@ -880,14 +880,15 @@ class LiveSession:
 
 
 def _ignores_beam(engine: AsrEngine) -> bool:
-    """True when the beam asked for does not change what this engine decodes.
+    """A cloud engine decodes the same way whatever beam it is asked for.
 
-    Read from what the engine declares (EngineCaps.beam_sensitive), not from
-    whether it is a cloud engine: greedy Parakeet and the fixed-beam hotword
-    decoder ignore it too, and re-running them on the same weights only
-    repeated their answer.
+    A local one is still worth re-running on the same weights, even greedy
+    Parakeet: the polish decodes a weak chunk together with its neighbours,
+    which is different audio from the chunk alone. Skipping it for Parakeet
+    measured worse (replay 2026-10-25, noisy set: WER 6.79% -> 6.91%, term
+    error 11.2% -> 11.5%; real voices: WER 28.5% -> 28.9%).
     """
     try:
-        return not engine.capabilities().beam_sensitive
+        return bool(engine.capabilities().network)
     except Exception:
         return False

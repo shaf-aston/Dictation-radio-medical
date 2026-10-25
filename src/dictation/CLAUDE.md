@@ -29,8 +29,8 @@ dictations.
 Both front-ends use two models: `live_model_size` (fast) decodes what appears
 while you speak, and `model_size` re-decodes the low-confidence chunks after
 Stop. Both sizes are Whisper's: on the default `local` engine Parakeet answers
-in both slots, and a re-decode by the same Parakeet gives the same words, so
-the polish is skipped (rule 8 below). **Stop never waits on that second pass in either front-end**: the
+in both slots, and its re-decode of a weak chunk together with its
+neighbours still corrects words (rule 8 below). **Stop never waits on that second pass in either front-end**: the
 still-open tail is decoded by the fast model first, then the complete text is
 handed back and the polish upgrades it in the background. Handing back the last
 preview instead loses the last words spoken, since the polish that would add
@@ -125,9 +125,10 @@ dictation used to get slower the longer it ran:
    ledger. Any failure falls back to chunks from the ledger frontier.
 8. **The polish starts before Stop** (`background_polish`), on a background
    thread behind the frontier; only the live loop writes the ledger. Skipped
-   entirely when the accurate and live engines are the same model and it is
-   not beam-sensitive (`EngineCaps.beam_sensitive`): Parakeet and a cloud
-   model give the same words again, Whisper at a wider beam does not.
+   entirely when the accurate and live engines are the same cloud model,
+   which gives the same words again. A local model is re-run: even greedy
+   Parakeet decodes a weak chunk differently with its neighbours (measured
+   2026-10-25, skipping it cost WER on noisy and real voices).
 
 Measurements and what is still unverified:
 [docs/prd-live-dictation-speed.md](../../docs/prd-live-dictation-speed.md#delivered-2026-09-27).
