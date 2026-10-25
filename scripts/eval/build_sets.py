@@ -533,7 +533,11 @@ def build_eka(limit: int = 0) -> int:
         path = source / f"test-{shard:05d}.parquet"
         if not path.exists():
             logger.info("Downloading Eka shard %d", shard)
-            urllib.request.urlretrieve(_EKA_URL.format(shard), path)  # noqa: S310 - fixed https URL
+            # To a temporary name first: an interrupted download must not leave
+            # a partial file that exists() then trusts on every later run.
+            partial = path.with_suffix(".part")
+            urllib.request.urlretrieve(_EKA_URL.format(shard), partial)  # noqa: S310 - fixed https URL
+            partial.replace(path)
         table = pq.read_table(path, columns=["audio", "text", "speaker", "type_concept"])
         for row in table.to_pylist():
             if row["type_concept"] not in _EKA_KEEP or not row["text"].strip():

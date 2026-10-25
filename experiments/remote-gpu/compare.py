@@ -40,11 +40,7 @@ def whisper(**kw):
 
 def parakeet(path=None, quantization=None):
     """The app's own ParakeetEngine (fp32 unless told); a tuned folder is loaded into it, so decoding is the app's code path."""
-    import onnx_asr
-    eng = ParakeetEngine(quantization=quantization)
-    if path:
-        eng._model = onnx_asr.load_model("nemo-conformer-tdt", path, quantization=quantization).with_timestamps()
-    return eng
+    return ParakeetEngine(quantization=quantization, model_dir=Path(path) if path else None)
 
 
 def candidates(only):

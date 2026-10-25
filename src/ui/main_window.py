@@ -133,6 +133,7 @@ class MainWindow(QMainWindow):
     btn_stop: QPushButton
     model_combo: QComboBox
     parakeet_combo: QComboBox
+    engine_label: QLabel
     vad_checkbox: QCheckBox
     language_input: QLineEdit
     accent_combo: QComboBox

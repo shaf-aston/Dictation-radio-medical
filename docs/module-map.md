@@ -53,8 +53,10 @@ src/
 │   │                       unless parakeet_precision says int8; the
 │   │                       parakeet_model setting picks stock "standard" or
 │   │                       a fine-tune folder under data/models/fine_tuned/,
-│   │                       "Voice model" in both front-ends, warmed on
-│   │                       switch by warmup.rewarm) · prompt.py
+│   │                       "Voice model" in both front-ends) ·
+│   │                       voice_model.py (the voice choices, their labels,
+│   │                       and switching: check, save, load, the one path
+│   │                       both front-ends call) · prompt.py
 │   │                       (the radiology priming vocabulary, same for every
 │   │                       engine) · models.py (known model names + fallback)
 │   ├── stream/             chunk-once streaming, vad.py (Silero VAD, bundled

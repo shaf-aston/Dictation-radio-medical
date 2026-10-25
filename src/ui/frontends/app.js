@@ -211,12 +211,13 @@ function applyPatientInfo(info) {
 }
 
 function populateModelOptions() {
-    [[modelSelect, BOOTSTRAP.supported_models], [parakeetSelect, BOOTSTRAP.parakeet_models]].forEach(([select, models]) => {
+    const sizes = (BOOTSTRAP.supported_models || []).map((model) => ({ value: model, label: model }));
+    [[modelSelect, sizes], [parakeetSelect, BOOTSTRAP.voice_models || []]].forEach(([select, entries]) => {
         select.innerHTML = '';
-        (models || []).forEach((model) => {
+        entries.forEach(({ value, label }) => {
             const option = document.createElement('option');
-            option.value = model;
-            option.textContent = model;
+            option.value = value;
+            option.textContent = label;
             select.appendChild(option);
         });
     });
@@ -446,6 +447,7 @@ async function persistPreferences() {
         return;
     }
     preferenceSaveInFlight = true;
+    const savedVoice = (BOOTSTRAP.preferences || {}).parakeet_model || 'standard';
     const payload = {
         model_size: modelSelect.value || 'base',
         parakeet_model: parakeetSelect.value || 'standard',
@@ -456,6 +458,13 @@ async function persistPreferences() {
         macro_region: macroRegionSelect.value || '',
     };
 
+    // A new voice is loaded before the save answers (2.4 GB, many seconds):
+    // say so, and hold the picker until it is ready.
+    const voiceChanging = payload.parakeet_model !== savedVoice;
+    if (voiceChanging) {
+        parakeetSelect.disabled = true;
+        showStatus('Loading voice model', 'is-busy');
+    }
     try {
         const response = await fetch('/api/preferences', {
             method: 'PUT',
@@ -483,10 +492,13 @@ async function persistPreferences() {
         macroRegionSelect.value = BOOTSTRAP.preferences.macro_region || payload.macro_region;
         renderMacros(currentMacroRegion());
         updateSettingsBadge();
-        showStatus('Settings saved', 'is-ok', 1200);
+        showStatus(voiceChanging ? 'Voice model ready' : 'Settings saved', 'is-ok', 1200);
     } catch (err) {
+        // The server kept the previous voice: show that one, not the refused choice.
+        parakeetSelect.value = savedVoice;
         showError('Settings could not be saved: ' + err.message);
     } finally {
+        parakeetSelect.disabled = false;
         preferenceSaveInFlight = false;
         syncReportButtons();
         if (preferenceSaveQueued) {
@@ -875,7 +887,7 @@ copyBtn.addEventListener('click', async () => {
 });
 
 modelSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });
-parakeetSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });
+parakeetSelect.addEventListener('change', schedulePreferenceSave);
 languageInput.addEventListener('input', () => { schedulePreferenceSave(); updateSettingsBadge(); });
 accentSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });
 cleanupSelect.addEventListener('change', () => { schedulePreferenceSave(); updateSettingsBadge(); });

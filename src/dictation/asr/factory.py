@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
 from src.dictation.asr.engines.deepgram_engine import DeepgramEngine
@@ -27,12 +28,33 @@ logger = logging.getLogger(__name__)
 _PARAKEET_QUANTIZATION = {"fp32": None, "int8": "int8"}
 
 
+def _tuned_dir(settings: Settings) -> Optional[Path]:
+    """The fine-tune folder the ``parakeet_model`` setting names; None for the
+    standard model. A name no longer installed (folder deleted, data/ wiped) is
+    logged and dictation carries on with the standard model, and
+    :func:`describe_engine` says so: a missing folder must not stop dictation."""
+    name = settings.get("parakeet_model")
+    if name == STANDARD:
+        return None
+    try:
+        return model_dir_for(name)
+    except ValueError:
+        logger.error("Voice model %r is not installed; using the standard model", name)
+        return None
+
+
 def _make_parakeet(settings: Optional[Settings] = None, **kwargs: Any) -> ParakeetEngine:
-    """Parakeet with the weights ``parakeet_model`` names, at the precision
-    ``parakeet_precision`` names. Raises ``ValueError`` on an unknown value
-    rather than guessing one."""
+    """Parakeet with the weights ``parakeet_model`` names. The standard model
+    runs at the precision ``parakeet_precision`` names; a fine-tune at the one
+    it was exported in, since it ships only that one. Raises ``ValueError`` on
+    an unknown precision rather than guessing one."""
     settings = settings or Settings()
-    kwargs.setdefault("model_dir", model_dir_for(settings.get("parakeet_model")))
+    if "model_dir" not in kwargs:
+        kwargs["model_dir"] = _tuned_dir(settings)
+    if kwargs["model_dir"] is not None:
+        full = (kwargs["model_dir"] / "encoder-model.onnx").is_file()
+        kwargs.setdefault("quantization", None if full else "int8")
+        return ParakeetEngine(**kwargs)
     precision = settings.get("parakeet_precision")
     if precision not in _PARAKEET_QUANTIZATION:
         raise ValueError(
@@ -59,7 +81,7 @@ def _local_tiers(**kwargs: Any) -> List[Tuple[str, Any]]:
     if kwargs.get("model_path"):
         logger.info("Fine-tuned voice model active; ASR chain skips the Parakeet tier")
     else:
-        parakeet = _parakeet_tier(Settings())
+        parakeet = parakeet_tier(Settings())
         if parakeet is not None:
             tiers.append(parakeet)
         else:
@@ -68,7 +90,7 @@ def _local_tiers(**kwargs: Any) -> List[Tuple[str, Any]]:
     return tiers
 
 
-def _parakeet_tier(settings: Settings) -> Any:
+def parakeet_tier(settings: Settings) -> Any:
     """The best Parakeet this install can run, as a (name, engine) tier, or None.
 
     1. A fine-tune picked as the voice model (``parakeet_model``): onnx-asr
@@ -80,8 +102,9 @@ def _parakeet_tier(settings: Settings) -> Any:
     3. onnx-asr, greedy: the stock model.
     """
     have_onnx_asr = importlib.util.find_spec("onnx_asr") is not None
-    if settings.get("parakeet_model") != STANDARD and have_onnx_asr:
-        return ("parakeet", _make_parakeet(settings))
+    tuned = _tuned_dir(settings)
+    if tuned is not None and have_onnx_asr:
+        return ("parakeet", _make_parakeet(settings, model_dir=tuned))
     if settings.get("asr_hotwords") and importlib.util.find_spec("sherpa_onnx") is not None:
         return ("parakeet-hotwords", ParakeetHotwordEngine(float(settings.get("hotword_score"))))
     if have_onnx_asr:
@@ -98,13 +121,17 @@ def describe_engine(settings: Settings) -> str:
     """
     if settings.get("asr_engine") == "deepgram":
         return "Deepgram (cloud)"
-    tier = _parakeet_tier(settings)
+    tier = parakeet_tier(settings)
     if tier is None:
         return f"Whisper {settings.get('model_size')}"
     name, engine = tier
-    if name == "parakeet-hotwords":
-        return "Parakeet + radiology terms"
-    return f"Parakeet {settings.get('parakeet_model')}" if engine.model_dir else "Parakeet"
+    if getattr(engine, "model_dir", None):
+        return f"Parakeet, tuned: {engine.model_dir.name}"
+    label = "Parakeet + radiology terms" if name == "parakeet-hotwords" else "Parakeet"
+    chosen = settings.get("parakeet_model")
+    if chosen != STANDARD:
+        label += f" ({chosen} not installed)"
+    return label
 
 
 def _make_local_chain(**kwargs: Any) -> AsrEngine:
@@ -164,4 +191,7 @@ def model_kwargs(name: str, model: str) -> dict:
     keyword = _MODEL_KWARG.get(name)
     if keyword is None:
         raise ValueError(f"Unknown ASR engine {name!r}. Available: {sorted(_ENGINES)}")
+    if name == "parakeet" and Path(model).is_dir():
+        # A fine-tune's folder, as the kit's gate passes it (--model <dir>).
+        return {"model_dir": Path(model)}
     return {keyword: model}

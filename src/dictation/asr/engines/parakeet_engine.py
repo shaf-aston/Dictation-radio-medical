@@ -176,8 +176,9 @@ class ParakeetEngine:
 
 def available_models() -> List[str]:
     """What the ``parakeet_model`` setting may be: the download, then every
-    fine-tuned Parakeet folder (a Whisper fine-tune has no encoder file)."""
-    tuned = sorted(d.name for d in fine_tuned_dir().iterdir() if (d / "encoder-model.onnx").is_file())
+    fine-tuned Parakeet folder, full precision or int8 (a Whisper fine-tune
+    has no encoder file)."""
+    tuned = sorted(d.name for d in fine_tuned_dir().iterdir() if any(d.glob("encoder-model*.onnx")))
     return [STANDARD, *tuned]
 
 

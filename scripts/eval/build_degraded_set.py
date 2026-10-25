@@ -81,6 +81,10 @@ def main() -> None:
             ap.error(f"--{flag.replace('_', '-')} must be positive")
 
     name = args.name or f"{args.source}_{args.kind}"
+    if corpus.eval_set_dir(name) == corpus.eval_set_dir(args.source):
+        # Same folder: each degraded clip would overwrite the clip it was made
+        # from, and the own set is the radiologist's voice, which cannot be redone.
+        ap.error(f"--name {name!r} is the source set itself; pick another name")
     clips = corpus.load_set(args.source)
     if args.limit:
         clips = clips[: args.limit]

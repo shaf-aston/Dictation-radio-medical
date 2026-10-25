@@ -12,7 +12,7 @@ from src.core.paths import templates_dir
 from src.core.patient_schema import empty_patient_info
 from src.core.settings import get_default
 from src.dictation.asr.factory import describe_engine
-from src.dictation.asr.engines.parakeet_engine import available_models as parakeet_models
+from src.dictation.asr import voice_model
 from src.dictation.asr.models import SUPPORTED_MODELS
 from src.dictation.postprocess.pipeline import CLEANUP_LEVEL_LABELS
 from src.features import template_fields
@@ -135,7 +135,7 @@ def bootstrap_payload() -> dict:
         "preferences": state.current_preferences(),
         "patient_defaults": empty_patient_info(),
         "supported_models": SUPPORTED_MODELS,
-        "parakeet_models": parakeet_models(),
+        "voice_models": voice_model.choices(),
         "accent_options": [
             {"key": key, "label": label} for key, label in ACCENT_LABELS.items()
         ],

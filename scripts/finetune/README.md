@@ -20,8 +20,8 @@ python -m scripts.finetune.build_dataset --voices <dir of Piper voices> \
 # 3. Gate it on YOUR voice before using it:
 python -m scripts.eval.run_eval --set own --engine parakeet --label stock
 python -m scripts.eval.run_eval --set own --engine parakeet --model <unzipped dir> --label tuned
-#    Keep it only if medical-term error is lower. Then in dictation_settings.json:
-#    "parakeet_model_dir": "<unzipped dir>"
+#    Keep it only if medical-term error is lower. Then copy the folder to
+#    data/models/fine_tuned/<name> and pick it under "Voice model" in Settings.
 ```
 
 ## Why it is built this way
