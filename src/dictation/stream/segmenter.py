@@ -123,15 +123,17 @@ def cut_chunks(
     soft_s = int(policy.soft_max_sec * sr)
     force_s = int(policy.force_cut_sec * sr)
 
-    # Every boundary between two VAD marks is a confirmed silence. Marks can
-    # touch: Silero splits a short gap down the middle (any pause under twice
-    # its padding), and that midpoint is the safest cut there is. Requiring a
-    # gap ("<") ignored every pause under ~400 ms, which in fluent dictation
-    # left nothing to cut at but the forced cut mid-word.
+    # A cut needs a real gap between two VAD marks. Marks can touch (Silero
+    # splits a pause under ~400 ms down the middle), and cutting there too was
+    # tried: replay 2026-10-25 on real voices, WER 28.4% -> 28.9%, with one
+    # clip's opening phrase misheard outright, and no gain on the synthetic
+    # sets. A breath is not the end of a thought. Fluent dictation with no
+    # longer pause still reaches the force cut, and the polish re-decodes both
+    # sides of that (ChunkLedger.forced_cut_indices).
     cut_candidates = [
         marks[i].end_sample
         for i in range(len(marks) - 1)
-        if marks[i].end_sample <= marks[i + 1].start_sample
+        if marks[i].end_sample < marks[i + 1].start_sample
     ]
 
     # The last mark has no successor to prove the silence after it is real, so
