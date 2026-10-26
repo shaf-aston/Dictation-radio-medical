@@ -170,9 +170,7 @@ function toggleTheme() {
 function syncCachedTheme() {
     const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
     const serverTheme = currentTheme();
-    if (savedTheme && normalizeTheme(savedTheme) !== serverTheme) {
-        localStorage.setItem(THEME_STORAGE_KEY, serverTheme);
-    } else if (!savedTheme) {
+    if (!savedTheme || normalizeTheme(savedTheme) !== serverTheme) {
         localStorage.setItem(THEME_STORAGE_KEY, serverTheme);
     }
 }
