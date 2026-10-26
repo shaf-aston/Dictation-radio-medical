@@ -18,17 +18,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def active_model_path():
-    """Return the active fine-tuned model directory, or None for the base model."""
-    try:
-        from src.cloud.framework.registry import ModelRegistry
-        from src.training.schemas import TASK_WHISPER_VOICE
-        return ModelRegistry().get_active_model_path(TASK_WHISPER_VOICE)
-    except Exception as exc:
-        logger.debug("Model registry lookup failed: %s", exc)
-        return None
-
-
 def start_training_capture(window: MainWindow, wav_path: str, model_size: str) -> None:
     """Start a collector session and route voice corrections into it."""
     try:

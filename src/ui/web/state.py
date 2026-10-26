@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from threading import Lock
+from pathlib import Path
 from typing import Optional
 
 from src.core.paths import settings_file
@@ -27,7 +28,9 @@ LIVE_SAMPLE_RATE = 16000
 #: Settings keys the browser client mirrors. The *values* come from
 #: ``settings._DEFAULTS``: re-listing them here is how the web and desktop
 #: defaults drifted apart.
-PREFERENCE_KEYS = ("model_size", "language", "vad_filter", "accent", "cleanup_level")
+PREFERENCE_KEYS = (
+    "model_size", "language", "vad_filter", "accent", "cleanup_level", "parakeet_model",
+)
 
 _settings_instance: Optional[Settings] = None
 
@@ -78,24 +81,27 @@ def macros_payload() -> dict:
 # -- speech engines ----------------------------------------------------------
 
 _engine_lock = Lock()
-#: One engine per model name: the live model and the final model coexist.
-_engines: dict[str, AsrEngine] = {}
+#: One engine per (model name, fine-tuned voice): the live model and the
+#: final model coexist.
+_engines: dict[tuple, AsrEngine] = {}
 
 
-def get_engine(model_size: Optional[str] = None) -> AsrEngine:
+def get_engine(model_size: Optional[str] = None, model_path: Optional[Path] = None) -> AsrEngine:
     """Return an ASR engine for *model_size* (default: the saved setting).
 
-    Engines are cached per model name, so the live dictation loop's fast model
+    *model_path* is an active fine-tuned Whisper voice, which replaces the stock
+    weights of that size. Engines are cached per (name, model_path), so the live dictation loop's fast model
     and the accurate one that re-decodes after Stop are each built once and
     then reused for the life of the process. Whisper's own weights cache holds
     two (``faster_whisper_engine._MODEL_CACHE_MAX``), which is what makes holding exactly
     this pair free.
     """
     name = resolve_model(model_size or settings().get("model_size"))
+    key = (name, str(model_path) if model_path else None)
     with _engine_lock:
-        if name not in _engines:
-            _engines[name] = create_engine(model_size=name)
-        return _engines[name]
+        if key not in _engines:
+            _engines[key] = create_engine(model_size=name, model_path=model_path)
+        return _engines[key]
 
 
 def drop_engine(model_size: Optional[str] = None) -> None:
@@ -104,7 +110,9 @@ def drop_engine(model_size: Optional[str] = None) -> None:
         if model_size is None:
             _engines.clear()
         else:
-            _engines.pop(resolve_model(model_size), None)
+            name = resolve_model(model_size)
+            for key in [k for k in _engines if k[0] == name]:
+                del _engines[key]
 
 
 # -- the open report ---------------------------------------------------------

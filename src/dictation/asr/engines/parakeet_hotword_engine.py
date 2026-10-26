@@ -19,7 +19,7 @@ export. ``bpe.vocab`` (which sherpa needs to split a hotword into the model's
 pieces) is derived from ``tokens.txt``: the tokenizer's scores are its pieces'
 ranks, so nothing larger has to be downloaded.
 
-A fine-tuned export (``parakeet_model_dir``) is in onnx-asr's layout and still
+A fine-tuned export (picked with ``parakeet_model``) is in onnx-asr's layout and still
 runs through :mod:`parakeet_engine`; the factory picks.
 """
 

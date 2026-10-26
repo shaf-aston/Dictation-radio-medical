@@ -8,7 +8,7 @@ microphone by the chunk length: the decode was fast and the word still waited
 6 to 15 seconds for its chunk to close. So the engine declares its price
 (:class:`~src.dictation.asr.types.CostModel`) and this module turns the price
 into a shape. Pure: no engine calls, no I/O; settings arrive as a ``get``
-function (:func:`session_config`).
+function (``Settings.get``).
 
 Both rows are measured starting points, not settled truths: any change is
 judged by ``scripts/eval/replay.py`` against the medical-term error veto.
@@ -16,10 +16,9 @@ judged by ``scripts/eval/replay.py`` against the medical-term error veto.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from src.core import event_log
 from src.core.settings import get_default
 from src.dictation.asr.types import EngineCaps
 from src.dictation.stream.segmenter import ChunkPolicy
@@ -35,7 +34,7 @@ CHEAP_CALL_SEC = 0.5
 #: monologue, and cutting mid-speech any sooner risks cutting a word.
 LOCAL_POLICY = (2.0, 5.0, 20.0)
 
-#: Cheap (cloud) engines. Commit at the first pause after a second of speech.
+#: Cheap CLOUD engines. Commit at the first pause after a second of speech.
 #: Not yet measured against the accuracy veto on real Deepgram audio: this
 #: container has no key, so it is the PRD's starting row, to be confirmed with
 #: ``replay.py --engine deepgram`` before being trusted further.
@@ -68,9 +67,17 @@ def is_cheap(caps: EngineCaps) -> bool:
 
 
 def plan_for(caps: EngineCaps, trailing_silence_sec: Optional[float] = None) -> LivePlan:
-    """The live shape for an engine with these capabilities."""
+    """The live shape for an engine with these capabilities.
+
+    Two separate questions. How soon to preview is about price: a cheap call
+    can be spent on half a second of audio. How long a chunk runs is about
+    accuracy, and a cheap LOCAL engine keeps the long row: measured on
+    Parakeet (2026-10-10, nine synthetic dictations, 353 lexicon terms), 1/3/8
+    raised WER 7.58% -> 8.37% and term error 13.0% -> 13.6% against 2/5/20,
+    because a transducer with no prompt has only the clip itself as context.
+    """
     cheap = is_cheap(caps)
-    lo, soft, force = CHEAP_POLICY if cheap else LOCAL_POLICY
+    lo, soft, force = CHEAP_POLICY if cheap and caps.network else LOCAL_POLICY
     if trailing_silence_sec is None:
         trailing_silence_sec = float(get_default("chunk_trailing_silence_sec"))
     return LivePlan(
@@ -91,108 +98,18 @@ def plan_from_settings(get: Callable[[str], Any], caps: Optional[EngineCaps]) ->
     predates this still holds the old 6 / 15 / 20 as literal numbers. Reading
     those verbatim would keep every existing user on the slow shape.
     """
-    trailing = get("chunk_trailing_silence_sec") or get_default("chunk_trailing_silence_sec")
-    if get("chunk_policy") == MANUAL or caps is None:
+    trailing = float(get("chunk_trailing_silence_sec") or get_default("chunk_trailing_silence_sec"))
+    if str(get("chunk_policy") or AUTO) == MANUAL or caps is None:
         return LivePlan(
             policy=ChunkPolicy(
-                min_sec=get("chunk_min_sec"),
-                soft_max_sec=get("chunk_soft_max_sec"),
-                force_cut_sec=get("chunk_force_cut_sec"),
+                min_sec=float(get("chunk_min_sec")),
+                soft_max_sec=float(get("chunk_soft_max_sec")),
+                force_cut_sec=float(get("chunk_force_cut_sec")),
                 trailing_silence_sec=trailing,
             ),
-            preview_min_tail_sec=get("preview_min_tail_sec") or LOCAL_PREVIEW_MIN_TAIL_SEC,
+            preview_min_tail_sec=float(
+                get("preview_min_tail_sec") or LOCAL_PREVIEW_MIN_TAIL_SEC
+            ),
             row="manual",
         )
     return plan_for(caps, trailing)
-
-
-@dataclass(frozen=True)
-class LiveKnobs:
-    """The dictation settings both front-ends hand to a LiveSession, read once.
-
-    The desktop and the web app each used to read these eight keys on their
-    own, and drifted: the desktop never passed ``uncertain_word_confidence``.
-    Field names match :class:`~src.dictation.stream.live_session.LiveSession`'s
-    keyword arguments, so ``LiveSession(..., **knobs.as_kwargs())`` is the
-    whole hand-over.
-    """
-
-    pause_threshold: float
-    live_beam_size: int
-    final_beam_size: int
-    preview_max_lag_sec: float
-    polish_confidence_ceiling: float
-    uncertain_word_confidence: float
-    streaming: bool
-    background_polish: bool
-
-    @classmethod
-    def shipped(cls) -> "LiveKnobs":
-        """The knobs as shipped: what a session gets when nothing is configured."""
-        return cls.from_settings(get_default)
-
-    @classmethod
-    def from_settings(cls, get: Callable[[str], Any]) -> "LiveKnobs":
-        """*get* is ``Settings.get``, which falls back to the shipped defaults."""
-        return cls(
-            pause_threshold=get("pause_threshold"),
-            live_beam_size=max(1, get("live_beam_size")),
-            final_beam_size=max(1, get("final_beam_size")),
-            preview_max_lag_sec=get("preview_max_lag_sec"),
-            polish_confidence_ceiling=get("polish_confidence_ceiling"),
-            uncertain_word_confidence=get("uncertain_word_confidence"),
-            streaming=get("asr_streaming"),
-            background_polish=get("background_polish"),
-        )
-
-    def as_kwargs(self) -> dict:
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class SessionConfig:
-    """Everything one live dictation reads from settings, decided in one place.
-
-    The web socket, the desktop worker and the replay harness each used to
-    build a LiveSession from settings their own way, and they disagreed: the
-    desktop re-made the manual-or-auto choice and polled at its own pace, and
-    the harness never applied the auto plan, so it measured a session neither
-    front-end runs.
-    """
-
-    plan: LivePlan
-    knobs: LiveKnobs
-    #: How often the live loop looks for new audio (``live_cycle_sec``).
-    cycle_sec: float
-
-    def session_kwargs(self) -> dict:
-        """The LiveSession keyword arguments these settings decide."""
-        return {
-            "policy": self.plan.policy,
-            "preview_min_tail_sec": self.plan.preview_min_tail_sec,
-            **self.knobs.as_kwargs(),
-        }
-
-    def log(self, **context: Any) -> None:
-        """Say in the developer console what this recording runs with."""
-        event_log.emit(
-            "live", "dictation session configured", **context,
-            chunk_plan=self.plan.row,
-            chunk_min_sec=self.plan.policy.min_sec,
-            chunk_soft_max_sec=self.plan.policy.soft_max_sec,
-            chunk_force_cut_sec=self.plan.policy.force_cut_sec,
-            live_beam_size=self.knobs.live_beam_size,
-            final_beam_size=self.knobs.final_beam_size,
-            preview_max_lag_sec=self.knobs.preview_max_lag_sec,
-            preview_min_tail_sec=self.plan.preview_min_tail_sec,
-            cycle_sec=self.cycle_sec,
-        )
-
-
-def session_config(get: Callable[[str], Any], live_caps: Optional[EngineCaps]) -> SessionConfig:
-    """The one recipe: *get* is ``Settings.get``, *live_caps* the live engine's."""
-    return SessionConfig(
-        plan=plan_from_settings(get, live_caps),
-        knobs=LiveKnobs.from_settings(get),
-        cycle_sec=get("live_cycle_sec"),
-    )

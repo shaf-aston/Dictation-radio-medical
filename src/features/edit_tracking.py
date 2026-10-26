@@ -3,10 +3,10 @@
 When a radiologist edits the text *after* dictation has finished, that edit is
 the highest-quality evidence the dictation + correction pipeline got something
 wrong: the clinician literally fixed it. Nothing captured this in an analysable
-form. The existing single-word passive learner
-(:meth:`adaptive_learning.track_edit`) only kept same-length one-word swaps and
-fed them straight into the live correction map: it dropped multi-word fixes,
-insertions and deletions, and left no record to mine.
+form. The single-word learner (:func:`adaptive_learning.learn_from_session`)
+only keeps one-word swaps and feeds them straight into the live correction
+map: it drops multi-word fixes, insertions and deletions, and leaves no record
+to mine.
 
 This module snapshots the dictation OUTPUT and, when the report is committed
 (export, clear, close, or the next recording), diffs it against the DELIVERED

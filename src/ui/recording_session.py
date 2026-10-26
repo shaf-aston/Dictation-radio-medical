@@ -12,7 +12,7 @@ from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QMessageBox
 
 from src.core import perf
-from src.dictation.asr.models import resolve_model
+from src.cloud.framework.registry import active_voice_model_path
 from src.dictation.worker import LiveTranscribeWorker
 from src.core.paths import create_temp_wav
 from src.features import run_log
@@ -52,6 +52,7 @@ def _abandon_unfinished_session(window: MainWindow) -> None:
         try:
             for signal, slot in (
                 (worker.partial, window._on_partial_text),
+                (worker.handback, window._on_handback),
                 (worker.progress, window._on_worker_progress),
                 (worker.finished, window._on_transcription_finished),
                 (worker.segments, training_capture.on_segments),
@@ -238,7 +239,7 @@ def on_start_recording(window: MainWindow) -> None:
     })
 
     # Use an active fine-tuned model if one has been downloaded and activated.
-    active_model_path = training_capture.active_model_path()
+    active_model_path = active_voice_model_path()
 
     # Begin capturing corrections for cloud training (no-op without consent).
     training_capture.start_training_capture(window, path, model_size)
@@ -274,14 +275,12 @@ def on_start_recording(window: MainWindow) -> None:
 
     window.live_thread = QThread(window)
     window.live_worker = LiveTranscribeWorker(
-        path, model_size, language, vad_enabled,
-        settings_get=window.settings.get,
-        live_model_size=resolve_model(window.settings.get("live_model_size")),
-        model_path=active_model_path,
+        path, window.settings.get, model_path=active_model_path,
     )
     window.live_worker.moveToThread(window.live_thread)
     window.live_thread.started.connect(window.live_worker.run)
     window.live_worker.partial.connect(window._on_partial_text)
+    window.live_worker.handback.connect(window._on_handback)
     window.live_worker.progress.connect(window._on_worker_progress)
     window.live_worker.segments.connect(training_capture.on_segments)
     window.live_worker.finished.connect(window._on_transcription_finished)
@@ -307,28 +306,33 @@ def on_stop_recording(window: MainWindow) -> None:
         window._level_bar.setValue(0)
         set_level_state(window._level_bar, "healthy")
         window.btn_stop.setEnabled(False)
+    # The worker hands the report back (on_handback) once the last words are
+    # decoded; until then, say it is working rather than looking hung.
+    window._status.last_progress = ("Processing final pass...", "busy")
+    window._show_status("Processing final pass...", state="busy")
     if window.live_worker is not None:
         window.live_worker.finalize()
-    _hand_back_live_text(window)
 
 
-def _hand_back_live_text(window: MainWindow) -> None:
-    """Give the radiologist the text they have been reading, now.
+def on_handback(window: MainWindow, raw: str) -> None:
+    """Give the radiologist the complete report, before the polish runs.
 
-    The confidence-targeted polish runs for seconds after Stop, and the desktop
-    used to sit on the finished report until it returned. But the live text is
-    already on screen and already theirs to edit: the polish is an *upgrade*,
-    not a gate. So the whole-document pass runs on the live transcript straight
-    away, Record comes back as soon as it lands, and the polished text replaces
-    it later under a higher sequence number (the same "never rewind" rule every
-    other pass obeys). This is the web path's behaviour, brought across.
+    ``raw`` is every word spoken: the worker sends it only after the open tail
+    is closed. Handing back the last live preview instead lost whatever was
+    said after that preview, and since the polish is dropped once the report
+    is edited, an early edit lost those words for good.
+
+    The confidence-targeted polish runs for seconds after this, but it is an
+    *upgrade*, not a gate. So the whole-document pass runs on this text
+    straight away, Record comes back as soon as it lands, and the polished
+    text replaces it later under a higher sequence number (the same "never
+    rewind" rule every other pass obeys). Same order as the web path.
     """
-    raw = window._last_raw_transcript
-    if window.pp_worker is None or not raw.strip():
-        # Nothing decoded yet: there is no text to hand back, so the ordinary
-        # wait for the worker to finish is also the short one.
-        window._status.last_progress = ("Processing final pass...", "busy")
-        window._show_status("Processing final pass...", state="busy")
+    if not raw.strip():
+        return
+    # The final pass falls back to this if the polish changes nothing.
+    window._last_raw_transcript = raw
+    if window.pp_worker is None:
         return
     window._partial_seq += 1
     window._handback_seq = window._partial_seq
@@ -527,6 +531,7 @@ def on_transcription_finished(window: MainWindow) -> None:
         window._active_accent,
         window._active_cleanup_level,
         window._final_seq,
+        final=True,
     )
     window._last_raw_transcript = ""
 
@@ -539,6 +544,9 @@ def _complete_finish(window: MainWindow) -> None:
         thread.wait(5000)
         window.pp_thread = None
     window.pp_worker = None
+    # The run record's chunk count, read while the worker is still referenced.
+    worker = window.live_worker
+    window._run_chunks = worker.committed_chunks if worker is not None else 0
     # Both deleted themselves on finishing; a reference kept past that point
     # is a dead object the next close or recording would call into.
     window.live_worker = None
@@ -593,8 +601,10 @@ def _record_the_run(window: MainWindow) -> None:
         if stopped is not None:
             record.audio_sec = round(stopped - started, 3)
             record.finalise_sec = round(now - stopped, 3)
+    # The worker is already released on a normal finish (_complete_finish kept
+    # its count); an abandoned session still holds it.
     worker = window.live_worker
-    record.chunk_count = worker.committed_chunks if worker is not None else 0
+    record.chunk_count = worker.committed_chunks if worker is not None else window._run_chunks
     run_log.finish(record, window.editor.toPlainText(), window.settings)
 
 

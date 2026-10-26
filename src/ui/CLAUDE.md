@@ -34,3 +34,30 @@ severity in this app, and a slow decode is neither.
 Nothing here weakens the offline rule: both endpoints read in-process buffers
 and are served on loopback. Nothing is written to disk and nothing is sent
 anywhere.
+
+## Why the front-end is served no-store
+
+**A dictation owns the report until it is handed back.** In the browser that
+is `sessionPhase` (idle → starting → recording → finishing → idle): Record
+works only from idle, the editor is read-only, and New, Clear, a template, a
+phrase, undo and every exit (Copy/Save/Word) refuse until the hand-back
+(`stopped`) arrives. A whole-report write (New, Clear, template) goes through
+`replaceReport`: it asks first, stays one undo step away, and gives the page a
+new `reportId`. The server keeps findings answers per report id
+(`web/state.findings_for`), so an acknowledgement never answers for the next
+patient. Both front-ends ask about, write and audit only the findings still
+outstanding (`OutstandingFindings.pending`).
+
+**Files the two apps share are changed under a cross-process lock**
+(`core/file_lock.py`, `json_store.update_json`): settings, the model
+registry and learned corrections each re-read the file and apply only their
+own change. Temp audio lives in one folder per running app
+(`paths.temp_dir`), and start-up clears only folders whose app has exited.
+
+Front-end files are cached in memory keyed on the file's modification time
+(`web/pages._frontend_cache`), and every page and asset is served `no-store`. Both
+halves matter: without the mtime key an edit to app.js needed a server restart,
+and without `no-store` the browser kept running the previous release's script
+against the current server: which is how the page went on using the old
+record-then-upload path, and felt many seconds slower, long after live dictation
+had landed.

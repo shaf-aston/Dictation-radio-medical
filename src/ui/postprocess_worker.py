@@ -53,7 +53,7 @@ class PostprocessWorker(QObject):
         super().__init__()
         self._incremental = IncrementalPostprocessor()
         self._lock = threading.Lock()
-        self._pending: Optional[Tuple[str, int, str, str, int]] = None
+        self._pending: Optional[Tuple[str, int, str, str, int, bool]] = None
         # Auto-connection: resolved as queued once this object is moved to its
         # own thread, so _drain always runs there, never on the caller's thread.
         self._wake.connect(self._drain)
@@ -67,10 +67,13 @@ class PostprocessWorker(QObject):
         accent: str,
         cleanup_level: str,
         seq: int,
+        final: bool = False,
     ) -> None:
-        """Queue *text* for processing, replacing any transcript still waiting."""
+        """Queue *text* for processing, replacing any transcript still waiting.
+
+        *final* marks the finished report, which gets the final-text rule."""
         with self._lock:
-            self._pending = (text, committed_len, accent, cleanup_level, seq)
+            self._pending = (text, committed_len, accent, cleanup_level, seq, final)
         self._wake.emit()
 
     # -- worker thread --------------------------------------------------
@@ -85,24 +88,20 @@ class PostprocessWorker(QObject):
             # replaced and processed. Nothing to do.
             return
 
-        text, committed_len, accent, cleanup_level, seq = job
+        text, committed_len, accent, cleanup_level, seq, final = job
         try:
             with perf.stage("postprocess.total"):
                 self._incremental.configure(accent, cleanup_level)
-                processed, changes = self._incremental.process(text, committed_len)
+                processed, changes = (
+                    self._incremental.finish(text) if final
+                    else self._incremental.process(text, committed_len)
+                )
         except Exception as exc:
             # Never lose the user's words to a post-processing bug: fall back to
             # the raw transcript rather than dropping the emission.
             logger.warning("Post-processing failed, using raw text: %s", exc)
             processed, changes = text, []
         self.processed.emit(processed, list(changes), seq)
-
-    @Slot()
-    def reset(self) -> None:
-        """Drop cached prefix state (new recording)."""
-        with self._lock:
-            self._pending = None
-        self._incremental.reset()
 
 
 def build_changes(existing_seen: set, changes: List[str]) -> List[str]:

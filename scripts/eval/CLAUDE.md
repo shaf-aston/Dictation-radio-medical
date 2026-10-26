@@ -45,6 +45,8 @@ words, so the source reference stays exactly correct. It measures chunk
 
 Five gold sets, each measuring something different: never blend them into one
 figure. `own` (the user's own voice: the only set that measures real acoustics)
+· `eka` (real Indian-English speakers reading medical phrases, downloaded:
+real acoustics and accents until `own` is recorded, but phrases, not reports)
 · `tts` (synthesised radiology reports: medical *vocabulary* under
 unrealistically clean audio) · `piper` (the tts reports read by Piper neural
 voices, UK + US: more realistic synthetic acoustics; `build_sets --set piper
@@ -78,6 +80,14 @@ report is a real change to the radiologist's text.
 no model or key (`fake_deepgram.py` stands in for the live socket). They never
 answer an accuracy question.
 
+**`live_lag.py` measures what the radiologist sees, on this machine**: the
+web app's own session, the real engine and a real recording at speaking pace.
+It reports how soon each word is first on screen (preview included), when it
+is kept, and how many shown words change. Measured 2026-10-25 on
+`chest_long.wav`, four runs: `preview_mode` instant shows words at p50
+0.6-0.8s (p90 1.5-1.8s) against 1.6-2.0s (2.7-3.7s) for confirmed and the
+old preview, at about 14 shown words changed per minute against 4-10.
+
 ## Run
 
 ```bash
@@ -100,4 +110,7 @@ python -m scripts.eval.replay --set tts_paused --chunk-min 4.0 --label shorter-c
 # Loop latency with no model or key (latency only, never accuracy):
 python -m scripts.eval.simulate_lag --engine local --final small --seconds 90
 python -m scripts.eval.web_lag_check on       # real web app, fake live socket
+
+# Seconds to screen with the real engine (instant vs confirmed preview):
+python -m scripts.eval.live_lag --audio data/bench_audio/chest_long.wav --preview-mode confirmed
 ```

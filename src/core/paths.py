@@ -284,7 +284,7 @@ def models_dir() -> Path:
     return path
 
 def fine_tuned_dir() -> Path:
-    """Directory holding versioned CTranslate2 fine-tuned model folders."""
+    """Directory holding fine-tuned model folders: Whisper (CTranslate2) and Parakeet (ONNX)."""
     path = models_dir() / "fine_tuned"
     path.mkdir(exist_ok=True)
     return path

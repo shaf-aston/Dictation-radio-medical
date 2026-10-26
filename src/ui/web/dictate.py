@@ -12,17 +12,15 @@ import contextlib
 import json
 import logging
 import time
-from typing import Optional, Tuple
+from typing import Optional
 
 import anyio
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from src.core import event_log
-from src.dictation.asr.models import resolve_model
+from src.core import event_log, perf
+from src.cloud.framework.registry import active_voice_model_path
 from src.dictation.stream.live_session import LiveSession
-from src.dictation.stream.policy import SessionConfig, session_config
-from src.dictation.stream.rules import build_context_prompt
 from src.features import run_log, template_fields
 from src.ui.web import state
 
@@ -30,27 +28,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def build_live_session(settings, prefs: dict) -> Tuple[LiveSession, SessionConfig]:
-    """A session from saved settings, by the one recipe (policy.session_config)."""
-    live_model = resolve_model(settings.get("live_model_size"))
-    final_model = resolve_model(prefs.get("model_size") or settings.get("model_size"))
-    live_engine = state.get_engine(live_model)
-    config = session_config(settings.get, live_engine.capabilities())
-    config.log(
-        front_end="web", live_model=live_model, final_model=final_model,
-        language=prefs["language"], accent=prefs["accent"], cleanup=prefs["cleanup_level"],
+def build_live_session(settings) -> LiveSession:
+    """A session from the saved settings (LiveSession.from_settings reads them).
+
+    The accurate engine uses an active fine-tuned voice model, as the desktop
+    does; live text always comes from the stock fast model.
+    """
+    live_engine = state.get_engine(settings.get("live_model_size"))
+    final_engine = state.get_engine(settings.get("model_size"), active_voice_model_path())
+    return LiveSession.from_settings(
+        settings.get, live_engine, final_engine, sr=state.LIVE_SAMPLE_RATE,
     )
-    session = LiveSession(
-        live_engine,
-        state.get_engine(final_model),
-        language=prefs["language"],
-        accent=prefs["accent"],
-        cleanup_level=prefs["cleanup_level"],
-        initial_prompt=build_context_prompt(),
-        sr=state.LIVE_SAMPLE_RATE,
-        **config.session_kwargs(),
-    )
-    return session, config
 
 
 def record_web_run(
@@ -66,7 +54,7 @@ def record_web_run(
     """
     audio_sec = session.audio_sec
     record = run_log.start(
-        "web", model=str(prefs.get("model_size", "")), engine=settings.get("asr_engine"),
+        "web", model=str(prefs.get("model_size", "")), engine=str(settings.get("asr_engine")),
     )
     record.audio_sec = audio_sec
     record.duration_sec = round(elapsed, 3)
@@ -90,10 +78,13 @@ def record_web_run(
 async def dictate_socket(ws: WebSocket) -> None:
     await ws.accept()
     generation = state.next_dictation()
+    # A new dictation's stage timings start from zero, as on the desktop: the
+    # run record snapshots them at the end (run_log.finish).
+    perf.reset()
     settings = state.settings()
     prefs = state.current_preferences()
-    session, config = build_live_session(settings, prefs)
-    cycle_sec = config.cycle_sec
+    session = build_live_session(settings)
+    cycle_sec = settings.get("live_cycle_sec")
     max_sec = settings.get("max_upload_mb") * 1024 * 1024 / (2 * state.LIVE_SAMPLE_RATE)
 
     def superseded() -> bool:

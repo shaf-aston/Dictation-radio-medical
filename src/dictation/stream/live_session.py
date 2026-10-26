@@ -18,8 +18,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple
+from dataclasses import dataclass, replace
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -27,11 +27,14 @@ from src.core import event_log, perf
 from src.core.settings import get_default
 from src.dictation.asr import AsrEngine, TranscribeContext
 from src.dictation.asr.port import AsrStream, StreamingAsrEngine, engine_identity
+from src.dictation.conditioning.chain import Chain
 from src.dictation.asr.types import AsrResult, StreamError, StreamFinal, StreamInterim
 from src.dictation.postprocess.incremental import IncrementalPostprocessor
-from src.dictation.stream.ledger import ChunkLedger, close_sentence
+from src.dictation.stream.ledger import ChunkLedger
 from src.dictation.stream.polish import decode_run, polish, weak_runs
+from src.dictation.stream.policy import plan_from_settings
 from src.dictation.stream.rules import (
+    build_context_prompt,
     low_confidence_words,
     mean_confidence,
     has_speech,
@@ -39,9 +42,8 @@ from src.dictation.stream.rules import (
     should_skip_preview,
     speech_span,
 )
-from src.dictation.stream.policy import LiveKnobs
 from src.dictation.stream.segmenter import Chunk, ChunkPolicy
-from src.dictation.stream.tail import LocalAgreement2
+from src.dictation.stream.tail import PREVIEW_INSTANT, LocalAgreement2
 from src.dictation.stream.vad import SAMPLE_RATE, SpeechMark, detect_speech
 
 logger = logging.getLogger(__name__)
@@ -73,12 +75,68 @@ class LiveUpdate:
     uncertain: Tuple[str, ...] = ()
 
 
-#: What a keyword left out means: the shipped settings, never a second copy.
-_SHIPPED = LiveKnobs.shipped()
-
-
 class LiveSession:
     """A single dictation, fed audio in blocks, yielding transcript updates."""
+
+    @classmethod
+    def from_settings(
+        cls,
+        get: Callable[[str], Any],
+        live_engine: AsrEngine,
+        final_engine: AsrEngine,
+        *,
+        chunk_overrides: Optional[Dict[str, float]] = None,
+        **overrides: Any,
+    ) -> "LiveSession":
+        """A session shaped by the settings: the only place its knobs are read.
+
+        *get* is ``Settings.get``. The web socket, the desktop worker and the
+        replay harness each used to read the settings themselves, and drifted
+        (the web hard-coded a pause fallback, replay ignored ``chunk_policy:
+        auto`` and so could score a shape the app never runs). Each caller now
+        passes only what is genuinely its own: its sample rate, the desktop's
+        ``postprocess=False``, replay's A/B ``chunk_overrides``.
+        """
+        plan = plan_from_settings(get, live_engine.capabilities())
+        policy = replace(
+            plan.policy, **{k: v for k, v in (chunk_overrides or {}).items() if v is not None}
+        )
+        knobs: Dict[str, Any] = dict(
+            language=str(get("language")),
+            accent=str(get("accent")),
+            cleanup_level=str(get("cleanup_level")),
+            pause_threshold=float(get("pause_threshold")),
+            live_beam_size=max(1, int(get("live_beam_size"))),
+            final_beam_size=max(1, int(get("final_beam_size"))),
+            preview_max_lag_sec=float(get("preview_max_lag_sec")),
+            polish_confidence_ceiling=float(get("polish_confidence_ceiling")),
+            uncertain_word_confidence=float(get("uncertain_word_confidence")),
+            streaming=bool(get("asr_streaming")),
+            background_polish=bool(get("background_polish")),
+            preview_mode=str(get("preview_mode")),
+            polish_vad_filter=bool(get("vad_filter")),
+            initial_prompt=build_context_prompt(),
+        )
+        knobs.update(overrides)
+        logged: Dict[str, Any] = {k: v for k, v in knobs.items()
+                                  if isinstance(v, (str, int, float)) and k != "initial_prompt"}
+        # Every front-end builds here, so this is the one honest place to say
+        # which knobs a recording actually ran with.
+        event_log.emit(
+            "live", "dictation session configured",
+            live_engine=str(engine_identity(live_engine)),
+            final_engine=str(engine_identity(final_engine)),
+            chunk_plan=plan.row,
+            chunk_min_sec=policy.min_sec,
+            chunk_soft_max_sec=policy.soft_max_sec,
+            chunk_force_cut_sec=policy.force_cut_sec,
+            preview_min_tail_sec=plan.preview_min_tail_sec,
+            **logged,
+        )
+        return cls(
+            live_engine, final_engine,
+            policy=policy, preview_min_tail_sec=plan.preview_min_tail_sec, **knobs,
+        )
 
     def __init__(
         self,
@@ -89,21 +147,28 @@ class LiveSession:
         accent: str = "neutral",
         cleanup_level: str = "medium",
         policy: ChunkPolicy = ChunkPolicy(),
-        pause_threshold: float = _SHIPPED.pause_threshold,
-        live_beam_size: int = _SHIPPED.live_beam_size,
-        final_beam_size: int = _SHIPPED.final_beam_size,
-        preview_max_lag_sec: float = _SHIPPED.preview_max_lag_sec,
+        pause_threshold: float = float(get_default("pause_threshold")),
+        live_beam_size: int = int(get_default("live_beam_size")),
+        final_beam_size: int = int(get_default("final_beam_size")),
+        preview_max_lag_sec: float = float(get_default("preview_max_lag_sec")),
         preview_min_tail_sec: float = float(get_default("preview_min_tail_sec")),
-        polish_confidence_ceiling: float = _SHIPPED.polish_confidence_ceiling,
-        uncertain_word_confidence: float = _SHIPPED.uncertain_word_confidence,
+        polish_confidence_ceiling: float = float(get_default("polish_confidence_ceiling")),
+        uncertain_word_confidence: float = float(get_default("uncertain_word_confidence")),
         initial_prompt: str = "",
         sr: int = SAMPLE_RATE,
         postprocess: bool = True,
         polish_vad_filter: bool = False,
         on_decoded: Optional[Callable[[AsrResult, int], None]] = None,
-        streaming: bool = _SHIPPED.streaming,
-        background_polish: bool = _SHIPPED.background_polish,
+        streaming: bool = bool(get_default("asr_streaming")),
+        background_polish: bool = bool(get_default("background_polish")),
+        preview_mode: str = str(get_default("preview_mode")),
+        conditioner: Optional[Chain] = None,
     ) -> None:
+        # Cleans each block before it is stored, so every listener (VAD, decode,
+        # polish, live socket) hears the same audio. One per session: it learns
+        # this room. Flushed once, by whichever of close_open_tail_fast and
+        # finalize runs first.
+        self._conditioner = conditioner
         self.live_engine = live_engine
         self.final_engine = final_engine
         self.language = language
@@ -160,7 +225,7 @@ class LiveSession:
         self._bg_applied: set = set()   # re-decoded by the accurate engine, frozen
 
         self._ledger = ChunkLedger(policy, pause_threshold=pause_threshold, sr=sr)
-        self._agreement = LocalAgreement2()
+        self._agreement = LocalAgreement2(show_unconfirmed=preview_mode == PREVIEW_INSTANT)
         self._post = IncrementalPostprocessor(accent=accent, cleanup_level=cleanup_level)
 
         # Amortised-doubling buffer: appending a block is O(block), not O(total),
@@ -200,15 +265,34 @@ class LiveSession:
         if block.dtype != np.float32:
             block = block.astype(np.float32)
         with self._push_lock:
-            needed = self._len + len(block)
-            if needed > len(self._buf):
-                grown = np.zeros(max(needed, len(self._buf) * 2), dtype=np.float32)
-                grown[: self._len] = self._buf[: self._len]
-                self._buf = grown
-            self._buf[self._len : needed] = block
-            self._len = needed
-            if self._stream is not None:
-                self._push_unsent()
+            if self._conditioner is not None:
+                try:
+                    block = self._conditioner.process(block)
+                except Exception:
+                    # A failed step leaves the chain unusable. Dictation goes on
+                    # with raw audio; only what the chain was holding is lost.
+                    logger.exception("audio conditioning failed, continuing without it")
+                    self._conditioner = None
+            self._append(block)
+
+    def _flush_conditioner(self) -> None:
+        """Append what the conditioner still holds, so stored audio is as long
+        as the audio fed. Safe to call twice."""
+        with self._push_lock:
+            if self._conditioner is not None and not self._conditioner.spent:
+                self._append(self._conditioner.flush())
+
+    def _append(self, block: np.ndarray) -> None:
+        """Store *block* at the end of the buffer. Hold _push_lock."""
+        needed = self._len + len(block)
+        if needed > len(self._buf):
+            grown = np.zeros(max(needed, len(self._buf) * 2), dtype=np.float32)
+            grown[: self._len] = self._buf[: self._len]
+            self._buf = grown
+        self._buf[self._len : needed] = block
+        self._len = needed
+        if self._stream is not None:
+            self._push_unsent()
 
     def _push_unsent(self) -> None:
         """Send the stream every sample it has not had yet. Hold _push_lock."""
@@ -590,6 +674,11 @@ class LiveSession:
             return self._agreement.stable()
         return self._agreement.update(result.text.strip())
 
+    @property
+    def policy(self) -> ChunkPolicy:
+        """The chunk shape this session cuts with (what the settings resolved to)."""
+        return self._ledger.policy
+
     # -- after Stop -----------------------------------------------------
 
     def committed_text(self) -> str:
@@ -630,6 +719,7 @@ class LiveSession:
         regardless of confidence -- speed was the reason it was decoded by the
         fast model, so it has not earned the benefit of the doubt.
         """
+        self._flush_conditioner()
         if self._stream is not None:
             # Ask the socket to settle everything it has been sent. Measured in
             # a few hundred milliseconds when it is healthy; if it is not, the
@@ -678,6 +768,7 @@ class LiveSession:
         kept as-is, which is why this is seconds and not a full re-transcribe.
         """
         t0 = time.time()
+        self._flush_conditioner()
         self._finish_background(cancelled)
 
         def decoded(result: AsrResult, index: Optional[int], start: int, _end: int) -> None:
@@ -688,14 +779,11 @@ class LiveSession:
 
         # The polish exists to hand weak chunks to a BETTER decode. When the
         # accurate engine is the live one and the beam does not change its
-        # answer (a cloud model, greedy or fixed-beam Parakeet), it would decode
-        # the same audio into the same words. Then only audio never decoded at
+        # answer (a cloud model), it would decode the same audio into the same
+        # words. Then only audio never decoded at
         # all is worth a call, plus the chunks either side of a forced cut,
         # which decoded together are different audio from either alone.
-        same_model = (
-            engine_identity(self.final_engine) == engine_identity(self.live_engine)
-            and _ignores_beam(self.final_engine)
-        )
+        same_model = not self._polish_worthwhile()
         if same_model:
             event_log.emit("live", "polish skipped, final engine is the live engine")
         # The tail closed at Stop was decoded fast on purpose; a confident fast
@@ -726,7 +814,7 @@ class LiveSession:
         if not self.postprocess:
             final = raw
         else:
-            final = close_sentence(self._post.process(raw, 0)[0]) if raw else ""
+            final = self._post.finish(raw)[0]
         logger.info(
             "final polish  audio=%.1fs  elapsed=%.2fs  polished=%d  chars=%d",
             self.audio_sec, time.time() - t0, polished, len(final),
@@ -794,14 +882,15 @@ class LiveSession:
 
 
 def _ignores_beam(engine: AsrEngine) -> bool:
-    """True when the beam asked for does not change what this engine decodes.
+    """A cloud engine decodes the same way whatever beam it is asked for.
 
-    Read from what the engine declares (EngineCaps.beam_sensitive), not from
-    whether it is a cloud engine: greedy Parakeet and the fixed-beam hotword
-    decoder ignore it too, and re-running them on the same weights only
-    repeated their answer.
+    A local one is still worth re-running on the same weights, even greedy
+    Parakeet: the polish decodes a weak chunk together with its neighbours,
+    which is different audio from the chunk alone. Skipping it for Parakeet
+    measured worse (replay 2026-10-25, noisy set: WER 6.79% -> 6.91%, term
+    error 11.2% -> 11.5%; real voices: WER 28.5% -> 28.9%).
     """
     try:
-        return not engine.capabilities().beam_sensitive
+        return bool(engine.capabilities().network)
     except Exception:
         return False

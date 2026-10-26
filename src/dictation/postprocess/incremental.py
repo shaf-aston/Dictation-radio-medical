@@ -30,6 +30,7 @@ import re
 from typing import List, Tuple
 
 from src.core import perf
+from src.dictation.stream.ledger import close_sentence
 from src.dictation.postprocess.hallucinations import REMOVED_PATTERNS
 from src.dictation.postprocess.voice_commands import SCRATCH_PATTERN, SPOKEN_COMMANDS
 from src.dictation.postprocess.pipeline import (
@@ -112,6 +113,14 @@ class IncrementalPostprocessor:
             self.accent = accent
             self.cleanup_level = cleanup_level
             self.reset()
+
+    def finish(self, text: str) -> Tuple[str, List[str]]:
+        """The finished report: the whole document corrected, its last sentence
+        closed. The one final-text rule both front-ends apply after Stop."""
+        if not text:
+            return "", []
+        processed, changes = self.process(text, 0)
+        return close_sentence(processed), changes
 
     def process(self, text: str, committed_len: int = 0) -> Tuple[str, List[str]]:
         """Post-process *text*, reusing cached work for the committed prefix.

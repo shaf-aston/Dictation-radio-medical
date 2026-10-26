@@ -55,7 +55,7 @@ def client(monkeypatch):
 
 def _dictate(client, monkeypatch, spoken: str, field=None) -> dict:
     monkeypatch.setattr(dictate, "build_live_session",
-                        lambda *_: (_FakeSession(spoken), SimpleNamespace(cycle_sec=0.5)))
+                        lambda *_: _FakeSession(spoken))
     with client.websocket_connect("ws://127.0.0.1:8005/ws/dictate") as ws:
         if field:
             ws.send_json({"command": "field", "text": field})

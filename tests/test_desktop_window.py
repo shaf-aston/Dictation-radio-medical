@@ -29,6 +29,8 @@ def _dictate(w, *partials):
 
 def _stop_and_hand_back(w):
     rs.on_stop_recording(w)
+    # The real worker hands back every word once the open tail is closed.
+    w.worker().handback.emit(w.editor.toPlainText())
     assert w.wait_for(w.btn_record.isEnabled)
 
 

@@ -42,6 +42,7 @@ def desktop(tmp_path, monkeypatch):
 
     class Worker(QObject):
         partial = Signal(str, int)
+        handback = Signal(str)
         finished = Signal()
         progress = Signal(str)
         segments = Signal(list)

@@ -188,12 +188,13 @@ def test_a_sound_with_no_words_is_not_a_pause():
     assert ledger.committed_text == "the lungs are clear"
 
 
-def test_touching_speech_marks_are_a_cut_point():
+def test_touching_speech_marks_are_not_a_cut_point():
     sr = 16000
-    # Silero splits a short pause down the middle: the marks meet exactly.
+    # Silero splits a short pause down the middle: the marks meet exactly. A
+    # breath that short is not a cut (measured less accurate on real voices).
     marks = [SpeechMark(0, sr * 3), SpeechMark(sr * 3, sr * 6), SpeechMark(sr * 6, sr * 9)]
     chunks = cut_chunks(sr * 9, marks, ChunkPolicy(min_sec=2.0, soft_max_sec=5.0, force_cut_sec=20.0))
-    assert [c.end_sample for c in chunks if c.closed][0] == sr * 3
+    assert not {sr * 3, sr * 6} & {c.end_sample for c in chunks if c.closed}
 
 
 def test_a_force_cut_is_marked_and_both_sides_are_polished():

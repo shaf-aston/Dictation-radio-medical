@@ -69,8 +69,9 @@ class RunRecord:
     finalise_sec: float = 0.0
     word_count: int = 0
     chunk_count: int = 0
-    #: Decoded seconds per second of audio. Above 1.0 the machine cannot keep
-    #: up with speech. Read from perf's gauge, not recomputed here.
+    #: Seconds of audio decoded per second heard: 1.0 is "decode once", above
+    #: it audio was decoded again (polish, a re-cut). Read from perf's gauge
+    #: (LiveSession.record_decode_ratio), not recomputed here.
     decode_ratio: Optional[float] = None
     stages: Dict[str, Dict[str, float]] = field(default_factory=dict)
     text: str = ""

@@ -266,7 +266,12 @@
                 <div class="p-body">
                     <div class="grid grid-tight">
                         <p class="field">
-                            <label for="modelSelect">Model</label>
+                            <label for="parakeetSelect">Voice model</label>
+                            <select id="parakeetSelect" aria-describedby="voiceModelHint"></select>
+                            <span class="hint" id="voiceModelHint">Tuned voices were trained on radiology speech.</span>
+                        </p>
+                        <p class="field">
+                            <label for="modelSelect">Backup model</label>
                             <select id="modelSelect"></select>
                         </p>
                         <p class="field">
