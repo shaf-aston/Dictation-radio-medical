@@ -123,7 +123,7 @@ def bootstrap_payload() -> dict:
         # The communication dialog's choices and the name it last signed with.
         "communication": {
             "methods": list(COMMUNICATION_METHODS),
-            "radiologist": str(settings.get("radiologist_name") or ""),
+            "radiologist": settings.get("radiologist_name"),
         },
         # What a template field is, as a pattern valid in JS too: the page
         # finds fields with the server's own definition, not a copy of it.
@@ -155,7 +155,7 @@ def bootstrap_payload() -> dict:
         "lookup_hint_active": term_lookup.lookup_hint_active(settings.get),
         "mic": mic.as_payload(),
         # The developer console's scroll-back is the server's ring, not a copy.
-        "event_log_max": int(settings.get("event_log_max")),
+        "event_log_max": settings.get("event_log_max"),
         # The first-launch clinical disclaimer, shipped with the rest of the
         # first-load state rather than fetched separately: the page must be
         # able to show it before the radiologist can type anything.
@@ -168,7 +168,7 @@ def bootstrap_payload() -> dict:
         # desktop's consent dialog writes, so answering in one front-end
         # answers for both.
         "learning": {
-            "enabled": bool(settings.get("learning_enabled")),
+            "enabled": settings.get("learning_enabled"),
             "consent_needed": not settings.get("learning_consent_shown"),
         },
     }

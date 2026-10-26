@@ -85,7 +85,7 @@ class CorrectionCollector:
         try:
             from src.core.settings import Settings
             s = Settings()
-            return bool(s.get("cloud_enabled")) and bool(s.get("cloud_training_consent"))
+            return s.get("cloud_enabled") and s.get("cloud_training_consent")
         except Exception as exc:
             logger.debug("Could not read consent settings; treating as disabled: %s", exc)
             return False

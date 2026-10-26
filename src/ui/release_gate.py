@@ -149,7 +149,7 @@ def confirm_release(window: MainWindow) -> bool:
         yield_document(window)
         return True
 
-    dialog = CommunicationDialog(window, check, str(window.settings.get("radiologist_name") or ""))
+    dialog = CommunicationDialog(window, check, window.settings.get("radiologist_name"))
     acknowledged = dialog.exec() == QDialog.DialogCode.Accepted
     comm = dialog.communication() if acknowledged else None
     if comm is not None:

@@ -74,8 +74,8 @@ def show_cloud_training_dialog(window: MainWindow) -> None:
     layout.addWidget(blurb)
 
     enable_box = QCheckBox("Enable cloud voice training (upload my corrections)")
-    enable_box.setChecked(bool(s.get("cloud_enabled"))
-                          and bool(s.get("cloud_training_consent")))
+    enable_box.setChecked(s.get("cloud_enabled")
+                          and s.get("cloud_training_consent"))
     layout.addWidget(enable_box)
 
     form = QFormLayout()
@@ -130,7 +130,7 @@ def show_cloud_training_dialog(window: MainWindow) -> None:
         return
 
     enabled = enable_box.isChecked()
-    was_enabled = bool(s.get("cloud_enabled")) and bool(s.get("cloud_training_consent"))
+    was_enabled = s.get("cloud_enabled") and s.get("cloud_training_consent")
     s.batch_set({
         "cloud_enabled": enabled,
         "cloud_training_consent": enabled,
@@ -212,7 +212,7 @@ def show_ai_cleanup_settings_dialog(window: MainWindow) -> None:
     layout.addWidget(blurb)
 
     enable_box = QCheckBox("Enable AI cleanup (sends de-identified report text to Groq)")
-    enable_box.setChecked(bool(s.get("groq_cleanup_enabled")))
+    enable_box.setChecked(s.get("groq_cleanup_enabled"))
     layout.addWidget(enable_box)
 
     form = QFormLayout()

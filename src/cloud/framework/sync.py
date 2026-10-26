@@ -54,7 +54,7 @@ class SyncManager:
         try:
             from src.core.settings import Settings
             s = Settings()
-            return bool(s.get("cloud_enabled")) and bool(s.get("cloud_training_consent"))
+            return s.get("cloud_enabled") and s.get("cloud_training_consent")
         except Exception as exc:
             logger.debug("Could not read cloud settings; treating as disabled: %s", exc)
             return False
@@ -81,7 +81,7 @@ class SyncManager:
             return None
         from src.core.settings import Settings
         s = Settings()
-        min_records = int(s.get("min_corrections_before_upload"))
+        min_records = s.get("min_corrections_before_upload")
         if self._db.pending_count() < min_records:
             return None
         try:

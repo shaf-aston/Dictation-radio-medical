@@ -37,7 +37,6 @@ from typing import Any, Dict, List, Optional
 from src.core import perf
 from src.core.json_store import append_jsonl, read_jsonl
 from src.core.paths import run_log_path
-from src.core.settings import get_default
 
 logger = logging.getLogger(__name__)
 
@@ -78,15 +77,11 @@ class RunRecord:
 
 
 def _cap(settings: Any) -> int:
-    try:
-        value = int(settings.get("run_log_max"))
-    except (TypeError, ValueError):
-        return int(get_default("run_log_max"))
-    return max(1, value)
+    return max(1, settings.get("run_log_max"))
 
 
 def _wants_text(settings: Any) -> bool:
-    return bool(settings.get("run_log_store_text"))
+    return settings.get("run_log_store_text")
 
 
 def start(front_end: str, model: str = "", engine: str = "") -> RunRecord:

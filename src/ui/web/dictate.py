@@ -66,7 +66,7 @@ def record_web_run(
     """
     audio_sec = session.audio_sec
     record = run_log.start(
-        "web", model=str(prefs.get("model_size", "")), engine=str(settings.get("asr_engine")),
+        "web", model=str(prefs.get("model_size", "")), engine=settings.get("asr_engine"),
     )
     record.audio_sec = audio_sec
     record.duration_sec = round(elapsed, 3)
@@ -94,7 +94,7 @@ async def dictate_socket(ws: WebSocket) -> None:
     prefs = state.current_preferences()
     session, config = build_live_session(settings, prefs)
     cycle_sec = config.cycle_sec
-    max_sec = int(settings.get("max_upload_mb")) * 1024 * 1024 / (2 * state.LIVE_SAMPLE_RATE)
+    max_sec = settings.get("max_upload_mb") * 1024 * 1024 / (2 * state.LIVE_SAMPLE_RATE)
 
     def superseded() -> bool:
         return generation != state.dictation_generation

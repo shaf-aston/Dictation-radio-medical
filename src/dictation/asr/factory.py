@@ -57,12 +57,12 @@ def _parakeet_tier(settings: Settings) -> Any:
        measured 35% fewer medical-term errors than greedy at the same speed.
     3. onnx-asr, greedy: the stock model.
     """
-    local = str(settings.get("parakeet_model_dir") or "")
+    local = settings.get("parakeet_model_dir")
     have_onnx_asr = importlib.util.find_spec("onnx_asr") is not None
     if local and have_onnx_asr:
         return ("parakeet", ParakeetEngine(local))
     if settings.get("asr_hotwords") and importlib.util.find_spec("sherpa_onnx") is not None:
-        return ("parakeet-hotwords", ParakeetHotwordEngine(float(settings.get("hotword_score"))))
+        return ("parakeet-hotwords", ParakeetHotwordEngine(settings.get("hotword_score")))
     if have_onnx_asr:
         return ("parakeet", ParakeetEngine())
     return None

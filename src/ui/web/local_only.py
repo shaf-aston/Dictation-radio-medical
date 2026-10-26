@@ -25,8 +25,8 @@ LOOPBACK = ("127.0.0.1", "localhost", "::1")
 
 def allowed_hosts(get) -> frozenset:
     """The host names requests may carry, from settings (*get* is ``Settings.get``)."""
-    extra = get("web_allowed_hosts") or []
-    return frozenset(h.lower() for h in (*LOOPBACK, str(get("web_host") or ""), *extra) if h)
+    extra = get("web_allowed_hosts")
+    return frozenset(h.lower() for h in (*LOOPBACK, get("web_host"), *extra) if h)
 
 
 def _host_of(value: Optional[str]) -> Optional[str]:
