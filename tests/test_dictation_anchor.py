@@ -34,6 +34,7 @@ def _window(qt_app, existing: str):
     anchor.movePosition(anchor.MoveOperation.End)
     anchor.setKeepPositionOnInsert(True)     # what on_start_recording sets
     return SimpleNamespace(editor=editor, _dictation_start=anchor,
+                           _dictation_end=None, _dictation_field=None,
                            _on_text_changed=lambda **_: None,
                            recorder=SimpleNamespace(is_recording=True))
 

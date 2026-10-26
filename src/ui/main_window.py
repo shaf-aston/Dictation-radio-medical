@@ -151,12 +151,6 @@ class MainWindow(QMainWindow):
     recent_menu: QMenu
     _level_timer: QTimer
     _info_marks: QLabel
-    _active_accent: str
-    _active_cleanup_level: str
-    # Set per recording by recording_session.
-    _record_started: float
-    _run_record: Optional[run_log.RunRecord]
-    _audio_stopped_at: Optional[float]
 
     def __init__(self) -> None:
         super().__init__()
@@ -172,6 +166,13 @@ class MainWindow(QMainWindow):
         self._partial_seq: int = 0
         self._applied_seq: int = 0
         self._last_raw_transcript: str = ""
+        # Set per recording by recording_session; these are the values
+        # between recordings, so every reader can take them as present.
+        self._active_accent: str = "neutral"
+        self._active_cleanup_level: str = "medium"
+        self._record_started: Optional[float] = None
+        self._run_record: Optional[run_log.RunRecord] = None
+        self._audio_stopped_at: Optional[float] = None
         # Sequence number of the one authoritative full-document pass submitted
         # after recording stops; None while no such pass is outstanding.
         self._final_seq: Optional[int] = None

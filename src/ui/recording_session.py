@@ -323,7 +323,7 @@ def _hand_back_live_text(window: MainWindow) -> None:
     it later under a higher sequence number (the same "never rewind" rule every
     other pass obeys). This is the web path's behaviour, brought across.
     """
-    raw = getattr(window, "_last_raw_transcript", "")
+    raw = window._last_raw_transcript
     if window.pp_worker is None or not raw.strip():
         # Nothing decoded yet: there is no text to hand back, so the ordinary
         # wait for the worker to finish is also the short one.
@@ -335,8 +335,8 @@ def _hand_back_live_text(window: MainWindow) -> None:
     window.pp_worker.submit(
         raw,
         0,  # whole document: the handback must be a complete report, not a tail
-        getattr(window, "_active_accent", "neutral"),
-        getattr(window, "_active_cleanup_level", "medium"),
+        window._active_accent,
+        window._active_cleanup_level,
         window._handback_seq,
     )
 
@@ -366,8 +366,8 @@ def on_partial_text(
     window.pp_worker.submit(
         full_transcript,
         committed_len,
-        getattr(window, "_active_accent", "neutral"),
-        getattr(window, "_active_cleanup_level", "medium"),
+        window._active_accent,
+        window._active_cleanup_level,
         window._partial_seq,
     )
 
@@ -391,10 +391,7 @@ def on_processed_text(
     if session_may_write(window):
         if changes:
             # Accumulate unique corrections for the post-recording banner.
-            seen = getattr(window, "_corrections_seen", None)
-            if seen is None:
-                seen = window._corrections_seen = set(window._corrections_pending)
-            window._corrections_pending.extend(build_changes(seen, changes))
+            window._corrections_pending.extend(build_changes(window._corrections_seen, changes))
         if processed:
             with perf.stage("ui.apply_partial"):
                 _replace_dictation_region(window, processed)
@@ -429,14 +426,14 @@ def dictation_start_offset(window: MainWindow, doc_len: int) -> int:
     (Open, New, Clear) leaves an anchor Qt has already reset, and writing
     after the end of the text is not a valid edit.
     """
-    anchor = getattr(window, "_dictation_start", None)
+    anchor = window._dictation_start
     position = anchor.position() if anchor is not None else 0
     return max(0, min(position, doc_len))
 
 
 def dictation_end_offset(window: MainWindow, doc_len: int) -> int:
     """Where the dictated region ends; the end of the document if unbounded."""
-    anchor = getattr(window, "_dictation_end", None)
+    anchor = window._dictation_end
     position = anchor.position() if anchor is not None else doc_len
     return max(dictation_start_offset(window, doc_len), min(position, doc_len))
 
@@ -451,7 +448,7 @@ def _replace_dictation_region(window: MainWindow, processed: str) -> None:
     rest of the template, when dictating into the middle of it) is never
     touched.
     """
-    field = getattr(window, "_dictation_field", None)
+    field = window._dictation_field
     if field:
         processed = resolve_choice(field, processed) or processed
     current = window.editor.toPlainText()
@@ -490,7 +487,7 @@ def _apply_finished_ai_cleanup(window: MainWindow) -> None:
     Never per live chunk (CLAUDE.md invariant), and never applied unseen: it
     goes through the same review dialog as Tools → AI Cleanup.
     """
-    if getattr(window, "_active_cleanup_level", "medium") == "hard":
+    if window._active_cleanup_level == "hard":
         offer_ai_cleanup(window, automatic=True)
 
 
@@ -515,7 +512,7 @@ def on_transcription_finished(window: MainWindow) -> None:
     # let its final pass write into the new recording's document.
     window.btn_stop.setEnabled(False)
 
-    raw = getattr(window, "_last_raw_transcript", "")
+    raw = window._last_raw_transcript
     if window.pp_worker is None or not raw.strip():
         _complete_finish(window)
         return
@@ -527,8 +524,8 @@ def on_transcription_finished(window: MainWindow) -> None:
     window.pp_worker.submit(
         raw,
         0,  # whole document: no prefix is treated as already-processed
-        getattr(window, "_active_accent", "neutral"),
-        getattr(window, "_active_cleanup_level", "medium"),
+        window._active_accent,
+        window._active_cleanup_level,
         window._final_seq,
     )
     window._last_raw_transcript = ""
@@ -536,7 +533,7 @@ def on_transcription_finished(window: MainWindow) -> None:
 
 def _complete_finish(window: MainWindow) -> None:
     """Close the session down, once the finished report is on screen."""
-    thread = getattr(window, "pp_thread", None)
+    thread = window.pp_thread
     if thread is not None:
         thread.quit()
         thread.wait(5000)
@@ -584,22 +581,20 @@ def _record_the_run(window: MainWindow) -> None:
     moment the *final* text exists: and it must be before the next recording's
     ``perf.reset()`` wipes the stage timings the record is made of.
     """
-    record = getattr(window, "_run_record", None)
+    record = window._run_record
     if record is None:
         return
     window._run_record = None
-    started = getattr(window, "_record_started", None)
-    stopped = getattr(window, "_audio_stopped_at", None)
+    started = window._record_started
+    stopped = window._audio_stopped_at
     now = time.monotonic()
     if started is not None:
         record.duration_sec = round(now - started, 3)
         if stopped is not None:
             record.audio_sec = round(stopped - started, 3)
             record.finalise_sec = round(now - stopped, 3)
-    # Read defensively: the worker is torn down around this point, and a
-    # missing chunk count must not cost the whole record.
-    worker = getattr(window, "live_worker", None)
-    record.chunk_count = getattr(worker, "committed_chunks", 0) or 0
+    worker = window.live_worker
+    record.chunk_count = worker.committed_chunks if worker is not None else 0
     run_log.finish(record, window.editor.toPlainText(), window.settings)
 
 
@@ -615,7 +610,7 @@ def cleanup_temp_audio(window: MainWindow) -> None:
 
 def check_accent_suggestion(window: MainWindow) -> None:
     """Analyze transcribed text and suggest accent profile if patterns detected."""
-    current_accent = getattr(window, "_active_accent", "neutral")
+    current_accent = window._active_accent
     if current_accent != "neutral":
         return  # Already using an accent profile
 
@@ -658,12 +653,13 @@ def update_level_display(window: MainWindow) -> None:
     window._level_bar.setValue(int(level * 100))
     # How long this dictation has run. Free: this timer already ticks at 10 Hz
     # while recording, and stops with it.
-    seconds = int(time.monotonic() - getattr(window, "_record_started", time.monotonic()))
+    started = window._record_started
+    seconds = int(time.monotonic() - started) if started is not None else 0
     window._elapsed_label.setText(f"{seconds // 60}:{seconds % 60:02d}")
     if clipping:
         set_level_state(window._level_bar, "clipping")
         window._show_status("Microphone clipping: reduce input gain", 1500, state="warn")
-    elif getattr(window.recorder, "is_quiet", False):
+    elif window.recorder.is_quiet:
         set_level_state(window._level_bar, "low")
         window._show_status("Microphone is very quiet: check it is the right one, and its level",
                             1500, state="warn")

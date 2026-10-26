@@ -38,7 +38,7 @@ def start_training_capture(window: MainWindow, wav_path: str, model_size: str) -
         collector = get_correction_collector()
         # Persist any previous session still open for review before reusing it.
         collector.finalize_session()
-        accent = getattr(window, "_active_accent", "neutral")
+        accent = window._active_accent
         version = window.settings.get("active_model_version") or model_size
         collector.start_session(
             session_id=os.path.basename(wav_path),
