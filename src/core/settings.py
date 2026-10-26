@@ -4,11 +4,15 @@ Persistent application settings stored as JSON alongside the project root.
 
 from __future__ import annotations
 
+import copy
+import logging
 from pathlib import Path
 from typing import Any, List
 
 from src.core.json_store import read_json, update_json
 from src.core.paths import settings_file
+
+logger = logging.getLogger(__name__)
 
 _DEFAULTS: dict = {
     # Which speech engine transcribes (names in src/dictation/asr/factory.py).
@@ -232,6 +236,37 @@ def get_default(key: str) -> Any:
     return _DEFAULTS.get(key)
 
 
+_warned: set = set()  # (key, value) pairs already logged: get() runs every cycle
+
+
+def _typed(key: str, value: Any) -> Any:
+    """*value* as the type of *key*'s default, or the default if it cannot be.
+
+    The file is hand-editable and older versions wrote other shapes ("8",
+    8.0, null), so the one place a setting is read is the one place it is
+    typed: every caller gets the type the default promises and need not
+    re-check it. A key whose default is None has no declared type.
+    """
+    default = _DEFAULTS[key]
+    kind = type(default)
+    if default is None or (type(value) is kind):
+        return value
+    try:
+        if kind is bool:
+            if value in (0, 1) and not isinstance(value, str):
+                return bool(value)
+        elif kind in (int, float) and value is not None and not isinstance(value, bool):
+            number = float(value)
+            if kind is float or number.is_integer():
+                return kind(number)
+    except (TypeError, ValueError):
+        pass
+    if value is not None and (key, repr(value)) not in _warned:
+        _warned.add((key, repr(value)))
+        logger.warning("Setting %s=%r is not a %s; using %r", key, value, kind.__name__, default)
+    return default
+
+
 class Settings:
     """The settings file, read through and written key by key.
 
@@ -288,7 +323,12 @@ class Settings:
         self._mtime = self._current_mtime()
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self._data.get(key, _DEFAULTS.get(key, default))
+        """The value of *key*, typed as its default (see :func:`_typed`)."""
+        if key not in _DEFAULTS:
+            return self._data.get(key, default)
+        if key not in self._data:
+            return copy.deepcopy(_DEFAULTS[key])  # a caller's edit must not change the default
+        return _typed(key, self._data[key])
 
     def _put(self, key: str, value: Any) -> None:
         self._data[key] = value

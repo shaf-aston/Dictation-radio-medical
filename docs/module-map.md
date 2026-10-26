@@ -127,6 +127,9 @@ src/
 │   ├── styles.py · styles/app.qss · frontends/   desktop + web assets
 │   │                       (neither stylesheet contains a hex value;
 │   │                        keep it that way, colour has one home)
+│   │                       frontends/app.js is the page; dictate.js (loaded
+│   │                       after it, same globals) is live dictation: mic,
+│   │                       worklet, /ws/dictate, preview
 │   └── __main__.py       enables `python -m src.ui`
 ├── medical/     critical_findings.py (NegEx) · macros.py ·
 │   ├── medical_dict.py   the two wordlists, plus is_english_word, the single

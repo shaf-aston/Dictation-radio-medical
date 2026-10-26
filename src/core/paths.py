@@ -482,7 +482,6 @@ def startup_cleanup(retention_days: int = 30) -> None:
     """Run all cleanup tasks on app startup."""
     cleanup_temp_files()
     cleanup_old_autosaves(retention_days=retention_days)
-    _remove_legacy_temp_files()
     _remove_legacy_cache_locations()
 
 
@@ -506,22 +505,3 @@ def _remove_legacy_cache_locations() -> None:
             logger.info("Removed %d legacy cache location(s)", count)
     except Exception as exc:
         logger.warning("Legacy cache cleanup failed: %s", exc)
-
-def _remove_legacy_temp_files() -> None:
-    """Remove leftover temp files and directories (tmpclaude-*, etc)."""
-    try:
-        root = _project_root()
-        patterns = ["tmpclaude-*", "tmp*-cwd"]
-        count = 0
-        for pattern in patterns:
-            for path in root.glob(pattern):
-                if path.is_file():
-                    path.unlink()
-                    count += 1
-                elif path.is_dir():
-                    shutil.rmtree(path, ignore_errors=True)
-                    count += 1
-        if count > 0:
-            logger.info("Removed %d legacy temp item(s)", count)
-    except Exception as exc:
-        logger.warning("Legacy cleanup failed: %s", exc)

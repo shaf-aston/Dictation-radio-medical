@@ -186,7 +186,7 @@ class AdaptiveLearning:
             from src.training.collector import get_correction_collector
             get_correction_collector().record_text_correction(wrong, correct)
         except Exception:
-            pass
+            logger.warning("Training collector rejected a correction", exc_info=True)
         return True
 
     def learn_term(self, term: str) -> None:

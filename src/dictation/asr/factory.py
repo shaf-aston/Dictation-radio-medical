@@ -105,7 +105,7 @@ def parakeet_tier(settings: Settings) -> Any:
     if tuned is not None and have_onnx_asr:
         return ("parakeet", _make_parakeet(settings, model_dir=tuned))
     if settings.get("asr_hotwords") and importlib.util.find_spec("sherpa_onnx") is not None:
-        return ("parakeet-hotwords", ParakeetHotwordEngine(float(settings.get("hotword_score"))))
+        return ("parakeet-hotwords", ParakeetHotwordEngine(settings.get("hotword_score")))
     if have_onnx_asr:
         return ("parakeet", _make_parakeet(settings))
     return None

@@ -77,6 +77,7 @@ LEVEL_1 = [
     "pericardial effusion with tamponade", "cardiac tamponade",
     "bowel ischaemia", "bowel ischemia", "mesenteric ischaemia", "mesenteric ischemia",
     "splenic rupture", "hepatic rupture", "pneumoperitoneum", "free perforation",
+    "free intraperitoneal air", "free subdiaphragmatic air", "free air",
     "cauda equina syndrome", "cauda equina", "spinal cord compression",
     "acute myocardial infarction", "myocardial infarction",
 ]

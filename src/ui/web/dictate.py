@@ -84,8 +84,8 @@ async def dictate_socket(ws: WebSocket) -> None:
     settings = state.settings()
     prefs = state.current_preferences()
     session = build_live_session(settings)
-    cycle_sec = float(settings.get("live_cycle_sec"))
-    max_sec = int(settings.get("max_upload_mb")) * 1024 * 1024 / (2 * state.LIVE_SAMPLE_RATE)
+    cycle_sec = settings.get("live_cycle_sec")
+    max_sec = settings.get("max_upload_mb") * 1024 * 1024 / (2 * state.LIVE_SAMPLE_RATE)
 
     def superseded() -> bool:
         return generation != state.dictation_generation

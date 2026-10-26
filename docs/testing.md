@@ -42,12 +42,12 @@ with no visible effect.
 | Module | Caught, 2026-10-24 before | after |
 |---|---|---|
 | `medical/critical_findings.py` | 75/190 (39%) | 188/196 (96%) |
-| `medical/spelling.py` | 47/138 (34%) | 130/134 (97%) |
+| `medical/spelling.py` | 47/138 (34%) | 132/140 (94%) |
 | `dictation/postprocess/voice_commands.py` | 55/135 (41%) | 124/135 (92%) |
 | `features/report_checks.py` | 73/96 (76%) | 86/96 (90%) |
 | `features/template_fields.py` | 36/44 (82%) | 39/44 (89%) |
-| `medical/deid.py` | 14/71 (20%) | 73/96 (76%) |
-| `features/report_release.py` | 53/87 (61%) | 66/87 (76%) |
+| `medical/deid.py` | 14/71 (20%) | 117/150 (78%) |
+| `features/report_release.py` | 53/87 (61%) | 121/133 (91%) |
 | **all seven** | **353/761 (46%)** | **706/788 (90%)** |
 
 What still survives was read one by one and left on purpose: log message

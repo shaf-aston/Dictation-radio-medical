@@ -12,8 +12,10 @@ import pytest
 
 from src.features import audit_log
 from src.features.report_release import (
+    COMMUNICATION_METHODS,
     Communication,
     OutstandingFindings,
+    ReportWarnings,
     add_communication_statement,
     check_release,
     communication_statement,
@@ -170,3 +172,69 @@ def test_a_broken_consistency_check_never_blocks_a_report(monkeypatch):
     monkeypatch.setattr(report_checks, "check_report", broken)
     found = report_warnings("MRI [Right / Left] knee.")
     assert found.issues == () and found.fields == ("Right / Left",)
+
+
+# --- The wording both front-ends show: written once in report_release, so
+# --- pinned here once. A change to it is a change to what the radiologist reads.
+
+def test_the_release_question_lists_issues_then_fields_then_asks():
+    warnings = ReportWarnings(fields=("Right / Left",), issues=("Side mismatch",))
+    assert warnings.message() == (
+        "Worth a second look:\n  • Side mismatch\n\n"
+        "1 unfilled template field(s):\n  • Right / Left\n\n"
+        "Release the report anyway?"
+    )
+
+
+def test_a_long_line_is_cut_to_fit_the_dialog_with_an_ellipsis():
+    fits, too_long = "a" * 90, "b" * 91
+    message = ReportWarnings(issues=(fits, too_long)).message()
+    assert f"  • {fits}\n" in message
+    assert f"  • {'b' * 89}…\n" in message
+
+
+def test_the_question_shows_at_most_eight_issues_and_ten_fields():
+    issues = tuple(f"issue {n}" for n in range(9))
+    message = ReportWarnings(issues=issues).message()
+    assert "issue 7" in message and "issue 8" not in message
+
+    ten = tuple(f"field {n}" for n in range(10))
+    assert "…" not in ReportWarnings(fields=ten).message()
+    eleven = ten + ("field 10",)
+    message = ReportWarnings(fields=eleven).message()
+    assert "11 unfilled" in message and "field 10" not in message
+    assert "  • field 9\n  …\n" in message
+
+
+def test_a_clear_report_has_no_summary_and_level_zero():
+    clear = check_release("")
+    assert (clear.findings, clear.summary, clear.worst_level) == ((), "", 0)
+    assert not clear.needs_acknowledgement
+
+
+def test_the_question_title_follows_the_worst_level():
+    assert check_release("Tension pneumothorax.").title == "Life-threatening finding"
+    assert check_release("Acute appendicitis.").title == "Urgent finding"
+
+
+def test_the_count_label_counts_what_is_outstanding_then_what_was_answered():
+    state = OutstandingFindings()
+    state.update("Normal study.")
+    assert state.label == "No findings"
+    state.update("Tension pneumothorax.")
+    state.acknowledge()
+    state.update("Tension pneumothorax. Acute appendicitis.")
+    assert state.label == "1 finding to communicate"
+    state.acknowledge()
+    assert state.label == "2 findings acknowledged"
+
+
+def test_reset_leaves_a_clear_report_not_an_empty_one():
+    state = OutstandingFindings()
+    state.update("Tension pneumothorax.")
+    state.reset()
+    assert (state.count, state.state, state.label) == (0, "clear", "No findings")
+
+
+def test_the_communication_methods_offered():
+    assert COMMUNICATION_METHODS == ("telephone", "in person", "secure message", "bleep")

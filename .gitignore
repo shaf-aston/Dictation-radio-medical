@@ -8,6 +8,7 @@ __pycache__/
 
 # Claude Code temp files
 tmpclaude-*
+tmp*-cwd
 
 # Runtime data (user-specific)
 data/

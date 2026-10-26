@@ -42,6 +42,7 @@ def _window(text, monkeypatch, last_written=None):
         _applied_seq=0, _partial_seq=0, _final_seq=None, _handback_seq=None,
         _session_last_written=last_written, _session_yielded=False,
         _corrections_pending=[], _corrections_seen=set(),
+        _active_accent="neutral", _active_cleanup_level="medium", _last_raw_transcript="",
         _status=SimpleNamespace(last_progress=None),
         _show_status=lambda *a, **k: statuses.append(a[0]),
         btn_record=SimpleNamespace(setEnabled=enabled.append),

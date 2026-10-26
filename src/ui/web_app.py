@@ -30,7 +30,7 @@ async def lifespan(_: FastAPI):
     # Start the diary first, so the warm-up lines below are the first thing the
     # developer panel can show. A panel that only starts recording once you
     # open it can never explain the slow start you opened it to look at.
-    event_log.configure(int(settings.get("event_log_max")))
+    event_log.configure(settings.get("event_log_max"))
     event_log.attach_to_logging()
     logger.info("Preparing web app state...")
     state.drop_engine()
@@ -86,4 +86,4 @@ if __name__ == "__main__":
 
     settings = state.settings()
     setup_logging()
-    uvicorn.run(app, host=str(settings.get("web_host")), port=int(settings.get("web_port")))
+    uvicorn.run(app, host=settings.get("web_host"), port=settings.get("web_port"))

@@ -88,7 +88,7 @@ def is_enabled() -> bool:
     try:
         from src.core.settings import Settings
         s = Settings()
-        return bool(s.get("groq_cleanup_enabled")) and bool(s.get("cloud_training_consent"))
+        return s.get("groq_cleanup_enabled") and s.get("cloud_training_consent")
     except Exception as exc:
         logger.debug("Could not read Groq cleanup settings; disabled: %s", exc)
         return False

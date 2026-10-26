@@ -55,3 +55,41 @@ def test_a_file_that_does_not_parse_is_kept_not_overwritten(tmp_path):
     write_json(path, {"theme": "light"})
     (kept,) = tmp_path.glob("dictation_settings.json.corrupt-*")
     assert kept.read_text() == broken
+
+
+# --- A setting is typed where it is read, once, so no caller re-checks it. ---
+
+@pytest.mark.parametrize("stored, expected", [
+    ("8006", 8006),   # hand-edited as text
+    (8006.0, 8006),   # written as a float by an older version
+    ("eight", 8005),  # unreadable: the default, not a crash
+    (8006.5, 8005),   # not a whole number of ports
+    (None, 8005),
+    (True, 8005),     # a bool is not a number here
+])
+def test_a_number_setting_is_always_a_number(settings_path, stored, expected):
+    settings_path.write_text(json.dumps({"web_port": stored}))
+    assert settings_module.Settings().get("web_port") == expected
+
+
+@pytest.mark.parametrize("stored, expected", [(0, False), (1, True), ("no", True), (None, True)])
+def test_a_switch_is_always_true_or_false(settings_path, stored, expected):
+    settings_path.write_text(json.dumps({"vad_filter": stored}))
+    assert settings_module.Settings().get("vad_filter") is expected
+
+
+def test_a_whole_number_where_a_fraction_is_expected_is_kept(settings_path):
+    settings_path.write_text(json.dumps({"chunk_min_sec": 3}))
+    value = settings_module.Settings().get("chunk_min_sec")
+    assert value == 3.0 and isinstance(value, float)
+
+
+def test_editing_a_returned_default_does_not_change_the_default(settings_path):
+    s = settings_module.Settings()
+    s.get("web_allowed_hosts").append("example.org")
+    assert s.get("web_allowed_hosts") == []
+
+
+def test_an_unknown_key_is_returned_as_stored(settings_path):
+    settings_path.write_text(json.dumps({"something_new": "x"}))
+    assert settings_module.Settings().get("something_new") == "x"

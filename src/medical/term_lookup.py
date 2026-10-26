@@ -476,11 +476,11 @@ def lookup_hint_active(get) -> bool:
     permanent "how to use this" line teaches once and then costs a row on every
     report for ever.
     """
-    return int(get("term_lookup_uses") or 0) < int(get("term_lookup_hint_uses"))
+    return get("term_lookup_uses") < get("term_lookup_hint_uses")
 
 
 def note_lookup_used(settings) -> bool:
     """Count one taken suggestion; return whether the hint is still shown."""
     if lookup_hint_active(settings.get):
-        settings.set("term_lookup_uses", int(settings.get("term_lookup_uses") or 0) + 1)
+        settings.set("term_lookup_uses", settings.get("term_lookup_uses") + 1)
     return lookup_hint_active(settings.get)

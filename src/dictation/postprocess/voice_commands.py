@@ -14,6 +14,7 @@ get them. Commands that move the caret ("next field") belong to the front-end.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Callable, List, Optional, Pattern, Tuple, Union
 
@@ -24,6 +25,8 @@ from typing import Callable, List, Optional, Pattern, Tuple, Union
 # resolves. The recording session sets this (via set_correction_hook) so the
 # cloud training collector can capture the (wrong → correct) pair with audio.
 # Left None in tests / offline use so this module has no outward dependency.
+logger = logging.getLogger(__name__)
+
 _correction_hook: Optional[Callable[[str, str], None]] = None
 
 
@@ -38,7 +41,7 @@ def _fire_correction_hook(wrong: str, correct: str) -> None:
         try:
             _correction_hook(wrong, correct)
         except Exception:
-            pass
+            logger.warning("Correction hook failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
