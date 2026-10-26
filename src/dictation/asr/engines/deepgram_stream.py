@@ -139,7 +139,7 @@ class DeepgramStream:
         try:
             self._ws.close()
         except Exception:
-            pass
+            logger.debug("Deepgram socket was already gone on close", exc_info=True)
         self._receiver.join(timeout=2.0)
 
     # -- threads ----------------------------------------------------------

@@ -519,7 +519,7 @@ def on_show_learning_stats(window: MainWindow) -> None:
                         msg += f"  • {e['before']} → {e['after']}\n"
                 msg += "Run scripts/mine_corrections.py to turn these into rules.\n"
         except Exception:
-            pass
+            logger.warning("Could not read the edit log for the learning summary", exc_info=True)
 
         if corrections:
             msg += "\nRecent corrections:\n"
