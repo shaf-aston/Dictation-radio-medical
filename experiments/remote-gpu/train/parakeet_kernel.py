@@ -74,8 +74,8 @@ def usable(text: str) -> bool:
     return len(text.split()) >= 3 and not NUMBER_WORDS.search(text) and not ODD_CHARS.search(text)
 
 
-def clean_edacc(t: str) -> str:
-    """EdAcc is UPPERCASE with <LAUGH>-style tags: strip tags, sentence-case it."""
+def sentence_case(t: str) -> str:
+    """EdAcc and LibriSpeech are UPPERCASE (EdAcc with <LAUGH>-style tags): strip tags, sentence-case it."""
     t = " ".join(re.sub(r"<[^>]*>", " ", t).split()).lower()
     t = re.sub(r"\bi\b", "I", t)
     return t[:1].upper() + t[1:]
@@ -172,10 +172,10 @@ add_train("kaggle_medical", ((decode(wavs[r[fcol]].read_bytes()), r[pcol].strip(
 evals = {"kaggle_medical_validate": eval_set((wavs[r[fcol]].read_bytes(), r[pcol]) for r in held)}
 
 # 3. EdAcc: real accented English conversation (validation to train, test held out).
-add_train("edacc", ((decode(b), clean_edacc(t)) for b, t in
+add_train("edacc", ((decode(b), sentence_case(t)) for b, t in
                     parquet_rows(hf_files("edinburghcstr/edacc", "data/validation-", cfg["edacc_train_shards"]),
                                  ("text",))))
-evals["edacc_test"] = eval_set((b, clean_edacc(t)) for b, t in parquet_rows(
+evals["edacc_test"] = eval_set((b, sentence_case(t)) for b, t in parquet_rows(
     hf_files("edinburghcstr/edacc", "data/test-", cfg["edacc_eval_shards"]), ("text",)))
 
 # 4. Hani89: synthetic medical speech, long clips, so only the short ones fit.
@@ -187,6 +187,34 @@ evals["ekacare_en"] = eval_set(parquet_rows(
     hf_files("ekacare/eka-medical-asr-evaluation-dataset", "en/", cfg["ekacare_eval_shards"]),
     ("text", "transcription", "sentence")))
 
+# 6. LibriSpeech train-clean-100: everyday read English, so the model keeps normal speech (v3 lost a little).
+#    The local libri check uses test-clean: different speakers, never trained on.
+add_train("librispeech", ((decode(b), sentence_case(t)) for b, t in parquet_rows(
+    hf_files("openslr/librispeech_asr", "clean/train.100/", cfg["libri_train_shards"]), ("text",))))
+
+
+# 7. Noisy copies: another clip talking underneath (babble) or steady hiss, at a random loudness gap.
+#    Not pink noise: the local noise test uses pink, so training on it would flatter the result.
+def add_noisy_copies() -> None:
+    np_rng = np.random.default_rng(cfg["seed"])
+    lo, hi = cfg["noise_snr_db"]
+    picks = rng.sample(train_rows, int(len(train_rows) * cfg["noisy_copy_fraction"]))
+    for i, r in enumerate(picks):
+        a = sf.read(r["audio_filepath"], dtype="float32")[0]
+        if rng.random() < 0.5:
+            noise = np.resize(sf.read(rng.choice(train_rows)["audio_filepath"], dtype="float32")[0], len(a))
+        else:
+            noise = np_rng.standard_normal(len(a)).astype(np.float32)
+        gap = 10 ** (rng.uniform(lo, hi) / 20)
+        rms = lambda x: float(np.sqrt(np.mean(x ** 2))) + 1e-9  # noqa: E731
+        mixed = np.clip(a + noise * (rms(a) / rms(noise) / gap), -1, 1)
+        path = CLIPS / f"noisy_{i:05d}.flac"
+        sf.write(path, mixed, SR)
+        train_rows.append({**r, "audio_filepath": str(path), "source": r["source"] + "+noise"})
+    log["sources"]["noisy_copies"] = len(picks)
+
+
+add_noisy_copies()
 rng.shuffle(train_rows)
 manifest = TMP / "train_manifest.jsonl"
 manifest.write_text("\n".join(json.dumps({k: r[k] for k in ("audio_filepath", "duration", "text")})

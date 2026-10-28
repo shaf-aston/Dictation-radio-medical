@@ -1,14 +1,27 @@
 {
   "kernel": "rd-parakeet",
-  "kaggle_sources": ["paultimothymooney/medical-speech-transcription-and-intent"],
+  "kaggle_sources": [
+    "paultimothymooney/medical-speech-transcription-and-intent"
+  ],
   "output": "model_onnx",
   "check_file": "encoder-model.onnx",
   "quantization": null,
   "base_model": "nvidia/parakeet-tdt-0.6b-v3",
   "onnx_repo": "istupakov/parakeet-tdt-0.6b-v3-onnx",
   "stock_onnx_model": "nemo-parakeet-tdt-0.6b-v3",
-  "pip": ["nemo_toolkit[asr]==2.7.3", "onnx", "onnxruntime", "onnx-asr==0.12.0"],
-  "caps": {"radiology_synth": 100000, "kaggle_medical": 6000, "edacc": 3000, "hani89": 1500},
+  "pip": [
+    "nemo_toolkit[asr]==2.7.3",
+    "onnx",
+    "onnxruntime",
+    "onnx-asr==0.12.0"
+  ],
+  "caps": {
+    "radiology_synth": 100000,
+    "kaggle_medical": 6000,
+    "edacc": 3000,
+    "hani89": 1500,
+    "librispeech": 2000
+  },
   "hani89_shards": 4,
   "edacc_train_shards": 12,
   "edacc_eval_shards": 4,
@@ -17,9 +30,9 @@
   "max_duration_sec": 15,
   "min_duration_sec": 1,
   "freeze_encoder_layers": 12,
-  "learning_rate": 1e-4,
-  "min_learning_rate": 1e-6,
-  "weight_decay": 1e-3,
+  "learning_rate": 0.0001,
+  "min_learning_rate": 1e-06,
+  "weight_decay": 0.001,
   "warmup_steps": 300,
   "max_steps": 3000,
   "max_train_hours": 5,
@@ -30,16 +43,29 @@
   "smoke": {
     "kernel": "rd-parakeet-smoke",
     "check_export": true,
-    "caps": {"radiology_synth": 64, "kaggle_medical": 64, "edacc": 64, "hani89": 32},
+    "caps": {
+      "radiology_synth": 64,
+      "kaggle_medical": 64,
+      "edacc": 64,
+      "hani89": 32,
+      "librispeech": 32
+    },
     "hani89_shards": 1,
     "edacc_train_shards": 1,
     "edacc_eval_shards": 1,
     "ekacare_eval_shards": 1,
     "eval_clips_per_set": 24,
-    "learning_rate": 1e-8,
-    "min_learning_rate": 1e-9,
+    "learning_rate": 1e-08,
+    "min_learning_rate": 1e-09,
     "warmup_steps": 2,
     "max_steps": 20,
-    "max_train_hours": 0.5
-  }
+    "max_train_hours": 0.5,
+    "libri_train_shards": 1
+  },
+  "libri_train_shards": 2,
+  "noisy_copy_fraction": 0.3,
+  "noise_snr_db": [
+    0,
+    20
+  ]
 }
