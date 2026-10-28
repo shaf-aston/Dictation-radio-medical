@@ -1,9 +1,10 @@
 """Runs ON Kaggle (GPU). Fine-tunes Parakeet TDT 0.6b v3, exports the ONNX folder the app's engine loads, at the precision in parakeet.json.
 
 Reads /kaggle/input/rd-train-data/{manifest.jsonl,audio.tar} (our synthetic radiology clips), the Kaggle
-medical-speech dataset, and three Hugging Face sets; settings come from train/parakeet.json.
+medical-speech dataset, and five Hugging Face sets; settings come from train/parakeet.json.
 Writes /kaggle/working/model_onnx/ (onnx_asr.load_model("nemo-conformer-tdt", path, quantization=cfg["quantization"]))
-+ train_log.json, which also holds stock vs tuned error rates on three test sets the model never trained on.
++ train_log.json, which also holds stock vs tuned error rates on test sets the model never trained on,
++ train_texts.txt, every training line, so the local test sets can be leak-checked against it.
 
 Training text keeps capitals and punctuation, because Parakeet writes them: a set without them would teach
 the model to stop. Rows with spelled-out numbers are dropped for the same reason.
@@ -81,9 +82,25 @@ def sentence_case(t: str) -> str:
     return t[:1].upper() + t[1:]
 
 
+def parrot_text(t: str) -> str:
+    """PARROT marks line and paragraph breaks with the words NEWLINE and PARAGRAPH: drop them."""
+    return " ".join(re.sub(r"(NEWLINE|PARAGRAPH)", " ", t).split())
+
+
 def normalise(t: str) -> str:
     """For scoring only: lowercase, no punctuation, so only the words are compared."""
     return " ".join(re.sub(r"[^a-z0-9' ]", " ", t.lower()).split())
+
+
+def sentences(t: str) -> set:
+    """The sentences of four words or more, normalised (a decimal point does not end one)."""
+    return {s for s in (normalise(x) for x in re.split(r"(?<!\d)[.;:?!](?!\d)", t)) if len(s.split()) >= 4}
+
+
+def runs(t: str, n: int = 4) -> set:
+    """Every run of `n` words in a row, normalised."""
+    w = normalise(t).split()
+    return {" ".join(w[i:i + n]) for i in range(len(w) - n + 1)}
 
 
 def column(names: list, *wanted: str) -> str:
@@ -192,8 +209,34 @@ evals["ekacare_en"] = eval_set(parquet_rows(
 add_train("librispeech", ((decode(b), sentence_case(t)) for b, t in parquet_rows(
     hf_files("openslr/librispeech_asr", "clean/train.100/", cfg["libri_train_shards"]), ("text",))))
 
+# 7. PARROT: radiology reports written by radiologists (MSK included), read by Kokoro TTS voices and cut at
+#    pauses into pieces under 30 s (only those up to max_duration_sec are kept). Train split to train.
+#    Licence CC-BY-NC-SA 4.0: a model trained on it is for non-commercial use only.
+PARROT = "ysdede/parrot-radiology-asr-en"
+add_train("parrot", ((decode(b), parrot_text(t)) for b, t in parquet_rows(
+    hf_files(PARROT, "data/train-", cfg["parrot_train_shards"]), ("transcription",))))
 
-# 7. Noisy copies: another clip talking underneath (babble) or steady hiss, at a random loudness gap.
+# PARROT's test split is a random cut of the same reports' pieces, not a split by report, and reports share
+# stock sentences ("No free fluid."). So a test piece is only scored if none of its sentences is a training line's.
+train_sentences = set().union(*(sentences(r["text"]) for r in train_rows))
+parrot_seen = {"looked_at": 0, "shares_a_training_sentence": 0}
+
+
+def parrot_test_rows():
+    for b, t in parquet_rows(hf_files(PARROT, "data/test-", 1), ("transcription",)):
+        t = parrot_text(t)
+        parrot_seen["looked_at"] += 1
+        if sentences(t) & train_sentences:
+            parrot_seen["shares_a_training_sentence"] += 1
+            continue
+        yield b, t
+
+
+evals["parrot_test"] = eval_set(parrot_test_rows())
+log["sources"]["parrot_test"] = parrot_seen
+
+
+# 8. Noisy copies: another clip talking underneath (babble) or steady hiss, at a random loudness gap.
 #    Not pink noise: the local noise test uses pink, so training on it would flatter the result.
 def add_noisy_copies() -> None:
     np_rng = np.random.default_rng(cfg["seed"])
@@ -215,6 +258,24 @@ def add_noisy_copies() -> None:
 
 
 add_noisy_copies()
+
+
+# Leak check: how much of each test set's text the model has seen in training. Whole phrases should be 0;
+# four-word runs show near-misses. Kaggle "validate" overlaps by design (same phrase list), so it is not used.
+def leak_check() -> None:
+    texts = sorted({r["text"] for r in train_rows})
+    (OUT / "train_texts.txt").write_text("\n".join(texts) + "\n", encoding="utf-8")
+    joined = "| " + " | ".join(normalise(t) for t in texts) + " |"  # spaces: match whole words only
+    train_runs = set().union(*(runs(t) for t in texts))
+    log["leak"] = {}
+    for name, items in evals.items():
+        phrases = {normalise(t) for _, t in items} - {""}
+        test_runs = set().union(*(runs(t) for _, t in items))
+        log["leak"][name] = {"phrases": len(phrases), "phrases_in_training": sum(f" {p} " in joined for p in phrases),
+                             "four_word_runs": len(test_runs), "four_word_runs_in_training": len(test_runs & train_runs)}
+
+
+leak_check()
 rng.shuffle(train_rows)
 manifest = TMP / "train_manifest.jsonl"
 manifest.write_text("\n".join(json.dumps({k: r[k] for k in ("audio_filepath", "duration", "text")})

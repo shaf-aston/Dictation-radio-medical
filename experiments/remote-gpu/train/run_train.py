@@ -57,8 +57,9 @@ def save_version(dest: Path, engine: str, cfg: dict, clips: int, data: Path, not
     data_label = os.path.relpath(data, HERE)  # before anything moves: a failure here must not strand the model
     dest.mkdir(parents=True)  # fails loudly if it somehow exists: never overwrite
     shutil.move(str(OUT / cfg["output"]), str(dest / "model"))
-    if (OUT / "train_log.json").exists():
-        shutil.move(str(OUT / "train_log.json"), dest / "train_log.json")
+    for name in ("train_log.json", "train_texts.txt"):  # train_texts.txt: for the leak check on local sets
+        if (OUT / name).exists():
+            shutil.move(str(OUT / name), dest / name)
     (dest / f"{engine}.json").write_text(json.dumps(cfg, indent=2))
     shutil.copy(PACK / "manifest.jsonl", dest / "train_manifest.jsonl")
     (dest / "README.md").write_text(
