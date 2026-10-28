@@ -99,12 +99,12 @@ def plan_from_settings(get: Callable[[str], Any], caps: Optional[EngineCaps]) ->
     those verbatim would keep every existing user on the slow shape.
     """
     trailing = float(get("chunk_trailing_silence_sec") or get_default("chunk_trailing_silence_sec"))
-    if str(get("chunk_policy") or AUTO) == MANUAL or caps is None:
+    if get("chunk_policy") == MANUAL or caps is None:
         return LivePlan(
             policy=ChunkPolicy(
-                min_sec=float(get("chunk_min_sec")),
-                soft_max_sec=float(get("chunk_soft_max_sec")),
-                force_cut_sec=float(get("chunk_force_cut_sec")),
+                min_sec=get("chunk_min_sec"),
+                soft_max_sec=get("chunk_soft_max_sec"),
+                force_cut_sec=get("chunk_force_cut_sec"),
                 trailing_silence_sec=trailing,
             ),
             preview_min_tail_sec=float(

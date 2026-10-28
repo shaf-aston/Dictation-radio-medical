@@ -128,7 +128,7 @@ def replay(
     settings file.
     """
     sr = SAMPLE_RATE
-    cycle_sec = float(settings.get("live_cycle_sec"))
+    cycle_sec = settings.get("live_cycle_sec")
     block = max(1, int(cycle_sec * sr))
 
     overrides = {} if polish_ceiling is None else {"polish_confidence_ceiling": polish_ceiling}
@@ -256,9 +256,9 @@ def main() -> None:
     # The model settings name Whisper sizes; Parakeet has no such model, so it
     # keeps its own default unless one is passed on the command line.
     live_model = args.live_model or (
-        "" if args.engine == "parakeet" else str(settings.get("live_model_size")))
+        "" if args.engine == "parakeet" else settings.get("live_model_size"))
     final_model = args.final_model or (
-        "" if final_engine == "parakeet" else str(settings.get("model_size")))
+        "" if final_engine == "parakeet" else settings.get("model_size"))
     chunk_overrides = {
         "min_sec": args.chunk_min,
         "soft_max_sec": args.chunk_soft_max,
@@ -267,7 +267,7 @@ def main() -> None:
     }
 
     ceiling = (args.polish_ceiling if args.polish_ceiling is not None
-               else float(settings.get("polish_confidence_ceiling")))
+               else settings.get("polish_confidence_ceiling"))
     print(f"engine={args.engine} live={live_model} final_engine={final_engine} "
           f"final={final_model} polish_ceiling={ceiling}")
     set_chunks = {k: v for k, v in chunk_overrides.items() if v is not None}

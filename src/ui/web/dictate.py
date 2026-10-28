@@ -54,7 +54,7 @@ def record_web_run(
     """
     audio_sec = session.audio_sec
     record = run_log.start(
-        "web", model=str(prefs.get("model_size", "")), engine=str(settings.get("asr_engine")),
+        "web", model=str(prefs.get("model_size", "")), engine=settings.get("asr_engine"),
     )
     record.audio_sec = audio_sec
     record.duration_sec = round(elapsed, 3)
