@@ -303,7 +303,10 @@ def data_cfg(bs: int, path: Path, shuffle: bool) -> DictConfig:
 
 
 def fits(bs: int) -> bool:
-    """One full training step (forward, backward, optimiser state) on `bs` copies of the longest clip."""
+    """Two full training steps (forward, backward, optimiser state) on `bs` copies of the longest clip.
+
+    Two, because AdamW only creates its state (twice the trainable weights) at the first step: one step
+    peaks before that state exists, so it passed batch 4 that then ran out of memory at step 2 (v4 smoke)."""
     # A batch is padded to its longest audio AND its longest text, so pair the two worst clips.
     worst = [max(train_rows, key=lambda r: r["duration"]), max(train_rows, key=lambda r: len(r["text"]))]
     probe = TMP / "probe.jsonl"
@@ -318,17 +321,19 @@ def fits(bs: int) -> bool:
     # out-of-memory mid-run skips the restore, and training then gets one loss per clip.
     reduction = model.joint.loss.reduction if model.joint.fuse_loss_wer else None
     try:
-        with torch.autocast("cuda", dtype=torch.float16):
-            enc, enc_len = model.forward(input_signal=sig, input_signal_length=sig_len)
-            dec, tgt_len, _ = model.decoder(targets=tr, target_length=tr_len)
-            if model.joint.fuse_loss_wer:
-                loss = model.joint(encoder_outputs=enc, decoder_outputs=dec, encoder_lengths=enc_len,
-                                   transcripts=tr, transcript_lengths=tr_len, compute_wer=False)[0]
-            else:
-                loss = model.loss(log_probs=model.joint(encoder_outputs=enc, decoder_outputs=dec), targets=tr,
-                                  input_lengths=enc_len, target_lengths=tgt_len)
-        loss.backward()
-        opt.step()
+        for _ in range(2):
+            with torch.autocast("cuda", dtype=torch.float16):
+                enc, enc_len = model.forward(input_signal=sig, input_signal_length=sig_len)
+                dec, tgt_len, _ = model.decoder(targets=tr, target_length=tr_len)
+                if model.joint.fuse_loss_wer:
+                    loss = model.joint(encoder_outputs=enc, decoder_outputs=dec, encoder_lengths=enc_len,
+                                       transcripts=tr, transcript_lengths=tr_len, compute_wer=False)[0]
+                else:
+                    loss = model.loss(log_probs=model.joint(encoder_outputs=enc, decoder_outputs=dec), targets=tr,
+                                      input_lengths=enc_len, target_lengths=tgt_len)
+            loss.backward()
+            opt.step()
+            del enc, dec, loss
         ok = True
     except torch.cuda.OutOfMemoryError:
         ok = False
