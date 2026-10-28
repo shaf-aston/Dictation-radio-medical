@@ -271,7 +271,8 @@ def leak_check() -> None:
     for name, items in evals.items():
         phrases = {normalise(t) for _, t in items} - {""}
         test_runs = set().union(*(runs(t) for _, t in items))
-        log["leak"][name] = {"phrases": len(phrases), "phrases_in_training": sum(f" {p} " in joined for p in phrases),
+        found = sorted(p for p in phrases if f" {p} " in joined)
+        log["leak"][name] = {"phrases": len(phrases), "phrases_in_training": len(found), "found": found[:20],
                              "four_word_runs": len(test_runs), "four_word_runs_in_training": len(test_runs & train_runs)}
 
 
