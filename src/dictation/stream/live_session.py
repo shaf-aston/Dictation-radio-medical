@@ -102,19 +102,19 @@ class LiveSession:
             plan.policy, **{k: v for k, v in (chunk_overrides or {}).items() if v is not None}
         )
         knobs: Dict[str, Any] = dict(
-            language=str(get("language")),
-            accent=str(get("accent")),
-            cleanup_level=str(get("cleanup_level")),
-            pause_threshold=float(get("pause_threshold")),
-            live_beam_size=max(1, int(get("live_beam_size"))),
-            final_beam_size=max(1, int(get("final_beam_size"))),
-            preview_max_lag_sec=float(get("preview_max_lag_sec")),
-            polish_confidence_ceiling=float(get("polish_confidence_ceiling")),
-            uncertain_word_confidence=float(get("uncertain_word_confidence")),
-            streaming=bool(get("asr_streaming")),
-            background_polish=bool(get("background_polish")),
-            preview_mode=str(get("preview_mode")),
-            polish_vad_filter=bool(get("vad_filter")),
+            language=get("language"),
+            accent=get("accent"),
+            cleanup_level=get("cleanup_level"),
+            pause_threshold=get("pause_threshold"),
+            live_beam_size=max(1, get("live_beam_size")),
+            final_beam_size=max(1, get("final_beam_size")),
+            preview_max_lag_sec=get("preview_max_lag_sec"),
+            polish_confidence_ceiling=get("polish_confidence_ceiling"),
+            uncertain_word_confidence=get("uncertain_word_confidence"),
+            streaming=get("asr_streaming"),
+            background_polish=get("background_polish"),
+            preview_mode=get("preview_mode"),
+            polish_vad_filter=get("vad_filter"),
             initial_prompt=build_context_prompt(),
         )
         knobs.update(overrides)

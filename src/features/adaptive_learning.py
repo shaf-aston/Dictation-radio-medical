@@ -123,7 +123,7 @@ class AdaptiveLearning:
         return cls._instance
 
     def __init__(self, data_dir: Optional[Path] = None):
-        if getattr(self, '_initialized', False):
+        if self._initialized:
             return
 
         self._data_dir = data_dir or self._default_data_dir()

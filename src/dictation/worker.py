@@ -96,7 +96,7 @@ class LiveTranscribeWorker(QObject):
         # when run() builds the session.
         self._get = get
         # How often to look for new audio: the web socket's pace, not its own.
-        self._cycle_sec = float(get("live_cycle_sec"))
+        self._cycle_sec = get("live_cycle_sec")
         self.model_path = model_path
         self._session: Optional[LiveSession] = None
         self._keep_running = True

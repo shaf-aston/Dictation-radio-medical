@@ -99,7 +99,7 @@ def run(audio: np.ndarray, settings: Settings) -> dict:
     session = build_live_session(settings)
     session.live_engine.preload()
     reference, ends = spoken_words(session.live_engine, audio)
-    cycle_sec = float(settings.get("live_cycle_sec"))
+    cycle_sec = settings.get("live_cycle_sec")
 
     updates: List[Tuple[float, str, str]] = []
     frame = int(FRAME_SEC * SAMPLE_RATE)
