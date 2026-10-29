@@ -46,7 +46,7 @@ from src.medical import macros
 from src.medical.macros import reload_macros
 from src.medical.term_lookup import lookup_hint_active, note_lookup_used
 from src.core.paths import startup_cleanup, autosave_dir, macros_file, templates_dir
-from src.features.adaptive_learning import get_adaptive_learning, learn_from_session
+from src.features.adaptive_learning import commit_session, get_adaptive_learning
 from src.features import audit_log, run_log
 
 # View construction
@@ -873,13 +873,8 @@ class MainWindow(QMainWindow):
         if snapshot is None:
             return
         self._post_dictation_snapshot = None
-        if not self.settings.get("learning_enabled"):
-            return
         with contextlib.suppress(Exception):
-            from src.features.edit_tracking import record_session_edits
-            final = self.editor.toPlainText()
-            record_session_edits(snapshot, final)
-            learn_from_session(snapshot, final)
+            commit_session(self.settings, snapshot, self.editor.toPlainText())
 
     # ------------------------------------------------------------------
     # Window close – persist settings

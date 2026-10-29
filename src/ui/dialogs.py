@@ -36,11 +36,8 @@ def show_learning_consent_if_needed(window: MainWindow) -> None:
         _Yes | _No,
         _Yes,
     )
-    enabled = reply == _Yes
-    window.settings.set("learning_enabled", enabled)
-    window.settings.set("learning_consent_shown", True)
-    from src.features import audit_log
-    audit_log.log_learning_consent(enabled)
+    from src.features.adaptive_learning import record_consent
+    record_consent(window.settings, reply == _Yes)
 
 
 def show_cloud_training_dialog(window: MainWindow) -> None:
@@ -74,8 +71,7 @@ def show_cloud_training_dialog(window: MainWindow) -> None:
     layout.addWidget(blurb)
 
     enable_box = QCheckBox("Enable cloud voice training (upload my corrections)")
-    enable_box.setChecked(s.get("cloud_enabled")
-                          and s.get("cloud_training_consent"))
+    enable_box.setChecked(s.cloud_consented())
     layout.addWidget(enable_box)
 
     form = QFormLayout()
@@ -130,7 +126,7 @@ def show_cloud_training_dialog(window: MainWindow) -> None:
         return
 
     enabled = enable_box.isChecked()
-    was_enabled = s.get("cloud_enabled") and s.get("cloud_training_consent")
+    was_enabled = s.cloud_consented()
     s.batch_set({
         "cloud_enabled": enabled,
         "cloud_training_consent": enabled,

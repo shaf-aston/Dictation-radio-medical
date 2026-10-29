@@ -14,9 +14,7 @@ import anyio
 from fastapi import APIRouter, HTTPException
 
 from src.core import event_log
-from src.features import audit_log
-from src.features.adaptive_learning import get_adaptive_learning, learn_from_session
-from src.features.edit_tracking import record_session_edits
+from src.features.adaptive_learning import commit_session, get_adaptive_learning, record_consent
 from src.medical import term_lookup
 from src.ui.web import state
 from src.ui.web.schemas import ConsentRequest, SessionEditsRequest, TermChoiceRequest, TextRequest
@@ -65,10 +63,7 @@ async def term_used_endpoint():
 @router.post("/api/learn/consent")
 async def learn_consent_endpoint(payload: ConsentRequest):
     """Record the answer to "learn from my corrections?", once per install."""
-    settings = state.settings()
-    settings.set("learning_enabled", payload.enabled)
-    settings.set("learning_consent_shown", True)
-    audit_log.log_learning_consent(payload.enabled)
+    record_consent(state.settings(), payload.enabled)
     return {"enabled": payload.enabled}
 
 
@@ -77,17 +72,10 @@ async def learn_session_endpoint(payload: SessionEditsRequest):
     """Learn from how the radiologist corrected a finished dictation.
 
     Called when a report is committed (export, copy, new report, next
-    recording). The diff and the learning rules live in features/; this only
-    checks consent.
+    recording). Consent, the diff and the learning rules all live in
+    features/adaptive_learning.commit_session.
     """
-    if not state.settings().get("learning_enabled"):
-        return {"learned": 0}
-
-    def work() -> int:
-        record_session_edits(payload.dictated, payload.final)
-        return learn_from_session(payload.dictated, payload.final)
-
-    learned = await anyio.to_thread.run_sync(work)
+    learned = await anyio.to_thread.run_sync(commit_session, state.settings(), payload.dictated, payload.final)
     if learned:
         event_log.emit("learn", "learned from your edits", corrections=learned)
     return {"learned": learned}

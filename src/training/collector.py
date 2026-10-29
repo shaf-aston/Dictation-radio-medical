@@ -84,8 +84,7 @@ class CorrectionCollector:
         """True only when the user has opted in to cloud training."""
         try:
             from src.core.settings import Settings
-            s = Settings()
-            return s.get("cloud_enabled") and s.get("cloud_training_consent")
+            return Settings().cloud_consented()
         except Exception as exc:
             logger.debug("Could not read consent settings; treating as disabled: %s", exc)
             return False

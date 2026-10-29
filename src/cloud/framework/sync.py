@@ -53,8 +53,7 @@ class SyncManager:
     def _enabled() -> bool:
         try:
             from src.core.settings import Settings
-            s = Settings()
-            return s.get("cloud_enabled") and s.get("cloud_training_consent")
+            return Settings().cloud_consented()
         except Exception as exc:
             logger.debug("Could not read cloud settings; treating as disabled: %s", exc)
             return False
