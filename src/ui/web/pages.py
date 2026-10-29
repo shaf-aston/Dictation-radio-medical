@@ -43,6 +43,7 @@ FRONTEND_FILES = {
     "dictate.js": "text/javascript; charset=utf-8",
     # The developer Test voice (src/devtools), separate so it can be removed.
     "speechtest.js": "text/javascript; charset=utf-8",
+    "workspace.js": "text/javascript; charset=utf-8",
     # Loaded into the AudioWorklet only when the browser cannot give a 16 kHz
     # context on the microphone (Firefox).
     "resampler.js": "text/javascript; charset=utf-8",

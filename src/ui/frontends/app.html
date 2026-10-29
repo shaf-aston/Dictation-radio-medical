@@ -29,6 +29,12 @@
         <span id="findingsPill" class="findings-pill" data-findings="clear"></span>
 
         <div class="bar-actions">
+            <button id="wsLibBtn" class="btn btn-icon ws-bar-btn" type="button" aria-pressed="true"
+                    title="Show or hide templates and settings (Alt+T)" aria-label="Templates and settings panel"><i class="fas fa-book"></i></button>
+            <button id="wsLayoutBtn" class="btn btn-icon ws-bar-btn" type="button" aria-haspopup="true"
+                    title="Arrange panels" aria-label="Arrange panels"><i class="fas fa-table-columns"></i></button>
+            <button id="wsFocusBtn" class="btn btn-icon ws-bar-btn" type="button" aria-pressed="false"
+                    title="Focus on the report (Alt+F)" aria-label="Focus on the report"><i class="fas fa-expand"></i></button>
             <button id="copyBtn" class="btn btn-primary" type="button" title="Copy the report to the clipboard">
                 <i id="copyIcon" class="fas fa-copy" aria-hidden="true"></i>
                 <span id="copyText">Copy</span>
@@ -71,7 +77,25 @@
         </div>
     </header>
 
-    <main class="main">
+    <!-- The workspace: the report in the middle, and three dock zones round it
+         (left, right, bottom) that the radiologist arranges. Each panel below
+         sits in its default zone in the markup itself, so with no script the
+         page still has a working microphone; workspace.js only moves them. -->
+    <main class="main ws">
+
+        <div class="ws-zone" id="wsZoneLeft" data-zone="left" data-label="Dock left">
+            <section class="ws-w" data-w="outline" aria-label="Report sections">
+                <div class="ws-w-head">
+                    <span class="ws-grip" title="Drag to move this panel" aria-hidden="true"><i class="fas fa-grip"></i></span>
+                    <span class="ws-w-title">Sections</span>
+                    <button class="ws-ibtn" type="button" data-dockmenu title="Move this panel" aria-label="Move the Sections panel"><i class="fas fa-table-columns"></i></button>
+                </div>
+                <div class="ws-w-body">
+                    <ol id="wsOutline" class="ws-outline"></ol>
+                    <p id="wsOutlineEmpty" class="ws-empty">Headings such as <b>FINDINGS:</b> appear here as you type or load a template.</p>
+                </div>
+            </section>
+        </div>
 
         <!-- The lit surface: the report is the film on the lightbox, and every
              other control is the dim room around it. -->
@@ -87,8 +111,15 @@
                  editor, right-aligned against nothing. -->
             <div class="stage-head">
                 <h2 class="stage-title">Report</h2>
+                <!-- Where the next words will land, always: the caret's section. -->
+                <span id="wsWhere" class="ws-where" title="Where dictation goes: click in the report or on a section to change it"></span>
                 <p id="marksHint" class="marks-hint" hidden></p>
                 <span id="wordCount" class="stage-count" aria-live="polite">0 words</span>
+                <span class="ws-zoom" role="group" aria-label="Report text size">
+                    <button id="wsZoomOut" class="ws-ibtn" type="button" title="Smaller report text (Alt+-)" aria-label="Smaller report text"><i class="fas fa-minus"></i></button>
+                    <button id="wsZoomReset" class="ws-zoom-val" type="button" title="Reset text size">100%</button>
+                    <button id="wsZoomIn" class="ws-ibtn" type="button" title="Larger report text (Alt+=)" aria-label="Larger report text"><i class="fas fa-plus"></i></button>
+                </span>
             </div>
 
             <div class="editor-wrap">
@@ -121,6 +152,20 @@
                         title="It is right as spoken: stop marking this word">Keep as is</button>
             </div>
 
+            <!-- Pinned sections: a live, read-only copy of each pinned section's
+                 text (the Impression by default), so the conclusion stays in
+                 view while a long Findings scrolls. Click one to go to it. -->
+            <div id="wsPins" class="ws-pins" aria-label="Pinned sections" hidden></div>
+        </section>
+
+        <div class="ws-zone" id="wsZoneRight" data-zone="right" data-label="Dock right">
+          <section class="ws-w" data-w="mic" aria-label="Dictation">
+            <div class="ws-w-head">
+                <span class="ws-grip" title="Drag to move this panel" aria-hidden="true"><i class="fas fa-grip"></i></span>
+                <span class="ws-w-title">Dictation</span>
+                <button class="ws-ibtn" type="button" data-dockmenu title="Move this panel" aria-label="Move the Dictation panel"><i class="fas fa-table-columns"></i></button>
+            </div>
+            <div class="ws-w-body">
             <div class="stage-foot">
                 <div class="rec-row">
                     <!-- Left of the button and right of it, so the controls sit
@@ -164,13 +209,20 @@
 
                 <p class="hint" id="keyHint"><kbd>Space</kbd> to record · <kbd>Ctrl</kbd>+<kbd>Z</kbd> to undo</p>
             </div>
-        </section>
+            </div>
+          </section>
 
         <!-- On a wide screen this is a rail beside the report, not a stack
              under it: a template you have to scroll down and unfold to reach
              is a template nobody uses mid-dictation. Each section still folds,
              and what you leave open is what you get next time. -->
-        <aside class="panels" aria-label="Templates, phrases and settings">
+          <section class="ws-w" data-w="library" aria-label="Templates, phrases and settings">
+            <div class="ws-w-head">
+                <span class="ws-grip" title="Drag to move this panel" aria-hidden="true"><i class="fas fa-grip"></i></span>
+                <span class="ws-w-title">Templates &amp; settings</span>
+                <button class="ws-ibtn" type="button" data-dockmenu title="Move this panel" aria-label="Move the Templates panel"><i class="fas fa-table-columns"></i></button>
+            </div>
+        <aside class="panels ws-w-body" aria-label="Templates, phrases and settings">
 
             <details data-panel="template" class="panel">
                 <summary>
@@ -295,7 +347,14 @@
             </details>
 
         </aside>
+          </section>
+        </div>
+
+        <div class="ws-zone ws-zone-bottom" id="wsZoneBottom" data-zone="bottom" data-label="Dock at the bottom"></div>
+        <div class="ws-float" id="wsFloat"></div>
     </main>
+    <div id="wsParking" hidden></div>
+    <div id="wsPop" class="ws-pop" role="menu" hidden></div>
 </div>
 
 <!-- First-launch clinical disclaimer. The wording is not here: it comes from
@@ -449,5 +508,6 @@
 <script src="/static/app.js"></script>
 <script src="/static/dictate.js"></script>
 <script src="/static/speechtest.js"></script>
+<script src="/static/workspace.js"></script>
 </body>
 </html>
