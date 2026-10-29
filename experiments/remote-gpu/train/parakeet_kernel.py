@@ -1,9 +1,10 @@
 """Runs ON Kaggle (GPU). Fine-tunes Parakeet TDT 0.6b v3, exports the ONNX folder the app's engine loads, at the precision in parakeet.json.
 
 Reads /kaggle/input/rd-train-data/{manifest.jsonl,audio.tar} (our synthetic radiology clips), the Kaggle
-medical-speech dataset, and three Hugging Face sets; settings come from train/parakeet.json.
+medical-speech dataset, and five Hugging Face sets; settings come from train/parakeet.json.
 Writes /kaggle/working/model_onnx/ (onnx_asr.load_model("nemo-conformer-tdt", path, quantization=cfg["quantization"]))
-+ train_log.json, which also holds stock vs tuned error rates on three test sets the model never trained on.
++ train_log.json, which also holds stock vs tuned error rates on test sets the model never trained on,
++ train_texts.txt, every training line, so the local test sets can be leak-checked against it.
 
 Training text keeps capitals and punctuation, because Parakeet writes them: a set without them would teach
 the model to stop. Rows with spelled-out numbers are dropped for the same reason.
@@ -74,16 +75,32 @@ def usable(text: str) -> bool:
     return len(text.split()) >= 3 and not NUMBER_WORDS.search(text) and not ODD_CHARS.search(text)
 
 
-def clean_edacc(t: str) -> str:
-    """EdAcc is UPPERCASE with <LAUGH>-style tags: strip tags, sentence-case it."""
+def sentence_case(t: str) -> str:
+    """EdAcc and LibriSpeech are UPPERCASE (EdAcc with <LAUGH>-style tags): strip tags, sentence-case it."""
     t = " ".join(re.sub(r"<[^>]*>", " ", t).split()).lower()
     t = re.sub(r"\bi\b", "I", t)
     return t[:1].upper() + t[1:]
 
 
+def parrot_text(t: str) -> str:
+    """PARROT marks line and paragraph breaks with the words NEWLINE and PARAGRAPH: drop them."""
+    return " ".join(re.sub(r"(NEWLINE|PARAGRAPH)", " ", t).split())
+
+
 def normalise(t: str) -> str:
     """For scoring only: lowercase, no punctuation, so only the words are compared."""
     return " ".join(re.sub(r"[^a-z0-9' ]", " ", t.lower()).split())
+
+
+def sentences(t: str) -> set:
+    """The sentences of four words or more, normalised (a decimal point does not end one)."""
+    return {s for s in (normalise(x) for x in re.split(r"(?<!\d)[.;:?!](?!\d)", t)) if len(s.split()) >= 4}
+
+
+def runs(t: str, n: int = 4) -> set:
+    """Every run of `n` words in a row, normalised."""
+    w = normalise(t).split()
+    return {" ".join(w[i:i + n]) for i in range(len(w) - n + 1)}
 
 
 def column(names: list, *wanted: str) -> str:
@@ -172,10 +189,10 @@ add_train("kaggle_medical", ((decode(wavs[r[fcol]].read_bytes()), r[pcol].strip(
 evals = {"kaggle_medical_validate": eval_set((wavs[r[fcol]].read_bytes(), r[pcol]) for r in held)}
 
 # 3. EdAcc: real accented English conversation (validation to train, test held out).
-add_train("edacc", ((decode(b), clean_edacc(t)) for b, t in
+add_train("edacc", ((decode(b), sentence_case(t)) for b, t in
                     parquet_rows(hf_files("edinburghcstr/edacc", "data/validation-", cfg["edacc_train_shards"]),
                                  ("text",))))
-evals["edacc_test"] = eval_set((b, clean_edacc(t)) for b, t in parquet_rows(
+evals["edacc_test"] = eval_set((b, sentence_case(t)) for b, t in parquet_rows(
     hf_files("edinburghcstr/edacc", "data/test-", cfg["edacc_eval_shards"]), ("text",)))
 
 # 4. Hani89: synthetic medical speech, long clips, so only the short ones fit.
@@ -187,6 +204,79 @@ evals["ekacare_en"] = eval_set(parquet_rows(
     hf_files("ekacare/eka-medical-asr-evaluation-dataset", "en/", cfg["ekacare_eval_shards"]),
     ("text", "transcription", "sentence")))
 
+# 6. LibriSpeech train-clean-100: everyday read English, so the model keeps normal speech (v3 lost a little).
+#    The local libri check uses test-clean: different speakers, never trained on.
+add_train("librispeech", ((decode(b), sentence_case(t)) for b, t in parquet_rows(
+    hf_files("openslr/librispeech_asr", "clean/train.100/", cfg["libri_train_shards"]), ("text",))))
+
+# 7. PARROT: radiology reports written by radiologists (MSK included), read by Kokoro TTS voices and cut at
+#    pauses into pieces under 30 s (only those up to max_duration_sec are kept). Train split to train.
+#    Licence CC-BY-NC-SA 4.0: a model trained on it is for non-commercial use only.
+PARROT = "ysdede/parrot-radiology-asr-en"
+add_train("parrot", ((decode(b), parrot_text(t)) for b, t in parquet_rows(
+    hf_files(PARROT, "data/train-", cfg["parrot_train_shards"]), ("transcription",))))
+
+# PARROT's test split is a random cut of the same reports' pieces, not a split by report, and reports share
+# stock sentences ("No free fluid."). So a test piece is only scored if none of its sentences is a training line's.
+train_sentences = set().union(*(sentences(r["text"]) for r in train_rows))
+parrot_seen = {"looked_at": 0, "shares_a_training_sentence": 0}
+
+
+def parrot_test_rows():
+    for b, t in parquet_rows(hf_files(PARROT, "data/test-", 1), ("transcription",)):
+        t = parrot_text(t)
+        parrot_seen["looked_at"] += 1
+        if sentences(t) & train_sentences:
+            parrot_seen["shares_a_training_sentence"] += 1
+            continue
+        yield b, t
+
+
+evals["parrot_test"] = eval_set(parrot_test_rows())
+log["sources"]["parrot_test"] = parrot_seen
+
+
+# 8. Noisy copies: another clip talking underneath (babble) or steady hiss, at a random loudness gap.
+#    Not pink noise: the local noise test uses pink, so training on it would flatter the result.
+def add_noisy_copies() -> None:
+    np_rng = np.random.default_rng(cfg["seed"])
+    lo, hi = cfg["noise_snr_db"]
+    picks = rng.sample(train_rows, int(len(train_rows) * cfg["noisy_copy_fraction"]))
+    for i, r in enumerate(picks):
+        a = sf.read(r["audio_filepath"], dtype="float32")[0]
+        if rng.random() < 0.5:
+            noise = np.resize(sf.read(rng.choice(train_rows)["audio_filepath"], dtype="float32")[0], len(a))
+        else:
+            noise = np_rng.standard_normal(len(a)).astype(np.float32)
+        gap = 10 ** (rng.uniform(lo, hi) / 20)
+        rms = lambda x: float(np.sqrt(np.mean(x ** 2))) + 1e-9  # noqa: E731
+        mixed = np.clip(a + noise * (rms(a) / rms(noise) / gap), -1, 1)
+        path = CLIPS / f"noisy_{i:05d}.flac"
+        sf.write(path, mixed, SR)
+        train_rows.append({**r, "audio_filepath": str(path), "source": r["source"] + "+noise"})
+    log["sources"]["noisy_copies"] = len(picks)
+
+
+add_noisy_copies()
+
+
+# Leak check: how much of each test set's text the model has seen in training. Whole phrases should be 0;
+# four-word runs show near-misses. Kaggle "validate" overlaps by design (same phrase list), so it is not used.
+def leak_check() -> None:
+    texts = sorted({r["text"] for r in train_rows})
+    (OUT / "train_texts.txt").write_text("\n".join(texts) + "\n", encoding="utf-8")
+    joined = "| " + " | ".join(normalise(t) for t in texts) + " |"  # spaces: match whole words only
+    train_runs = set().union(*(runs(t) for t in texts))
+    log["leak"] = {}
+    for name, items in evals.items():
+        phrases = {normalise(t) for _, t in items} - {""}
+        test_runs = set().union(*(runs(t) for _, t in items))
+        found = sorted(p for p in phrases if f" {p} " in joined)
+        log["leak"][name] = {"phrases": len(phrases), "phrases_in_training": len(found), "found": found[:20],
+                             "four_word_runs": len(test_runs), "four_word_runs_in_training": len(test_runs & train_runs)}
+
+
+leak_check()
 rng.shuffle(train_rows)
 manifest = TMP / "train_manifest.jsonl"
 manifest.write_text("\n".join(json.dumps({k: r[k] for k in ("audio_filepath", "duration", "text")})
@@ -275,7 +365,10 @@ def data_cfg(bs: int, path: Path, shuffle: bool) -> DictConfig:
 
 
 def fits(bs: int) -> bool:
-    """One full training step (forward, backward, optimiser state) on `bs` copies of the longest clip."""
+    """Two full training steps (forward, backward, optimiser state) on `bs` copies of the longest clip.
+
+    Two, because AdamW only creates its state (twice the trainable weights) at the first step: one step
+    peaks before that state exists, so it passed batch 4 that then ran out of memory at step 2 (v4 smoke)."""
     # A batch is padded to its longest audio AND its longest text, so pair the two worst clips.
     worst = [max(train_rows, key=lambda r: r["duration"]), max(train_rows, key=lambda r: len(r["text"]))]
     probe = TMP / "probe.jsonl"
@@ -290,17 +383,19 @@ def fits(bs: int) -> bool:
     # out-of-memory mid-run skips the restore, and training then gets one loss per clip.
     reduction = model.joint.loss.reduction if model.joint.fuse_loss_wer else None
     try:
-        with torch.autocast("cuda", dtype=torch.float16):
-            enc, enc_len = model.forward(input_signal=sig, input_signal_length=sig_len)
-            dec, tgt_len, _ = model.decoder(targets=tr, target_length=tr_len)
-            if model.joint.fuse_loss_wer:
-                loss = model.joint(encoder_outputs=enc, decoder_outputs=dec, encoder_lengths=enc_len,
-                                   transcripts=tr, transcript_lengths=tr_len, compute_wer=False)[0]
-            else:
-                loss = model.loss(log_probs=model.joint(encoder_outputs=enc, decoder_outputs=dec), targets=tr,
-                                  input_lengths=enc_len, target_lengths=tgt_len)
-        loss.backward()
-        opt.step()
+        for _ in range(2):
+            with torch.autocast("cuda", dtype=torch.float16):
+                enc, enc_len = model.forward(input_signal=sig, input_signal_length=sig_len)
+                dec, tgt_len, _ = model.decoder(targets=tr, target_length=tr_len)
+                if model.joint.fuse_loss_wer:
+                    loss = model.joint(encoder_outputs=enc, decoder_outputs=dec, encoder_lengths=enc_len,
+                                       transcripts=tr, transcript_lengths=tr_len, compute_wer=False)[0]
+                else:
+                    loss = model.loss(log_probs=model.joint(encoder_outputs=enc, decoder_outputs=dec), targets=tr,
+                                      input_lengths=enc_len, target_lengths=tgt_len)
+            loss.backward()
+            opt.step()
+            del enc, dec, loss
         ok = True
     except torch.cuda.OutOfMemoryError:
         ok = False

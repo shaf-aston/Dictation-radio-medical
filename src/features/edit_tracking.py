@@ -46,15 +46,6 @@ _MAX_SPAN_TOKENS = 8
 _CONTEXT_TOKENS = 3
 
 
-def _enabled() -> bool:
-    """True unless the user has turned passive learning off."""
-    try:
-        from src.core.settings import Settings
-        return bool(Settings().get("learning_enabled"))
-    except Exception:
-        return True
-
-
 def diff_edits(
     before: str,
     after: str,
@@ -98,9 +89,10 @@ def record_session_edits(dictated: str, final: str) -> int:
 
     *dictated* is the pipeline's output captured when recording finished;
     *final* is the editor's text at the moment the report is committed. Returns
-    the number of edit records written (0 if disabled, unchanged, or on error).
+    the number of edit records written (0 if unchanged or on error). Consent is checked by the caller,
+    :func:`adaptive_learning.commit_session`.
     """
-    if not _enabled() or not dictated or dictated == final:
+    if not dictated or dictated == final:
         return 0
     try:
         records = diff_edits(dictated, final)

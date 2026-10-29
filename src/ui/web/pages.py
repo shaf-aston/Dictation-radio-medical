@@ -27,6 +27,8 @@ from src.ui.web import state
 
 router = APIRouter()
 
+WEB_CLEANUP_LABELS = {"hard": "Hard (desktop only; runs as Medium here)"}
+
 THEME_STORAGE_KEY = "radio-dictate-theme"
 
 #: The front-end lives in real .html/.css/.js files under ``frontends/`` rather
@@ -146,7 +148,8 @@ def bootstrap_payload() -> dict:
             {"key": key, "label": label} for key, label in ACCENT_LABELS.items()
         ],
         "cleanup_options": [
-            {"key": key, "label": label} for key, label in CLEANUP_LEVEL_LABELS.items()
+            # AI polish needs the desktop's review dialog; the web says so instead of silently running Medium.
+            {"key": key, "label": WEB_CLEANUP_LABELS.get(key, label)} for key, label in CLEANUP_LEVEL_LABELS.items()
         ],
         "macros": state.macros_payload(),
         "docx_available": DOCX_AVAILABLE,

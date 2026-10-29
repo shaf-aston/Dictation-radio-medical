@@ -322,6 +322,10 @@ class Settings:
         self._dirty = set()
         self._mtime = self._current_mtime()
 
+    def cloud_consented(self) -> bool:
+        """The one test for cloud training: switched on AND consented. Every upload path asks this."""
+        return bool(self.get("cloud_enabled") and self.get("cloud_training_consent"))
+
     def get(self, key: str, default: Any = None) -> Any:
         """The value of *key*, typed as its default (see :func:`_typed`)."""
         if key not in _DEFAULTS:

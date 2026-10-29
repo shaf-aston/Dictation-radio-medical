@@ -427,6 +427,25 @@ def apply_learned_corrections(text: str) -> str:
     return get_adaptive_learning().apply_learned_corrections(text)
 
 
+def record_consent(settings, enabled: bool) -> None:
+    """Store the answer to "learn from my corrections?" and audit it. Both front-ends ask; this saves."""
+    settings.batch_set({"learning_enabled": enabled, "learning_consent_shown": True})
+    from src.features import audit_log  # noqa: PLC0415
+    audit_log.log_learning_consent(enabled)
+
+
+def commit_session(settings, dictated: str, final: str) -> int:
+    """Learn from a committed report, only with consent: log the edits, then learn the fixes.
+
+    The one consent check for learning; both front-ends call this. Returns how many fixes were learned.
+    """
+    if not settings.get("learning_enabled"):
+        return 0
+    from src.features.edit_tracking import record_session_edits  # noqa: PLC0415
+    record_session_edits(dictated, final)
+    return learn_from_session(dictated, final)
+
+
 def learn_from_session(dictated: str, final: str) -> int:
     """Learn the one-word fixes the radiologist made to a finished dictation.
 
