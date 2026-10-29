@@ -80,6 +80,7 @@ def main():
     ap.add_argument("--set", default="tts")
     ap.add_argument("--only", nargs="*")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--paired", nargs=2, metavar=("A", "B"), help="B minus A, with a 95%% range over clips")
     a = ap.parse_args()
 
     from src.dictation.asr import TranscribeContext
@@ -88,7 +89,7 @@ def main():
 
     clips = load_set(a.set)[: a.limit or None]
     lex = list(get_correction_targets())
-    rows = []
+    rows, per_clip = [], {}
     for name, make in candidates(a.only):
         eng = make()
         eng.preload()
@@ -105,6 +106,9 @@ def main():
             t = term_error_rate(c.reference, text, lex)
             term_err += t.term_errors
             term_tok += t.term_tokens
+            w = word_error_rate(c.reference, text)
+            per_clip.setdefault(name, []).append(
+                (w.substitutions + w.deletions + w.insertions, w.ref_words, t.term_errors, t.term_tokens))
         rows.append((name, wer(raw), wer(unseen_raw), wer(proc),
                      term_err / term_tok if term_tok else 0.0, dec / (audio / 60)))
         print(f"done {name}", file=sys.stderr, flush=True)
@@ -113,6 +117,26 @@ def main():
     print(f"{'model':<22}{'WER raw':>9}{'WER unseen':>12}{'WER +fix':>10}{'term err':>10}{'s/min':>8}")
     for n, w, u, p, t, s in rows:
         print(f"{n:<22}{w:>9.2%}{u:>12.2%}{p:>10.2%}{t:>10.2%}{s:>8.1f}")
+    if a.paired:
+        print_paired(*(per_clip[n] for n in a.paired), a.paired)
+
+
+def print_paired(base, new, names, resamples=10_000):
+    """Change B minus A in WER and term error, with a paired bootstrap over clips:
+    a 95% range that crosses zero means the change could be luck."""
+    import random
+
+    def rate(clips, e, n):
+        return 100 * sum(c[e] for c in clips) / max(1, sum(c[n] for c in clips))
+
+    rng = random.Random(0)
+    idx = range(len(base))
+    print(f"\n{names[1]} minus {names[0]} (points; 95% range over {resamples} resamples)")
+    for label, e, n in (("WER", 0, 1), ("term err", 2, 3)):
+        diffs = sorted(rate([new[i] for i in s], e, n) - rate([base[i] for i in s], e, n)
+                       for s in ([rng.choice(idx) for _ in idx] for _ in range(resamples)))
+        print(f"{label:<10}{rate(new, e, n) - rate(base, e, n):+.2f}  "
+              f"({diffs[int(0.025 * resamples)]:+.2f} to {diffs[int(0.975 * resamples)]:+.2f})")
 
 
 if __name__ == "__main__":
