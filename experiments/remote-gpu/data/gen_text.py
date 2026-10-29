@@ -60,6 +60,45 @@ PATTERNS = [
 ]
 
 
+# --- v6: MRI protocol wording and spoken symbols -----------------------------
+# Lines are written the way they are SPOKEN ("slash", "open bracket", "one point
+# five tesla"): the model learns to hear the words, and the app's post-processing
+# turns them into "/", "( )" and "1.5 T". Never write the symbols here, or the
+# model and the rules would fight over who formats.
+JOINT = ["elbow", "knee", "shoulder", "wrist", "ankle", "hip", "hand", "foot", "thumb"]
+FIELD = ["one point five tesla", "three tesla", "one point five T", "three T"]
+SEQ = ["coronal PD fat saturated", "coronal T one", "sagittal PD fat saturated",
+       "axial PD fat saturated", "sagittal STIR", "axial T two", "coronal STIR",
+       "sagittal T one", "axial gradient echo", "sagittal T two fat saturated",
+       "axial diffusion weighted imaging"]
+WEIGHT = ["T one slash T two", "PD slash T two", "T two slash STIR"]
+ORIGIN = ["flexor slash pronator", "extensor slash supinator"]
+PROTOCOL = [
+    "Multiplanar multisequence MRI of the right slash left {j} performed on a {f} magnet.",
+    "Multiplanar, multisequenced MRI of the right slash left {j} performed on a {f} magnet.",
+    "MRI of the {s} {j} performed on a {f} magnet. Sequences colon {q1} comma {q2} comma {q3}.",
+    "Sequences colon {q1}, {q2}, {q3} and {q4}.",
+    "Imaging was performed on a {f} scanner using {q1} and {q2} sequences.",
+    "The medial slash lateral compartment is preserved.",
+    "Signal change is seen on {w} weighted images.",
+    "Small joint effusion open bracket {n} millimetres close bracket.",
+    "The {j} shows mild degenerative change open bracket see previous report close bracket.",
+    "Common {o} origin is intact open bracket {q1} close bracket.",
+    "There is a partial thickness tear open bracket grade two close bracket.",
+    "{q1} open bracket image twelve close bracket shows no marrow oedema.",
+    "Findings are as before forward slash unchanged.",
+    "No fracture slash dislocation.",
+    "Comparison colon MRI of the {s} {j} open bracket two years ago close bracket.",
+]
+
+
+def _protocol_line(rng: random.Random) -> str:
+    q = rng.sample(SEQ, 4)
+    return rng.choice(PROTOCOL).format(
+        w=rng.choice(WEIGHT), o=rng.choice(ORIGIN), j=rng.choice(JOINT), f=rng.choice(FIELD), s=rng.choice(SIDE),
+        q1=q[0], q2=q[1], q3=q[2], q4=q[3], n=rng.choice(NUM))
+
+
 def _terms() -> list:
     out = []
     for ln in LEXICON.read_text(encoding="utf-8").splitlines():
@@ -75,7 +114,28 @@ def _test_sentences() -> set:
     return {s.strip().lower() for s in re.split(r"(?<=[.!?])\s+", " ".join(raw.split()))}
 
 
-def generate(count: int, seed: int = 1) -> list:
+def generate(count: int, seed: int = 1, protocol_share: float = 0.15) -> list:
+    """*count* lines: the original mix, then a *protocol_share* of v6 protocol lines.
+
+    The original lines come first from their own random stream, so the first
+    part of a v6 set is exactly a v5 set of the smaller size.
+    """
+    n_protocol = round(count * protocol_share)
+    lines = _report_lines(count - n_protocol, seed)
+    rng, banned, seen = random.Random(seed + 1000), _test_sentences(), set(lines)
+    tries = 0
+    while len(lines) < count and tries < count * 50:
+        tries += 1
+        parts = [_protocol_line(rng) for _ in range(rng.randint(1, 3))]
+        text = " ".join(p for p in parts if p.lower() not in banned)
+        if len(text.split()) >= 6 and text not in seen:
+            seen.add(text)
+            lines.append(text)
+    rng.shuffle(lines)
+    return lines
+
+
+def _report_lines(count: int, seed: int) -> list:
     rng = random.Random(seed)
     terms, banned = _terms(), _test_sentences()
     seen, lines = set(), []

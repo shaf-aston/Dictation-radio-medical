@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radio Dictate · Report workspace prototype (v2)</title>
+<style>
+/* ===========================================================================
+   INTEGRATION NOTE
+   Colour tokens below mirror src/ui/tokens.json exactly, with the same CSS names
+   theme.py emits (--room, --room-2, --film, --edge, --text, --text-dim, --glow,
+   --rec, --warn, --ok). In the real app, delete the two token blocks: theme.py
+   already injects them. Everything else here only *reads* tokens.
+   New layout variables are all prefixed --ws-* (workspace) so they can't clash.
+   =========================================================================== */
+:root[data-theme="dark"]{--room:#0B1116;--room-2:#131E25;--hover:#1C2C36;--film:#16232B;--edge:#253742;--text:#DEE8ED;--text-dim:#8298A5;--glow:#4FB6C6;--rec:#E2564F;--warn:#D9A05B;--ok:#5FBF8B;--warn-text:#E3AE6E}
+:root[data-theme="light"]{--room:#E7EDF0;--room-2:#F3F7F9;--hover:#E1E9ED;--film:#FFFFFF;--edge:#CBD8DE;--text:#101A21;--text-dim:#52697A;--glow:#106273;--rec:#C43F38;--warn:#A9702A;--ok:#2F8558;--warn-text:#7A4E15}
+:root{
+  color-scheme:dark light;
+  /* copied from app.css */
+  --r:6px; --gap:clamp(.7rem,1.6vw,1.1rem); --bar-h:3.25rem;
+  --ui:"Segoe UI Variable Text","Segoe UI",-apple-system,system-ui,sans-serif;
+  --hd:"Segoe UI Variable Display","Segoe UI",-apple-system,system-ui,sans-serif;
+  --mono:ui-monospace,"Cascadia Mono","SF Mono",Consolas,monospace;
+  --ease:cubic-bezier(.2,.7,.3,1);
+  /* new: workspace */
+  --ws-report-fs:17px;          /* report text size, user adjustable */
+  --ws-report-lh:1.65;          /* report line height */
+  --ws-measure:74ch;            /* comfortable reading width */
+  --ws-side-w:248px;            /* docked side column width */
+  --ws-outline-w:220px;
+  --ws-tint-glow:color-mix(in srgb,var(--glow) 14%,transparent);
+  --ws-tint-rec:color-mix(in srgb,var(--rec) 12%,transparent);
+  --ws-shadow:0 10px 30px -10px rgb(0 0 0 / .45),0 2px 6px -2px rgb(0 0 0 / .3);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{font:14px/1.45 var(--ui);background:var(--room);color:var(--text);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer}
+svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+kbd{font:11px var(--mono);border:1px solid var(--edge);border-bottom-width:2px;border-radius:4px;padding:0 5px;background:var(--room-2);color:var(--text-dim)}
+[hidden]{display:none!important}
+:focus-visible{outline:2px solid var(--glow);outline-offset:2px}
+
+/* ---------- prototype chrome (not part of the product) ---------- */
+.proto{position:sticky;top:0;z-index:50;display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;padding:8px 16px;background:color-mix(in srgb,var(--room) 85%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--edge);font-size:12.5px}
+.proto h1{font:600 13px var(--hd);margin:0;letter-spacing:.02em}
+.proto h1 small{color:var(--text-dim);font-weight:400;margin-left:6px}
+.proto .sp{flex:1}
+.proto label{display:flex;align-items:center;gap:6px;color:var(--text-dim)}
+.seg{display:inline-flex;border:1px solid var(--edge);border-radius:var(--r);overflow:hidden;background:var(--room-2)}
+.seg button{border:0;background:none;padding:4px 10px;color:var(--text-dim)}
+.seg button+button{border-left:1px solid var(--edge)}
+.seg button[aria-pressed="true"]{background:var(--ws-tint-glow);color:var(--text)}
+.stage{padding:14px 16px 0;height:calc(100vh - 46px);min-height:600px}
+
+/* ---------- app shell ---------- */
+.app{position:relative;height:100%;display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:var(--bar-h) minmax(0,1fr) auto;grid-template-areas:"bar bar bar" "left main right" "left bottom right";gap:10px;border:1px solid var(--edge);border-radius:12px;background:var(--room);padding:10px;overflow:hidden}
+.bar{grid-area:bar;display:flex;align-items:center;gap:10px;padding:0 6px 0 12px;background:var(--room-2);border:1px solid var(--edge);border-radius:var(--r)}
+.status{display:flex;align-items:center;gap:8px;font-weight:600;min-width:118px}
+.status .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 25%,transparent)}
+.is-rec .status .dot{background:var(--rec);box-shadow:0 0 0 3px var(--ws-tint-rec);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 7px transparent}}
+.patient{display:flex;gap:14px;color:var(--text-dim);font-size:13px;white-space:nowrap;overflow:hidden}
+.patient b{color:var(--text);font-weight:600}
+.pill{font-size:11.5px;padding:2px 9px;border-radius:99px;background:var(--ws-tint-rec);color:var(--rec);font-weight:600;white-space:nowrap}
+.bar .sp{flex:1}
+.btn{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 12px;border-radius:var(--r);border:1px solid var(--edge);background:var(--room-2);transition:background .15s}
+.btn:hover{background:var(--hover)}
+.btn.pri{background:var(--glow);border-color:var(--glow);color:var(--room)}
+.btn.pri:hover{filter:brightness(1.08)}
+.ibtn{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:var(--r);border:1px solid transparent;background:none;color:var(--text-dim);transition:all .15s}
+.ibtn:hover{background:var(--hover);color:var(--text)}
+.ibtn[aria-pressed="true"]{color:var(--glow);background:var(--ws-tint-glow)}
+
+/* ---------- dock zones ---------- */
+.zone{display:flex;flex-direction:column;gap:10px;min-height:0;min-width:0;transition:min-width .2s var(--ease),min-height .2s var(--ease)}
+#zone-left{grid-area:left}
+#zone-right{grid-area:right}
+#zone-bottom{grid-area:bottom;flex-direction:row}
+.zone:empty{display:none}
+.dragging .zone{display:flex;outline:2px dashed var(--edge);outline-offset:-2px;border-radius:10px}
+.dragging #zone-left:empty,.dragging #zone-right:empty{min-width:90px}
+.dragging #zone-bottom:empty{min-height:70px}
+.dragging .zone.drop{outline-color:var(--glow);background:var(--ws-tint-glow)}
+.zone::before{content:attr(data-label);display:none}
+.dragging .zone:empty::before{display:grid;place-items:center;flex:1;color:var(--text-dim);font-size:12px}
+.float-layer{position:absolute;inset:0;pointer-events:none;z-index:30}
+.float-layer>.w{pointer-events:auto;position:absolute;box-shadow:var(--ws-shadow)}
+
+/* ---------- widgets ---------- */
+.w{background:var(--room-2);border:1px solid var(--edge);border-radius:10px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+#zone-left .w,#zone-right .w{width:var(--ws-side-w)}
+#zone-left .w[data-w="outline"],#zone-right .w[data-w="outline"]{width:var(--ws-outline-w)}
+#zone-left .w[data-w="library"],#zone-right .w[data-w="library"],#zone-left .w[data-w="outline"],#zone-right .w[data-w="outline"]{flex:1}
+#zone-bottom .w{flex:1}
+#zone-bottom .w[data-w="mic"]{flex:2}
+#zone-bottom .w[data-w="library"],#zone-bottom .w[data-w="outline"]{max-height:190px}
+.w-head{display:flex;align-items:center;gap:6px;height:34px;padding:0 4px 0 6px;border-bottom:1px solid var(--edge);color:var(--text-dim);font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.w-head .grip{cursor:grab;display:grid;place-items:center;width:20px;height:24px;border-radius:4px;color:var(--text-dim);touch-action:none}
+.w-head .grip:hover{background:var(--hover);color:var(--text)}
+.w-head .t{flex:1}
+.w.is-dragging{opacity:.92;cursor:grabbing;box-shadow:var(--ws-shadow);outline:2px solid var(--glow)}
+.w-body{overflow:auto;min-height:0;flex:1}
+
+/* dock popover */
+.pop{position:fixed;z-index:60;background:var(--room-2);border:1px solid var(--edge);border-radius:10px;box-shadow:var(--ws-shadow);padding:6px;min-width:200px}
+.pop h6{margin:4px 8px 6px;font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
+.pop button{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;padding:7px 8px;border-radius:6px;text-align:left}
+.pop button:hover{background:var(--hover)}
+.pop button[aria-checked="true"]{color:var(--glow)}
+.pop button[aria-checked="true"]::after{content:"✓";margin-left:auto}
+.pop hr{border:0;border-top:1px solid var(--edge);margin:4px 0}
+
+/* ---------- mic widget ---------- */
+.mic-wrap{display:flex;flex-direction:column;align-items:center;gap:12px;padding:16px 12px}
+#zone-bottom .mic-wrap{flex-direction:row;align-items:center;padding:10px 16px;gap:18px}
+.float-layer .mic-wrap{padding:12px}
+.rec{position:relative;width:72px;height:72px;border-radius:50%;border:0;background:var(--rec);color:#fff;display:grid;place-items:center;box-shadow:0 6px 18px -4px color-mix(in srgb,var(--rec) 60%,transparent);transition:transform .2s var(--ease)}
+.rec svg.i{width:28px;height:28px}
+.rec:hover{transform:scale(1.04)}
+.rec::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:2px solid var(--rec);opacity:0}
+.is-rec .rec::after{animation:ring 1.4s infinite}
+@keyframes ring{0%{opacity:.7;transform:scale(.95)}100%{opacity:0;transform:scale(1.25)}}
+.is-rec .rec{background:color-mix(in srgb,var(--rec) 80%,#000)}
+.rec .stop{display:none}.is-rec .rec .stop{display:block}.is-rec .rec .mic{display:none}
+.timer{font:600 20px var(--mono);font-variant-numeric:tabular-nums;letter-spacing:.04em}
+.meter{display:flex;gap:3px;align-items:center;height:26px}
+.meter i{width:4px;height:4px;border-radius:2px;background:var(--edge);transition:height .09s,background .09s}
+.where{display:flex;align-items:center;gap:6px;max-width:100%;font-size:12px;color:var(--text-dim);background:var(--film);border:1px solid var(--edge);border-radius:99px;padding:4px 10px;cursor:pointer}
+.where b{color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.is-rec .where{border-color:var(--rec);color:var(--rec)}
+.hint{font-size:11.5px;color:var(--text-dim);text-align:center}
+.mic-col{display:flex;flex-direction:column;align-items:center;gap:6px}
+#zone-bottom .mic-col{align-items:flex-start}
+.tl{list-style:none;margin:0;padding:0 4px;width:100%;font-size:12px;color:var(--text-dim)}
+.tl li{position:relative;padding:4px 0 4px 16px;border-left:1px solid var(--edge);margin-left:4px}
+.tl li::before{content:"";position:absolute;left:-4px;top:10px;width:7px;height:7px;border-radius:50%;background:var(--edge)}
+.tl li:first-child::before{background:var(--glow)}
+.tl li:first-child{color:var(--text)}
+#zone-bottom .tl{display:flex;gap:4px;flex:1;overflow:hidden}
+#zone-bottom .tl li{border-left:0;white-space:nowrap}
+.float-layer .tl,.float-layer .hint{display:none}
+.tl-head{align-self:stretch;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);border-top:1px solid var(--edge);padding-top:10px}
+#zone-bottom .tl-head,.float-layer .tl-head{display:none}
+
+/* ---------- outline widget ---------- */
+.ol{list-style:none;margin:0;padding:6px}
+.ol li button{display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px;align-items:center;width:100%;text-align:left;border:0;background:none;border-radius:6px;padding:7px 8px}
+.ol li button:hover{background:var(--hover)}
+.ol .n{grid-row:span 2;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font:600 10.5px var(--mono);background:var(--film);border:1px solid var(--edge);color:var(--text-dim)}
+.ol .h{font-weight:600}
+.ol .s{grid-column:2/4;font-size:12px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ol .pin-ic{color:var(--glow);opacity:0}
+.ol li.pinned .pin-ic{opacity:1}
+.ol li.active button{background:var(--ws-tint-glow)}
+.ol li.active .n{background:var(--glow);color:var(--room);border-color:var(--glow)}
+.ol li.here .n{box-shadow:0 0 0 2px var(--rec)}
+#zone-bottom .ol{display:flex;gap:4px;overflow:auto}
+#zone-bottom .ol li{min-width:180px}
+
+/* ---------- library widget ---------- */
+.lib{padding:10px;display:flex;flex-direction:column;gap:14px}
+.lib h5{margin:0 0 6px;font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;display:flex;justify-content:space-between}
+.lib select,.lib input{width:100%;height:30px;border-radius:var(--r);border:1px solid var(--edge);background:var(--film);color:var(--text);padding:0 8px;font:inherit}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--edge);background:var(--film);border-radius:99px;padding:4px 10px;font-size:12.5px;transition:all .15s}
+.chip:hover{border-color:var(--glow);color:var(--glow)}
+#zone-bottom .lib{flex-direction:row}
+#zone-bottom .lib>div{flex:1}
+
+/* ---------- report ---------- */
+.main{grid-area:main;display:flex;flex-direction:column;min-height:0;background:var(--film);border:1px solid var(--edge);border-radius:10px;overflow:hidden;position:relative}
+.r-head{display:flex;align-items:center;gap:4px;height:42px;padding:0 8px 0 16px;border-bottom:1px solid var(--edge)}
+.crumb{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-dim);min-width:0}
+.crumb b{color:var(--text)}
+.r-head .sp{flex:1}
+.r-head .sep{width:1px;height:18px;background:var(--edge);margin:0 6px}
+.zoom{font:12px var(--mono);color:var(--text-dim);min-width:34px;text-align:center}
+.doc{flex:1;overflow:auto;scroll-behavior:smooth;scroll-padding-top:16px}
+.doc-in{max-width:var(--ws-measure);margin:0 auto;padding:22px 32px 40px;font-size:var(--ws-report-fs);line-height:var(--ws-report-lh);transition:font-size .15s}
+.sec{position:relative;margin:0 0 .5em;padding:.15em 0}
+.sec-h{display:flex;align-items:center;gap:8px;margin:0 0 .2em;font:600 .72em var(--hd);letter-spacing:.09em;text-transform:uppercase;color:var(--glow)}
+.sec-h .fold{display:inline-grid;place-items:center;width:20px;height:20px;border:0;background:none;color:var(--text-dim);border-radius:4px;margin-left:-26px;transition:transform .2s var(--ease)}
+.sec-h .fold:hover{background:var(--hover)}
+.sec.folded .sec-h .fold{transform:rotate(-90deg)}
+.sec-h .sum{display:none;font:400 1.3em var(--ui);letter-spacing:0;text-transform:none;color:var(--text-dim)}
+.sec.folded .sec-h .sum{display:inline}
+.sec.folded .sec-b{display:none}
+.sec-h .tools{margin-left:auto;display:flex;gap:2px;opacity:0;transition:opacity .15s}
+.sec:hover .sec-h .tools,.sec.pinned .sec-h .tools{opacity:1}
+.sec-h .tools .ibtn{width:24px;height:24px}
+.sec.pinned .pin-btn{color:var(--glow)}
+.sec-b{padding-left:14px;border-left:2px solid var(--edge)}
+.guides-off .sec-b{border-left-color:transparent}
+.ln{position:relative;margin:0;padding:1px 6px;border-radius:4px;cursor:text}
+.ln:hover{background:var(--hover)}
+.ln.sub{font-weight:600;margin-top:.35em}
+.ln.ind{margin-left:1.1em;padding-left:12px;border-left:1px dashed var(--edge)}
+.guides-off .ln.ind{border-left-color:transparent}
+.sec.flash{animation:flash 1s var(--ease)}
+@keyframes flash{0%{background:var(--ws-tint-glow)}100%{background:transparent}}
+
+/* insertion point */
+.ins{position:relative;display:flex;align-items:baseline;flex-wrap:wrap;gap:0 8px;margin:.15em 0 .15em 1.1em;padding:2px 10px;border-radius:6px;border:1px dashed var(--glow);background:var(--ws-tint-glow);transition:all .2s var(--ease)}
+.ins .live{color:var(--text);opacity:.75;font-style:italic}
+.ins .caret{display:inline-block;width:2px;height:1.05em;background:var(--glow);transform:translateY(.15em);animation:blink 1.05s steps(1) infinite}
+.ins .tag{margin-left:auto;align-self:center;font:600 11px var(--ui);letter-spacing:.02em;color:var(--glow);white-space:nowrap}
+.is-rec .ins{border-color:var(--rec);border-style:solid;background:var(--ws-tint-rec)}
+.is-rec .ins .caret{background:var(--rec)}
+.is-rec .ins .tag{color:var(--rec)}
+.ins-line .ins{border:0;border-left:3px solid var(--glow);border-radius:0 6px 6px 0}
+.is-rec.ins-line .ins{border-left-color:var(--rec)}
+.ins-line .ins .tag,.ins-caret .ins .tag{display:none}
+.ins-caret .ins{border:0;background:none;padding:0 6px}
+@keyframes blink{50%{opacity:0}}
+
+/* pinned tray */
+.tray{border-top:1px solid var(--edge);background:var(--room-2);max-height:38%;overflow:auto}
+.tray:empty{display:none}
+.pinc{display:grid;grid-template-columns:auto 1fr auto;gap:0 12px;padding:10px 16px;border-bottom:1px solid var(--edge)}
+.pinc:last-child{border-bottom:0}
+.pinc .lbl{display:flex;align-items:center;gap:6px;font:600 11px var(--hd);letter-spacing:.09em;text-transform:uppercase;color:var(--glow);padding-top:3px}
+.pinc .txt{font-size:calc(var(--ws-report-fs) * .88);line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.pinc.open .txt{-webkit-line-clamp:unset}
+.pinc .acts{display:flex;gap:2px;align-items:flex-start}
+
+/* focus mode */
+.focus #zone-left,.focus #zone-right,.focus #zone-bottom{display:none}
+.focus .app{grid-template-columns:0 1fr 0}
+.mini-mic{position:absolute;right:28px;bottom:28px;z-index:25;display:none;align-items:center;gap:10px;padding:6px 6px 6px 14px;border-radius:99px;background:var(--room-2);border:1px solid var(--edge);box-shadow:var(--ws-shadow)}
+.mini-mic .rec{width:46px;height:46px}.mini-mic .rec svg.i{width:20px;height:20px}
+.focus .mini-mic{display:flex}
+.mini-mic .timer{font-size:14px}
+
+.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);opacity:0;background:var(--text);color:var(--room);padding:8px 14px;border-radius:8px;font-size:13px;transition:all .25s var(--ease);z-index:70;pointer-events:none}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+
+/* ---------- decision notes below the stage ---------- */
+.notes{max-width:1180px;margin:0 auto;padding:40px 16px 80px}
+.notes h2{font:600 22px var(--hd);margin:0 0 4px}
+.notes>p{color:var(--text-dim);margin:0 0 24px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+.card{background:var(--room-2);border:1px solid var(--edge);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:8px}
+.card h3{margin:0;font:600 15px var(--hd);display:flex;align-items:center;gap:8px}
+.card .tagx{font:600 10.5px var(--ui);text-transform:uppercase;letter-spacing:.06em;padding:2px 7px;border-radius:99px}
+.tagx.rec{background:var(--ws-tint-glow);color:var(--glow)}
+.tagx.opt{background:var(--hover);color:var(--text-dim)}
+.card p{margin:0;color:var(--text-dim);font-size:13.5px}
+.card ul{margin:0;padding-left:18px;color:var(--text-dim);font-size:13px}
+.card .try{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto;padding-top:6px}
+.card .try .btn{height:28px;font-size:12.5px}
+.vars{margin-top:28px;background:var(--room-2);border:1px solid var(--edge);border-radius:12px;padding:16px 18px;font:12.5px/1.7 var(--mono);color:var(--text-dim);overflow:auto}
+.vars b{color:var(--glow);font-weight:600}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4M8 22h8"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></symbol>
+  <symbol id="i-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></symbol>
+  <symbol id="i-dock" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="5" y="6" width="5" height="12" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="14" y="6" width="5" height="12" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-bottom" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="5" y="14" width="14" height="4" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-float" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="12" y="11" width="6" height="6" rx="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-hide" viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.1A9.8 9.8 0 0 1 12 5c5 0 9 4.5 10 7-.4 1-1.2 2.3-2.4 3.5M6.6 6.6C4.4 8 2.9 10 2 12c1 2.5 5 7 10 7 1.8 0 3.4-.5 4.8-1.3"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 17v5M9 3h6l-1 6 4 4H6l4-4z"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+  <symbol id="i-focus" viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M7 20l5-5 5 5M7 4l5 5 5-5"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M7 15l5 5 5-5M7 9l5-5 5 5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></symbol>
+  <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></symbol>
+  <symbol id="i-guides" viewBox="0 0 24 24"><path d="M4 4v16M10 8v12M16 12v8"/></symbol>
+</svg>
+
+<!-- =================== prototype controls (not product UI) =================== -->
+<div class="proto">
+  <h1>Report workspace <small>prototype v2 · scroll down for the decisions</small></h1>
+  <span class="sp"></span>
+  <label>Preset
+    <span class="seg" id="presets">
+      <button data-p="rail" aria-pressed="true">Mic right</button>
+      <button data-p="column">One right column</button>
+      <button data-p="reader">Reader</button>
+      <button data-p="bottom">Classic (bottom)</button>
+    </span></label>
+  <label>Dictation point
+    <span class="seg" id="insStyle">
+      <button data-v="label" aria-pressed="true">Caret + label</button>
+      <button data-v="line">Line</button>
+      <button data-v="caret">Caret</button>
+    </span></label>
+  <span class="seg" id="themeSeg"><button data-v="dark" aria-pressed="true">Dark</button><button data-v="light">Light</button></span>
+</div>
+
+<!-- =================== the product =================== -->
+<div class="stage">
+<div class="app" id="app">
+  <header class="bar">
+    <div class="status"><span class="dot"></span><span id="statusTxt">Ready</span></div>
+    <div class="patient"><span><b>SMITH, John</b></span><span>MRN 4471902</span><span>DOB 12/03/1961</span><span>CT Chest / Abdo / Pelvis</span></div>
+    <span class="pill">2 findings flagged</span>
+    <span class="sp"></span>
+    <button class="ibtn" id="libBtn" title="Templates &amp; phrases (T)"><svg class="i"><use href="#i-book"/></svg></button>
+    <button class="ibtn" id="layoutBtn" title="Arrange panels"><svg class="i"><use href="#i-dock"/></svg></button>
+    <button class="ibtn" id="focusBtn" title="Focus on report (F)"><svg class="i"><use href="#i-focus"/></svg></button>
+    <button class="btn pri" id="copyBtn"><svg class="i"><use href="#i-copy"/></svg>Copy report</button>
+    <button class="ibtn" title="More"><svg class="i"><use href="#i-more"/></svg></button>
+  </header>
+
+  <div class="zone" id="zone-left" data-zone="left" data-label="Drop to dock left"></div>
+
+  <main class="main" id="main">
+    <div class="r-head">
+      <div class="crumb"><svg class="i" style="color:var(--rec);width:14px;height:14px"><use href="#i-mic"/></svg><span id="crumbTxt"></span></div>
+      <span class="sp"></span>
+      <button class="ibtn" id="guidesBtn" aria-pressed="true" title="Indent guides"><svg class="i"><use href="#i-guides"/></svg></button>
+      <button class="ibtn" id="collapseBtn" title="Collapse all except pinned and current"><svg class="i"><use href="#i-collapse"/></svg></button>
+      <button class="ibtn" id="expandBtn" title="Expand all"><svg class="i"><use href="#i-expand"/></svg></button>
+      <span class="sep"></span>
+      <button class="ibtn" id="zoomOut" title="Smaller text (−)"><svg class="i"><use href="#i-minus"/></svg></button>
+      <span class="zoom" id="zoomTxt">100%</span>
+      <button class="ibtn" id="zoomIn" title="Larger text (+)"><svg class="i"><use href="#i-plus"/></svg></button>
+    </div>
+    <div class="doc" id="doc"><div class="doc-in" id="docIn"></div></div>
+    <div class="tray" id="tray"></div>
+    <div class="mini-mic"><span class="timer" data-timer>00:00</span><button class="rec" data-rec title="Space"><svg class="i mic"><use href="#i-mic"/></svg><svg class="i stop"><use href="#i-stop"/></svg></button></div>
+  </main>
+
+  <div class="zone" id="zone-right" data-zone="right" data-label="Drop to dock right"></div>
+  <div class="zone" id="zone-bottom" data-zone="bottom" data-label="Drop to dock at the bottom"></div>
+  <div class="float-layer" id="floatLayer"></div>
+</div>
+</div>
+<div id="parking" hidden></div>
+
+<!-- widgets -->
+<template id="tpl-mic">
+  <section class="w" data-w="mic">
+    <div class="w-head"><span class="grip" title="Drag to move"><svg class="i"><use href="#i-grip"/></svg></span><span class="t">Dictation</span>
+      <button class="ibtn" data-dockmenu title="Move panel"><svg class="i"><use href="#i-dock"/></svg></button></div>
+    <div class="w-body"><div class="mic-wrap">
+      <button class="rec" data-rec title="Record (Space)"><svg class="i mic"><use href="#i-mic"/></svg><svg class="i stop"><use href="#i-stop"/></svg></button>
+      <div class="mic-col">
+        <span class="timer" data-timer>00:00</span>
+        <div class="meter" data-meter></div>
+      </div>
+      <button class="where" data-where title="Where dictation goes. Click a line in the report to change it."></button>
+      <div class="hint"><kbd>Space</kbd> record · <kbd>Alt</kbd><kbd>↑↓</kbd> move point</div>
+      <div class="tl-head">Session</div>
+      <ol class="tl" id="tl"><li>Spelling fixed: paratracheal</li><li>Dictated Findings · 0:42</li><li>Template loaded: CT CAP</li></ol>
+    </div></div>
+  </section>
+</template>
+<template id="tpl-outline">
+  <section class="w" data-w="outline">
+    <div class="w-head"><span class="grip" title="Drag to move"><svg class="i"><use href="#i-grip"/></svg></span><span class="t">Sections</span>
+      <button class="ibtn" data-dockmenu title="Move panel"><svg class="i"><use href="#i-dock"/></svg></button></div>
+    <div class="w-body"><ol class="ol" id="ol"></ol></div>
+  </section>
+</template>
+<template id="tpl-library">
+  <section class="w" data-w="library">
+    <div class="w-head"><span class="grip" title="Drag to move"><svg class="i"><use href="#i-grip"/></svg></span><span class="t">Templates &amp; phrases</span>
+      <button class="ibtn" data-dockmenu title="Move panel"><svg class="i"><use href="#i-dock"/></svg></button></div>
+    <div class="w-body"><div class="lib">
+      <div><h5>Template</h5><select><option>CT Chest / Abdo / Pelvis</option><option>CT Chest</option><option>MRI Brain</option><option>US Abdomen</option></select></div>
+      <div><h5>Phrases <span>inserts at dictation point</span></h5><div class="chips" id="chips"></div></div>
+      <div><h5>Search</h5><input placeholder="Find a phrase…"></div>
+    </div></div>
+  </section>
+</template>
+
+<div class="pop" id="pop" hidden></div>
+<div class="toast" id="toast"></div>
+
+<!-- =================== decisions =================== -->
+<section class="notes">
+  <h2>Decisions in this prototype</h2>
+  <p>Each card is one choice. The tag shows my recommendation, and the buttons set the workspace above so you can try it. Scroll back up to see it.</p>
+  <div class="cards">
+    <div class="card"><h3>Panels you can move <span class="tagx rec">recommended</span></h3>
+      <p>Every panel (Dictation, Sections, Templates) has a <b>grip</b> for dragging and a <b>dock button</b> <svg class="i" style="vertical-align:-3px"><use href="#i-dock"/></svg> for moving it with one click: left, right, bottom, floating, or hidden. The layout is remembered between sessions.</p>
+      <ul><li>Drop zones only appear while you drag, so the normal screen stays clean.</li><li>Every drag has a click alternative, so it works without dragging.</li></ul>
+      <div class="try"><button class="btn" data-try="mic:float">Float the mic</button><button class="btn" data-try="mic:left">Mic left</button><button class="btn" data-try="reset">Reset layout</button></div></div>
+    <div class="card"><h3>Mic on the right, stacked vertically <span class="tagx rec">default</span></h3>
+      <p>The report gets the full height. The mic, timer, level, dictation target and session timeline are stacked in one column. "Classic" keeps today's bottom bar for people who prefer it.</p>
+      <div class="try"><button class="btn" data-try="preset:rail">Mic right</button><button class="btn" data-try="preset:bottom">Classic bottom</button></div></div>
+    <div class="card"><h3>Section navigator <span class="tagx rec">recommended</span></h3>
+      <p>A numbered list of the report's sections, each with a one-line summary. Click to jump, or press <kbd>1</kbd>–<kbd>6</kbd>. The section you're reading is highlighted, and the one you're dictating into has a red ring.</p>
+      <div class="try"><button class="btn" data-try="preset:reader">Reader preset</button><button class="btn" data-try="outline:hidden">Hide it</button></div></div>
+    <div class="card"><h3>Pin any section <span class="tagx rec">recommended</span></h3>
+      <p>Hover a section heading and click the pin. Pinned sections stay in a tray under the report, so the Impression is always in view while you scroll through long Findings. Impression is pinned by default. The tray shows 3 lines and opens to full on click.</p>
+      <div class="try"><button class="btn" data-try="pin:3">Pin Findings too</button><button class="btn" data-try="unpin">Unpin all</button></div></div>
+    <div class="card"><h3>Folding with summaries</h3>
+      <p>Collapsed sections show a one-line summary, so the report reads like an index. "Collapse all" leaves pinned sections and the one you're dictating into open.</p>
+      <div class="try"><button class="btn" data-try="collapse">Collapse all</button><button class="btn" data-try="expand">Expand all</button></div></div>
+    <div class="card"><h3>Visible dictation point <span class="tagx rec">recommended</span></h3>
+      <p>You always see where words will land. It shows in the report (caret and label) and in the Dictation panel ("Findings › Lungs"), and in the top bar of the report. Click any line to move it, even while recording; what you've said so far stays where it was. Phrases insert at the same spot.</p>
+      <div class="try"><button class="btn" data-try="ins:label">Caret + label</button><button class="btn" data-try="ins:line">Line</button><button class="btn" data-try="ins:caret">Caret only</button></div></div>
+    <div class="card"><h3>Reading controls</h3>
+      <p>Text size (<kbd>+</kbd>/<kbd>−</kbd>) only changes the report, not the chrome. Line width is capped at a comfortable length (<code>--ws-measure</code>). Indent guides show the hierarchy and can be turned off.</p>
+      <div class="try"><button class="btn" data-try="zoom:+">Bigger text</button><button class="btn" data-try="zoom:0">Reset</button></div></div>
+    <div class="card"><h3>Focus mode <span class="tagx opt">optional</span></h3>
+      <p><kbd>F</kbd> hides every panel and leaves the report with a small floating mic in the corner. Templates are still one key away (<kbd>T</kbd>). Good on laptops.</p>
+      <div class="try"><button class="btn" data-try="focus">Toggle focus</button></div></div>
+    <div class="card"><h3>Templates on demand</h3>
+      <p>The book icon in the top bar (<kbd>T</kbd>) shows or hides the Templates & phrases panel wherever it is docked. People who never use templates hide it once and never see it again.</p>
+      <div class="try"><button class="btn" data-try="library:hidden">Hide templates</button><button class="btn" data-try="library:right">Show on right</button></div></div>
+  </div>
+  <div class="vars">
+<b>/* Integration: new variables only. Colours come from tokens.json via theme.py, unchanged. */</b>
+--ws-report-fs   report text size      (stored per user)
+--ws-report-lh   report line height
+--ws-measure     max line length of the report
+--ws-side-w      width of docked side panels
+--ws-outline-w   width of the Sections panel
+--ws-tint-glow   color-mix(--glow 14%)   selection / insertion point
+--ws-tint-rec    color-mix(--rec 12%)    recording state only
+<b>/* Saved layout: localStorage "rd.workspace" = { dock:{mic,outline,library}, float:{x,y}, pins:[], fs } */</b>
+  </div>
+</section>
+
+<script>
+/* ------------------------------ data ------------------------------ */
+const REPORT=[
+ {h:"Clinical history",sum:"Cough 6/52, ex-smoker 30 pk-yr",lines:[["Persistent cough for 6 weeks. Ex-smoker, 30 pack years. ?Malignancy."]]},
+ {h:"Technique",sum:"CT CAP, IV contrast, PV phase",lines:[["CT chest, abdomen and pelvis with IV contrast, portal venous phase."]]},
+ {h:"Comparison",sum:"CXR 01/02/2026",lines:[["Chest radiograph dated 01/02/2026."]]},
+ {h:"Findings",sum:"RUL mass, R paratracheal node, no mets",lines:[
+   ["Lungs:","sub"],["22 mm spiculated mass in the right upper lobe, apical segment, abutting the pleura.","ind"],["Two sub-4 mm nodules in the left lower lobe, likely benign.","ind"],["Mild centrilobular emphysema, upper lobe predominant.","ind"],
+   ["Mediastinum:","sub"],["Enlarged right paratracheal node, 14 mm short axis.","ind"],["No pericardial effusion.","ind"],
+   ["Pleura:","sub"],["No pleural effusion or pneumothorax.","ind"],
+   ["Abdomen and pelvis:","sub"],["Liver, adrenals, spleen and pancreas unremarkable.","ind"],["Kidneys enhance symmetrically. No hydronephrosis.","ind"],["No free fluid. No pelvic lymphadenopathy.","ind"],
+   ["Bones:","sub"],["No lytic or sclerotic bone lesion.","ind"]]},
+ {h:"Impression",sum:"Suspicious RUL mass, likely T1c N2 M0",lines:[["1. 22 mm spiculated right upper lobe mass, suspicious for primary lung malignancy."],["2. Enlarged right paratracheal node, suspicious for nodal involvement."],["3. No distant metastatic disease identified."]]},
+ {h:"Recommendation",sum:"MDT + PET-CT",lines:[["Suggest discussion at lung MDT and PET-CT for staging."]]}
+];
+const PHRASES=["No pleural effusion.","No pneumothorax.","Lungs are clear.","No lymphadenopathy.","No free fluid.","Bones unremarkable.","Suggest MDT discussion."];
+const SPEECH="Small sliding hiatus hernia. Thyroid gland is unremarkable.".split(" ");
+const PRESETS={
+  rail:{mic:"right",outline:"left",library:"hidden"},
+  column:{mic:"right",outline:"hidden",library:"right"},
+  reader:{mic:"right",outline:"left",library:"right"},
+  bottom:{mic:"bottom",outline:"hidden",library:"right"}
+};
+const ZONES={left:"Dock left",right:"Dock right",bottom:"Dock at bottom",float:"Float",hidden:"Hide"};
+const ZICON={left:"i-left",right:"i-right",bottom:"i-bottom",float:"i-float",hidden:"i-hide"};
+const NAMES={mic:"Dictation",outline:"Sections",library:"Templates & phrases"};
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const KEY="rd.workspace.proto";
+let S=Object.assign({dock:{...PRESETS.rail},float:{mic:{x:null,y:null},outline:{x:40,y:80},library:{x:80,y:80}},pins:[4],fs:17,ins:"label",theme:"dark",guides:true,lastLib:"right"},JSON.parse(localStorage.getItem(KEY)||"{}"));
+const save=()=>localStorage.setItem(KEY,JSON.stringify(S));
+let rec=false,secs=0,tick,meterT,word=0,ins,activeSec=0;
+
+/* ------------------------------ widgets ------------------------------ */
+const W={};
+for(const k of ["mic","outline","library"])W[k]=$("#tpl-"+k).content.firstElementChild.cloneNode(true);
+W.mic.querySelector("[data-meter]").innerHTML="<i></i>".repeat(18);
+W.library.querySelector("#chips").innerHTML=PHRASES.map(p=>`<button class="chip">${p}</button>`).join("");
+W.library.querySelectorAll(".chip").forEach(c=>c.onclick=()=>insertText(c.textContent,"Phrase inserted"));
+
+function layout(){
+  for(const [k,z] of Object.entries(S.dock)){
+    const w=W[k];w.style.left=w.style.top="";
+    if(z==="hidden")$("#parking").append(w);
+    else if(z==="float"){$("#floatLayer").append(w);placeFloat(k)}
+    else $("#zone-"+z).append(w);
+  }
+  $("#libBtn").setAttribute("aria-pressed",S.dock.library!=="hidden");
+  $$("#presets button").forEach(b=>b.setAttribute("aria-pressed",JSON.stringify(PRESETS[b.dataset.p])===JSON.stringify(S.dock)));
+  save();
+}
+function placeFloat(k){
+  const w=W[k],app=$("#app").getBoundingClientRect(),f=S.float[k];
+  const bw=w.offsetWidth||240,bh=w.offsetHeight||300;
+  let x=f.x??app.width-bw-24,y=f.y??app.height-bh-24;
+  x=Math.max(8,Math.min(app.width-bw-8,x));y=Math.max(8,Math.min(app.height-bh-8,y));
+  w.style.left=x+"px";w.style.top=y+"px";w.style.width=k==="mic"?"220px":"260px";
+}
+function dock(k,z){if(k==="library"&&z!=="hidden")S.lastLib=z;S.dock[k]=z;layout();toast(`${NAMES[k]}: ${ZONES[z].toLowerCase()}`)}
+
+/* drag & drop */
+document.addEventListener("pointerdown",e=>{
+  const g=e.target.closest(".grip");if(!g)return;
+  e.preventDefault();
+  const w=g.closest(".w"),k=w.dataset.w,app=$("#app"),ar=app.getBoundingClientRect(),r=w.getBoundingClientRect();
+  const dx=e.clientX-r.left,dy=e.clientY-r.top;
+  document.body.classList.add("dragging");w.classList.add("is-dragging");
+  $("#floatLayer").append(w);w.style.width=r.width+"px";
+  let target=null;
+  const move=ev=>{
+    const x=ev.clientX-ar.left-dx,y=ev.clientY-ar.top-dy;w.style.left=x+"px";w.style.top=y+"px";
+    w.style.pointerEvents="none";const el=document.elementFromPoint(ev.clientX,ev.clientY);w.style.pointerEvents="";
+    const z=el?.closest(".zone");$$(".zone").forEach(n=>n.classList.toggle("drop",n===z));target=z?.dataset.zone||null;
+  };
+  const up=ev=>{
+    removeEventListener("pointermove",move);removeEventListener("pointerup",up);
+    document.body.classList.remove("dragging");w.classList.remove("is-dragging");$$(".zone").forEach(n=>n.classList.remove("drop"));
+    w.style.width="";
+    if(target){dock(k,target)}else{S.float[k]={x:parseFloat(w.style.left),y:parseFloat(w.style.top)};dock(k,"float")}
+  };
+  addEventListener("pointermove",move);addEventListener("pointerup",up);
+});
+
+/* dock popover (click alternative to dragging) */
+function openPop(anchor,keys){
+  const p=$("#pop"),r=anchor.getBoundingClientRect();
+  p.innerHTML=keys.map(k=>`<h6>${NAMES[k]}</h6>`+Object.keys(ZONES).map(z=>`<button data-k="${k}" data-z="${z}" role="menuitemradio" aria-checked="${S.dock[k]===z}"><svg class="i"><use href="#${ZICON[z]}"/></svg>${ZONES[z]}</button>`).join("")).join("<hr>")
+    +(keys.length>1?`<hr><button data-reset><svg class="i"><use href="#i-reset"/></svg>Reset to default</button>`:"");
+  p.hidden=false;
+  const pw=p.offsetWidth,ph=p.offsetHeight;
+  p.style.left=Math.min(innerWidth-pw-8,Math.max(8,r.right-pw))+"px";
+  p.style.top=(r.bottom+ph+6>innerHeight?Math.max(8,r.top-ph-6):r.bottom+6)+"px";
+}
+document.addEventListener("click",e=>{
+  const m=e.target.closest("[data-dockmenu]");
+  if(m){e.stopPropagation();openPop(m,[m.closest(".w").dataset.w]);return}
+  const pb=e.target.closest("#pop button");
+  if(pb){if(pb.dataset.reset){S.dock={...PRESETS.rail};layout();toast("Layout reset")}else dock(pb.dataset.k,pb.dataset.z);$("#pop").hidden=true;return}
+  if(!e.target.closest("#pop"))$("#pop").hidden=true;
+});
+$("#layoutBtn").onclick=e=>{e.stopPropagation();openPop($("#layoutBtn"),["mic","outline","library"])};
+$("#libBtn").onclick=()=>toggleLib();
+function toggleLib(){
+  if(document.body.classList.contains("focus")&&S.dock.library!=="float"){S.float.library={x:null,y:60};dock("library","float");return}
+  dock("library",S.dock.library==="hidden"?(S.lastLib||"right"):"hidden");
+}
+
+/* ------------------------------ report ------------------------------ */
+function renderReport(){
+  $("#docIn").innerHTML=REPORT.map((s,i)=>`<section class="sec" id="s${i}" data-i="${i}">
+    <h3 class="sec-h"><button class="fold" title="Fold"><svg class="i"><use href="#i-chev"/></svg></button>${s.h}<span class="sum">${s.sum}</span>
+      <span class="tools"><button class="ibtn pin-btn" title="Pin under the report"><svg class="i"><use href="#i-pin"/></svg></button></span></h3>
+    <div class="sec-b">${s.lines.map(([t,c])=>`<p class="ln ${c||""}">${t}</p>`).join("")}</div></section>`).join("");
+  $$(".sec").forEach(sec=>{
+    sec.querySelector(".fold").onclick=()=>sec.classList.toggle("folded");
+    sec.querySelector(".sec-h").ondblclick=()=>sec.classList.toggle("folded");
+    sec.querySelector(".pin-btn").onclick=()=>togglePin(+sec.dataset.i);
+  });
+  renderOutline();renderPins();
+}
+$("#doc").addEventListener("click",e=>{const l=e.target.closest(".ln");if(l)placeIns(l,true)});
+
+function renderOutline(){
+  $("#ol").innerHTML=REPORT.map((s,i)=>`<li data-i="${i}" class="${S.pins.includes(i)?"pinned":""}"><button><span class="n">${i+1}</span><span class="h">${s.h}</span><svg class="i pin-ic"><use href="#i-pin"/></svg><span class="s">${s.sum}</span></button></li>`).join("");
+  $$("#ol li").forEach(li=>li.querySelector("button").onclick=()=>jump(+li.dataset.i));
+  markOutline();
+}
+function markOutline(){
+  const hereI=ins?.closest(".sec")?.dataset.i;
+  $$("#ol li").forEach(li=>{li.classList.toggle("active",+li.dataset.i===activeSec);li.classList.toggle("here",li.dataset.i===hereI)});
+}
+$("#doc").addEventListener("scroll",()=>{
+  const top=$("#doc").getBoundingClientRect().top+60;let a=0;
+  $$(".sec").forEach((s,i)=>{if(s.getBoundingClientRect().top<=top)a=i});
+  if(a!==activeSec){activeSec=a;markOutline()}
+});
+function jump(i){
+  const s=$("#s"+i);s.classList.remove("folded");s.scrollIntoView({block:"start"});
+  s.classList.remove("flash");void s.offsetWidth;s.classList.add("flash");activeSec=i;markOutline();
+}
+function togglePin(i){S.pins=S.pins.includes(i)?S.pins.filter(x=>x!==i):[...S.pins,i].sort();renderPins();renderOutline();save()}
+function renderPins(){
+  $$(".sec").forEach(s=>s.classList.toggle("pinned",S.pins.includes(+s.dataset.i)));
+  $("#tray").innerHTML=S.pins.map(i=>{const sec=$("#s"+i);const txt=[...sec.querySelectorAll(".ln")].map(l=>l.textContent).join(" ");
+    return `<div class="pinc" data-i="${i}"><span class="lbl"><svg class="i" style="width:13px;height:13px"><use href="#i-pin"/></svg>${REPORT[i].h}</span><div class="txt" title="Click to expand">${txt}</div>
+    <span class="acts"><button class="ibtn" data-go title="Go to section"><svg class="i"><use href="#i-list"/></svg></button><button class="ibtn" data-unpin title="Unpin"><svg class="i"><use href="#i-hide"/></svg></button></span></div>`}).join("");
+  $$(".pinc").forEach(p=>{const i=+p.dataset.i;
+    p.querySelector(".txt").onclick=()=>p.classList.toggle("open");
+    p.querySelector("[data-go]").onclick=()=>jump(i);
+    p.querySelector("[data-unpin]").onclick=()=>togglePin(i)});
+}
+
+/* ------------------------------ dictation point ------------------------------ */
+function makeIns(){ins=document.createElement("div");ins.className="ins";ins.innerHTML=`<span class="live"></span><span class="caret"></span><span class="tag"></span>`}
+function pathOf(){
+  const sec=ins.closest(".sec");let sub="",n=ins.previousElementSibling;
+  while(n){if(n.classList.contains("sub")){sub=n.textContent.replace(/:$/,"");break}n=n.previousElementSibling}
+  return REPORT[sec.dataset.i].h+(sub?" › "+sub:"");
+}
+function placeIns(afterLine,announce){
+  if(!ins)makeIns();
+  if(rec)commitLive();
+  afterLine.after(ins);ins.closest(".sec").classList.remove("folded");
+  ins.scrollIntoView({block:"nearest"});updateWhere();
+  if(announce)toast("Dictation will go to "+pathOf());
+}
+function updateWhere(){
+  if(!ins?.isConnected)return;const p=pathOf();
+  ins.querySelector(".tag").textContent=(rec?"● Dictating here":"Next dictation goes here");
+  $$("[data-where]").forEach(w=>w.innerHTML=`<svg class="i" style="width:13px;height:13px"><use href="#i-mic"/></svg><span>${rec?"Into":"Next:"}</span><b>${p}</b>`);
+  $("#crumbTxt").innerHTML=`${rec?"Dictating into":"Dictation goes to"} <b>${p}</b>`;
+  document.body.classList.remove("ins-label","ins-line","ins-caret");document.body.classList.add("ins-"+S.ins);
+  markOutline();
+}
+function commitLive(){
+  const live=ins.querySelector(".live"),t=live.textContent.trim();if(!t)return;
+  const p=document.createElement("p");p.className="ln ind";p.textContent=t;ins.before(p);live.textContent="";renderPins();
+}
+function insertText(t,msg){
+  const p=document.createElement("p");p.className="ln ind";p.textContent=t;ins.before(p);
+  ins.scrollIntoView({block:"nearest"});renderPins();toast(msg+" · "+pathOf());
+}
+function moveIns(d){
+  const lines=$$("#docIn .ln");let i=lines.indexOf(ins.previousElementSibling);
+  i=Math.max(0,Math.min(lines.length-1,(i<0?lines.length-1:i)+d));placeIns(lines[i]);
+}
+$$("[data-where]").forEach(w=>w.onclick=()=>{ins.scrollIntoView({block:"center"});ins.animate([{transform:"scale(1.03)"},{transform:"none"}],{duration:300})});
+W.mic.querySelector("[data-where]").onclick=()=>{ins.scrollIntoView({block:"center",behavior:"smooth"})};
+
+/* ------------------------------ recording (simulated) ------------------------------ */
+function toggleRec(){
+  rec=!rec;document.body.classList.toggle("is-rec",rec);$("#statusTxt").textContent=rec?"Recording":"Ready";
+  const live=ins.querySelector(".live");
+  if(rec){secs=0;word=0;live.textContent="";
+    tick=setInterval(()=>{secs++;$$("[data-timer]").forEach(t=>t.textContent=`00:${String(secs).padStart(2,"0")}`)},1000);
+    meterT=setInterval(()=>{
+      $$("[data-meter] i").forEach((b,i)=>{const v=Math.max(4,Math.abs(Math.sin(Date.now()/180+i*.7))*24*Math.random()+4);b.style.height=v+"px";b.style.background=v>22?"var(--warn)":"var(--ok)"});
+      if(word<SPEECH.length&&Math.random()>.55){live.textContent+=SPEECH[word++]+" "}
+    },110);
+  }else{clearInterval(tick);clearInterval(meterT);
+    if(live.textContent.trim()){commitLive();const li=document.createElement("li");li.textContent=`Dictated ${pathOf()} · 0:${String(secs).padStart(2,"0")}`;$("#tl").prepend(li)}
+    $$("[data-meter] i").forEach(b=>{b.style.height="";b.style.background=""});
+  }
+  updateWhere();
+}
+document.addEventListener("click",e=>{if(e.target.closest("[data-rec]"))toggleRec()});
+
+/* ------------------------------ view controls ------------------------------ */
+function setFs(v){S.fs=Math.max(12,Math.min(28,v));document.documentElement.style.setProperty("--ws-report-fs",S.fs+"px");$("#zoomTxt").textContent=Math.round(S.fs/17*100)+"%";save()}
+$("#zoomIn").onclick=()=>setFs(S.fs+1);$("#zoomOut").onclick=()=>setFs(S.fs-1);
+$("#zoomTxt").ondblclick=()=>setFs(17);
+function collapseAll(){const here=ins.closest(".sec");$$(".sec").forEach(s=>s.classList.toggle("folded",s!==here&&!S.pins.includes(+s.dataset.i)))}
+$("#collapseBtn").onclick=collapseAll;
+$("#expandBtn").onclick=()=>$$(".sec").forEach(s=>s.classList.remove("folded"));
+$("#guidesBtn").onclick=()=>{S.guides=!S.guides;applyGuides();save()};
+function applyGuides(){$("#guidesBtn").setAttribute("aria-pressed",S.guides);$("#doc").classList.toggle("guides-off",!S.guides)}
+function toggleFocus(){const on=document.body.classList.toggle("focus");$("#focusBtn").setAttribute("aria-pressed",on);toast(on?"Focus mode · F to exit · T for templates":"Focus mode off")}
+$("#focusBtn").onclick=toggleFocus;
+$("#copyBtn").onclick=()=>toast("Report copied");
+function setTheme(t){S.theme=t;document.documentElement.dataset.theme=t;$$("#themeSeg button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===t));save()}
+$("#themeSeg").onclick=e=>{const b=e.target.closest("button");if(b)setTheme(b.dataset.v)};
+function setIns(v){S.ins=v;$$("#insStyle button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v));updateWhere();save()}
+$("#insStyle").onclick=e=>{const b=e.target.closest("button");if(b)setIns(b.dataset.v)};
+$("#presets").onclick=e=>{const b=e.target.closest("button");if(!b)return;document.body.classList.remove("focus");S.dock={...PRESETS[b.dataset.p]};layout()};
+
+let tt;function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("on");clearTimeout(tt);tt=setTimeout(()=>t.classList.remove("on"),1800)}
+
+addEventListener("keydown",e=>{
+  if(e.target.closest("input,select,textarea"))return;
+  if(e.code==="Space"){e.preventDefault();toggleRec()}
+  else if(e.altKey&&(e.key==="ArrowUp"||e.key==="ArrowDown")){e.preventDefault();moveIns(e.key==="ArrowUp"?-1:1)}
+  else if(e.key==="f"||e.key==="F")toggleFocus();
+  else if(e.key==="t"||e.key==="T")toggleLib();
+  else if(e.key==="+"||e.key==="=")setFs(S.fs+1);
+  else if(e.key==="-")setFs(S.fs-1);
+  else if(/^[1-6]$/.test(e.key))jump(+e.key-1);
+  else if(e.key==="Escape"){$("#pop").hidden=true;if(document.body.classList.contains("focus"))toggleFocus()}
+});
+
+/* try-it buttons in the notes */
+$$("[data-try]").forEach(b=>b.onclick=()=>{
+  const [a,v]=b.dataset.try.split(":");
+  if(a==="reset"){S.dock={...PRESETS.rail};layout()}
+  else if(a==="preset"){document.body.classList.remove("focus");S.dock={...PRESETS[v]};layout()}
+  else if(W[a]){if(a==="mic"&&v==="float")S.float.mic={x:null,y:null};dock(a,v)}
+  else if(a==="pin"){if(!S.pins.includes(+v))togglePin(+v)}
+  else if(a==="unpin"){S.pins=[];renderPins();renderOutline();save()}
+  else if(a==="collapse")collapseAll();
+  else if(a==="expand")$("#expandBtn").click();
+  else if(a==="ins")setIns(v);
+  else if(a==="zoom")setFs(v==="+"?S.fs+2:17);
+  else if(a==="focus")toggleFocus();
+  scrollTo({top:0,behavior:"smooth"});
+});
+addEventListener("resize",()=>{for(const k in S.dock)if(S.dock[k]==="float")placeFloat(k)});
+
+/* ------------------------------ boot ------------------------------ */
+renderReport();layout();setTheme(S.theme);setFs(S.fs);applyGuides();
+const f=$$("#s3 .ln");placeIns(f[6]);setIns(S.ins);
+</script>
+</body>
+</html>

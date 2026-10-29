@@ -8,14 +8,14 @@ from typing import List
 _RE_HSPACE = re.compile(r"[^\S\n]+")
 #: A space before punctuation closes up, except before a "?" that leads a
 #: word (a query: "Indication: ?PE") and a "." that leads a digit (".5 cm").
-_RE_PREPUNCT = re.compile(r"[ \t]+([,;:!)]|\.(?!\d)|\?(?!\w))")
+_RE_PREPUNCT = re.compile(r"[ \t]+([,;:!)\]]|\.(?!\d)|\?(?!\w))")
 #: A sentence ends at terminal punctuation, or at a line break: what follows
 #: "new line" / "new paragraph" (or a heading's colon) starts a sentence. The
 #: last stop of a dotted abbreviation ("e.g.", "i.e.") does not end one.
 _RE_SENT = re.compile(r"((?<![A-Za-z]\.[A-Za-z])[.!?]+\s+|\n+)")
 #: Spaces the spoken-punctuation stage leaves inside a line break or a bracket.
 _RE_SPACE_AT_BREAK = re.compile(r"[ \t]*\n[ \t]*")
-_RE_SPACE_IN_BRACKET = re.compile(r"\([ \t]+")
+_RE_SPACE_IN_BRACKET = re.compile(r"([(\[])[ \t]+")
 # Whisper decoding near-silence emits stray punctuation runs (", , . . ,").
 # After _RE_PREPUNCT strips the inner spaces these collapse to ",,..,": so fold
 # any run of two-or-more punctuation marks (optionally space-separated) down to
@@ -34,7 +34,7 @@ def normalize_spaces(text: str) -> str:
     text = _RE_PUNCT_RUN.sub(r"\1", text)
     text = _RE_PREPUNCT.sub(r"\1", text)
     text = _RE_SPACE_AT_BREAK.sub("\n", text)
-    text = _RE_SPACE_IN_BRACKET.sub("(", text)
+    text = _RE_SPACE_IN_BRACKET.sub(r"\1", text)
     return _RE_HSPACE.sub(" ", text).strip()
 
 

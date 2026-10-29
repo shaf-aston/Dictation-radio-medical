@@ -4,6 +4,7 @@
 * ``5 by 3 millimetres`` → ``5 x 3 mm``
 * ``5 by 3 by 2 millimetres`` → ``5 x 3 x 2 mm``
 * ``15 degrees`` → ``15°``
+* ``1.5 Tesla`` / ``one point five Tesla`` → ``1.5 T``
 
 3-D and 2-D forms are applied before 1-D so longer spans match first.
 """
@@ -34,6 +35,13 @@ _MEASURE_CM_2D = re.compile(
 _MEASURE_MM_1D = re.compile(r"(\d+(?:\.\d+)?)\s+millimet(?:re|er)s?\b", re.IGNORECASE)
 _MEASURE_CM_1D = re.compile(r"(\d+(?:\.\d+)?)\s+(?:centimetre|centimeter)s?\b", re.IGNORECASE)
 _MEASURE_DEG = re.compile(r"(\d+(?:\.\d+)?)\s+degrees?\b", re.IGNORECASE)
+#: MRI field strength. Only the strengths scanners are sold at are spelled out,
+#: so "three" in "three Tesla" is safe to turn into a number here.
+_TESLA_WORDS = {"one point five": "1.5", "three": "3", "three point zero": "3.0",
+                "one": "1", "seven": "7", "zero point five": "0.5"}
+_MEASURE_TESLA_WORDS = re.compile(
+    r"\b((?i:" + "|".join(sorted(_TESLA_WORDS, key=len, reverse=True)) + r"))[\s-]+(?:(?i:teslas?)|T)\b")
+_MEASURE_TESLA = re.compile(r"(\d+(?:\.\d+)?)[\s-]*teslas?\b", re.IGNORECASE)
 
 
 def apply_measurement_standardisation(text: str) -> str:
@@ -45,4 +53,6 @@ def apply_measurement_standardisation(text: str) -> str:
     text = _MEASURE_MM_1D.sub(r"\1 mm", text)
     text = _MEASURE_CM_1D.sub(r"\1 cm", text)
     text = _MEASURE_DEG.sub(r"\1°", text)
+    text = _MEASURE_TESLA_WORDS.sub(lambda m: _TESLA_WORDS[" ".join(m[1].lower().split())] + " T", text)
+    text = _MEASURE_TESLA.sub(r"\1 T", text)
     return text
