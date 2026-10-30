@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Radio Dictate · parakeet-rad-v4: training, inference, quality</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --bg:#0d1014;--panel:#151a20;--panel2:#1b2129;--line:#2a323d;--text:#e6e8eb;--muted:#8b949e;
+  --red:#e5484d;--cyan:#4cc9f0;--amber:#f5a524;--green:#46a758;--violet:#a78bfa;--grey:#5b6573;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+header{padding:22px 32px 0;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#121820,#0d1014)}
+h1{margin:0;font-size:22px;font-weight:600}
+h1 span{color:var(--cyan)}
+.sub{color:var(--muted);margin:4px 0 16px;font-size:14px}
+nav{display:flex;gap:4px}
+nav button{background:none;border:0;color:var(--muted);padding:10px 18px;font:inherit;font-weight:600;cursor:pointer;border-bottom:3px solid transparent}
+nav button.on{color:var(--text);border-color:var(--cyan)}
+nav button:hover{color:var(--text)}
+main{padding:24px 32px 60px;max-width:1400px;margin:0 auto}
+section.tab{display:none}section.tab.on{display:block;animation:fade .35s}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:18px}
+.card h2{margin:0 0 6px;font-size:17px}
+.card h3{margin:14px 0 6px;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.muted{color:var(--muted)}.small{font-size:13px}
+.row{display:flex;gap:18px;flex-wrap:wrap}.row>*{flex:1 1 380px}
+code{background:var(--panel2);padding:1px 6px;border-radius:4px;font-size:13px;color:#c9d1d9}
+.btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:7px 14px;border-radius:7px;font:inherit;font-size:14px;cursor:pointer}
+.btn:hover{border-color:var(--cyan)}.btn.primary{background:var(--cyan);color:#06222c;border-color:var(--cyan);font-weight:600}
+.btn.sel{border-color:var(--cyan);color:var(--cyan)}
+.ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
+/* stepper */
+.steps{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 14px}
+.step{flex:1 1 120px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer;font-size:13px;position:relative;overflow:hidden;transition:.25s}
+.step b{display:block;font-size:11px;color:var(--muted);font-weight:600}
+.step.done{border-color:#2f5b3a}.step.done b{color:var(--green)}
+.step.on{border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan),0 0 18px rgba(76,201,240,.25)}
+.step.on b{color:var(--cyan)}
+.step .where{position:absolute;right:8px;top:7px;font-size:10px;padding:1px 6px;border-radius:9px}
+.loc-pc{background:#22303d;color:#9ecbff}.loc-gpu{background:#3a2a10;color:var(--amber)}
+.stage{min-height:420px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;font-size:14px}
+.kv dt{color:var(--muted)}.kv dd{margin:0}
+/* bars */
+.bar{display:grid;grid-template-columns:150px 1fr 110px;align-items:center;gap:10px;margin:6px 0;font-size:13px}
+.track{background:var(--panel2);height:18px;border-radius:4px;position:relative;overflow:hidden}
+.fill{height:100%;border-radius:4px;width:0;transition:width 1.1s cubic-bezier(.2,.8,.2,1)}
+.ghost{position:absolute;inset:0;width:0;background:repeating-linear-gradient(45deg,#2a323d 0 6px,#222a33 6px 12px);transition:width 1.1s}
+/* layers */
+.stack{display:flex;flex-direction:column-reverse;gap:3px;width:260px}
+.layer{height:14px;border-radius:3px;font-size:10px;line-height:14px;padding-left:6px;color:#0d1014;font-weight:600;transition:.3s}
+.layer.frozen{background:#3b4652;color:#9aa6b2}
+.layer.train{background:var(--cyan);animation:pulse 1.6s infinite}
+@keyframes pulse{50%{filter:brightness(1.35)}}
+.flowsvg text{fill:var(--text);font-size:12px}
+/* pipeline nodes */
+.pipe{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.node{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:6px 10px;font-size:12.5px;cursor:pointer;transition:.25s;position:relative}
+.node.on{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 14px rgba(76,201,240,.3)}
+.node.gated::after{content:"veto";position:absolute;top:-8px;right:-6px;font-size:9px;background:var(--amber);color:#1a1200;padding:0 4px;border-radius:6px}
+.node.skip{opacity:.35;text-decoration:line-through}
+.node.passed{border-color:#2f5b3a}
+.textbox{background:#0a0d10;border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:Consolas,monospace;font-size:13.5px;min-height:78px;white-space:pre-wrap}
+.textbox del{color:var(--red);background:rgba(229,72,77,.12);text-decoration:line-through}
+.textbox ins{color:var(--green);background:rgba(70,167,88,.14);text-decoration:none}
+canvas{display:block;width:100%}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.chips span{display:inline-block;padding:2px 9px;margin:3px;border-radius:12px;font-size:12.5px}
+.fix{background:rgba(70,167,88,.15);color:#7fd18f;border:1px solid #2f5b3a}
+.brk{background:rgba(229,72,77,.12);color:#ff8a8d;border:1px solid #5b2a2c}
+.check{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px dashed var(--line)}
+.check:last-child{border:0}
+.pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap}
+.ok{background:#1d3a25;color:#7fd18f}.no{background:#3d1d1f;color:#ff8a8d}.meh{background:#3a2a10;color:var(--amber)}
+.warn{border-left:3px solid var(--amber);padding:8px 12px;background:rgba(245,165,36,.07);border-radius:0 6px 6px 0;margin:8px 0;font-size:14px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:600}
+td.best{color:var(--green);font-weight:700}
+.tip{position:fixed;pointer-events:none;background:#000c;border:1px solid var(--line);padding:6px 9px;border-radius:6px;font-size:12px;display:none;z-index:9}
+input[type=range]{width:220px;accent-color:var(--cyan)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Radio Dictate · <span>parakeet-rad-v4</span></h1>
+  <div class="sub">How the voice model is trained, how the app uses it when you dictate, and how we know it is good. Every number is from <code>train_log.json</code>, the paired scoring run (2026-10-29) or the app's source.</div>
+  <nav>
+    <button class="on" data-tab="train">1 · Training</button>
+    <button data-tab="infer">2 · Inference (dictating)</button>
+    <button data-tab="quality">3 · Quality</button>
+  </nav>
+</header>
+
+<main>
+<!-- ======================= TRAINING ======================= -->
+<section class="tab on" id="train">
+  <div class="card">
+    <h2>From text on your PC to a tuned model in the app</h2>
+    <div class="muted small">Click a step or press Play. Blue tag = runs on your PC, amber tag = runs on Kaggle's free T4 GPU.</div>
+    <div class="ctrl">
+      <button class="btn primary" id="tPlay">▶ Play</button>
+      <button class="btn" id="tPrev">◀ Back</button>
+      <button class="btn" id="tNext">Next ▶</button>
+    </div>
+    <div class="steps" id="tSteps"></div>
+    <div class="stage" id="tStage"></div>
+  </div>
+</section>
+
+<!-- ======================= INFERENCE ======================= -->
+<section class="tab" id="infer">
+  <div class="card">
+    <h2>A. Live audio: cut into chunks, each decoded exactly once</h2>
+    <div class="muted small">The mic stream at 16 kHz. When the VAD hears a pause, the chunk closes, gets decoded once and is frozen ("committed"). The still-open tail is re-decoded every 0.5 s just to show a live preview, and that preview is never committed.</div>
+    <div class="ctrl">
+      <button class="btn primary" id="aPlay">▶ Start dictating (simulated)</button>
+      <button class="btn" id="aReset">Reset</button>
+      <span class="small muted" id="aStat"></span>
+    </div>
+    <canvas id="wave" height="170"></canvas>
+    <div class="legend" style="margin-top:6px">
+      <span><i style="background:var(--green)"></i>committed chunk (decoded once, frozen)</span>
+      <span><i style="background:var(--cyan)"></i>open tail (preview only)</span>
+      <span><i style="background:var(--amber)"></i>VAD cut: 0.6 s silence, chunk ≥ 2 s; aims for 5 s, forced at 20 s</span>
+      <span><i style="background:var(--violet)"></i>stop → low-confidence chunks re-decoded (polish &lt; 0.75)</span>
+    </div>
+    <div class="textbox" id="liveText" style="margin-top:10px"></div>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <h2>B. Which engine decodes a chunk</h2>
+      <div class="muted small">Picked in order by <code>parakeet_tier()</code> in <code>src/dictation/asr/factory.py</code>. A tier only runs if the one before it <i>crashed</i>, never on a weak result.</div>
+      <svg class="flowsvg" id="engSvg" viewBox="0 0 560 330" width="100%"></svg>
+      <div class="ctrl">
+        <span class="small muted">Voice model setting:</span>
+        <button class="btn sel" data-eng="v4">parakeet-rad-v4 (now)</button>
+        <button class="btn" data-eng="std">standard</button>
+      </div>
+      <div class="small" id="engNote"></div>
+    </div>
+    <div class="card">
+      <h2>C. What the model actually is</h2>
+      <dl class="kv">
+        <dt>Base</dt><dd>NVIDIA Parakeet-TDT 0.6B <b>v3</b>. The app's "standard" is <b>v2</b> (picked because v3 is worse at English), so v4 and standard are different base models</dd>
+        <dt>Encoder</dt><dd>FastConformer, 24 layers, 2.44 GB in both v2 and v4: same compute</dd>
+        <dt>Decoder + joint</dt><dd>TDT: predicts the next word piece <i>and</i> how many frames to skip. v4's is 72 MB with 8,192 word pieces; v2's is 36 MB with 1,024</dd>
+        <dt>Runs as</dt><dd>ONNX on CPU via onnx-asr, fp32, greedy</dd>
+        <dt>Speed</dt><dd><b>Not reliably measured.</b> One timing pass per model, PC short of RAM: 6.1 to 8.0 s per audio minute for both on 3 sets, 22 to 92 on others (paging). A clean re-test ran out of memory (2.7 of 14.8 GB free). Same encoder, so a big difference is unlikely, but not proven</dd>
+        <dt>Lives in</dt><dd><code>data/models/fine_tuned/parakeet-rad-v4/</code>, offline, nothing leaves the PC</dd>
+      </dl>
+      <h3>Inside one decode</h3>
+      <svg class="flowsvg" id="tdtSvg" viewBox="0 0 520 120" width="100%"></svg>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>D. Clean-up chain: raw model text → report text</h2>
+    <div class="muted small">15 stages in the fixed order of <code>pipeline_stages()</code> (<code>src/dictation/postprocess/pipeline.py</code>). Press Play to watch an <b>illustrative</b> sentence go through, or click any stage. Stages tagged <span class="pill meh">veto</span> make guesses: they don't touch a word the model was confident about.</div>
+    <div class="ctrl">
+      <button class="btn primary" id="pPlay">▶ Play</button>
+      <span class="small muted">Cleanup level:</span>
+      <button class="btn" data-lvl="soft">Soft</button>
+      <button class="btn sel" data-lvl="medium">Medium (yours)</button>
+      <button class="btn" data-lvl="hard">Hard</button>
+    </div>
+    <div class="pipe" id="pipe"></div>
+    <div class="row">
+      <div><h3>Text</h3><div class="textbox" id="pText"></div></div>
+      <div><h3>This stage</h3><div class="textbox" id="pDesc" style="font-family:inherit"></div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>E. After you press stop</h2>
+    <div class="pipe" id="after"></div>
+    <div class="small muted">Polish runs in the background and is thrown away if you edit the report meanwhile. On release, the gate asks one question about unfilled <code>[fields]</code>, side, sex and a missing impression, then runs the critical-findings check (NegEx). It never blocks the report, it only changes what goes in the audit log.</div>
+  </div>
+</section>
+
+<!-- ======================= QUALITY ======================= -->
+<section class="tab" id="quality">
+  <div class="card">
+    <h2>Scores on held-out audio (lower is better)</h2>
+    <div class="muted small">Same clips for every model, scored through the app's own engine code. <b>eka</b> = real Indian-accented clinicians (140 clips), noise/quiet = the same clips with pink noise or turned down. <b>libri</b> = everyday read English. <b>parrot</b> = radiology reports in TTS voices.</div>
+    <div class="ctrl">
+      <button class="btn sel" data-met="wer">Word error rate %</button>
+      <button class="btn" data-met="term">Medical words missed (raw)</button>
+      <button class="btn" data-met="termClean">Medical words missed after the app's clean-up</button>
+      <button class="btn" data-met="werClean">WER after clean-up</button>
+    </div>
+    <div class="small muted">"Stock" here = Parakeet v2, what "standard" runs on this PC. The <b>raw</b> scores are model output; <b>after clean-up</b> means after the app's own correction chain, which is what you actually see. v3 has no after-clean-up numbers.</div>
+    <canvas id="qBars" height="300"></canvas>
+    <div class="legend"><span><i style="background:var(--grey)"></i>stock</span><span><i style="background:var(--violet)"></i>v3</span><span><i style="background:var(--cyan)"></i>v4</span></div>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <h2>Is it real or luck? (95% ranges, clip-level bootstrap)</h2>
+      <div class="muted small">Each bar is the range the true change probably sits in. Entirely left of zero = better beyond luck. Crossing zero = could be luck.</div>
+      <div class="ctrl">
+        <button class="btn sel" data-cmp="stock">v4 vs stock</button>
+        <button class="btn" data-cmp="v3">v4 vs v3</button>
+      </div>
+      <svg id="forest" viewBox="0 0 600 300" width="100%"></svg>
+    </div>
+    <div class="card">
+      <h2>Adoption bar (agreed before training)</h2>
+      <div id="bar"></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <h2>Medical words: what v4 fixed / broke vs stock (eka, clean)</h2>
+      <div class="chips" id="chips"></div>
+      <table style="margin-top:10px">
+        <tr><th>Set (raw output)</th><th>distinct words fixed</th><th>distinct words broke</th></tr>
+        <tr><td>eka clean</td><td>9</td><td>3</td></tr>
+        <tr><td>eka noise</td><td>14</td><td>8</td></tr>
+        <tr><td>eka quiet</td><td>14</td><td>7</td></tr>
+        <tr><td>parrot (synthetic)</td><td>26</td><td>7</td></tr>
+      </table>
+      <div class="small muted" style="margin-top:6px">These count <i>different words</i>, not errors, so fixed minus broke is not a net gain. A word can be in both lists (in noise, "avascular" and "degenerative" were fixed in one clip and broken in another). For the real totals, use "medical words missed" above.</div>
+    </div>
+    <div class="card">
+      <h2>Did the test leak into training?</h2>
+      <div id="leak"></div>
+      <div class="small muted" style="margin-top:8px">A test score only means something if the model never heard those sentences. Every training line is saved in <code>train_texts.txt</code> and checked against every test set.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>How the quality is protected along the whole path</h2>
+    <div class="row" id="guards"></div>
+  </div>
+
+  <div class="card">
+    <h2>Honest caveats</h2>
+    <div class="warn"><b>Two different "stocks".</b> Local scores compare against Parakeet <b>v2</b> (the app's standard). The Kaggle check in step 7 compares against <b>v3</b>, v4's own base. They're different models, so don't mix the two tables.</div>
+    <div class="warn"><b>Hotwords untested.</b> Where sherpa-onnx is installed (the full <code>parakeet</code> extra), "standard" becomes v2 + radiology hotwords. v4 has never been scored against that. On this PC it isn't installed, so the comparison here is fair for <i>this</i> PC only.</div>
+    <div class="warn"><b>The ranges are a bit too narrow.</b> Resampling is by clip, but eka's 140 clips come from fewer speakers, and clips from one speaker aren't independent. About 12 comparisons were made, so one "beyond luck" result at 95% could be chance. eka_quiet medical words (upper end −0.53) is the most fragile. eka WER is the most solid.</div>
+    <div class="warn"><b>Test sets reused across versions.</b> eka has been used to judge v1 → v4, so recipe choices have slowly fitted it. Your own voice is the first truly fresh test.</div>
+    <div class="warn"><b>Term error favours the tuned model.</b> Medical words are counted from the app's lexicon, and the synthetic training lines were built from that same lexicon.</div>
+    <div class="warn"><b>parrot is flattering.</b> Its test voices are the same Kokoro TTS voices v4 trained on (different sentences). Only eka and libri count toward the decision.</div>
+    <div class="warn"><b>Everyday English is +0.49 worse than stock</b> (range −0.11 to +1.16), over the agreed +0.3 limit, though it ties v3. Fine-tuning on medical speech costs a bit of general English.</div>
+    <div class="warn"><b>Noise didn't improve.</b> The training noise (babble, hiss) differs from the test noise (pink) on purpose. Real reading-room noise is untested.</div>
+    <div class="warn"><b>Licence:</b> PARROT is CC BY-NC-SA, so v4 is for non-commercial use only.</div>
+  </div>
+</section>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+/* ---------------- tabs ---------------- */
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('section.tab').forEach(s=>s.classList.toggle('on',s.id===b.dataset.tab));
+  if(b.dataset.tab==='quality'){drawBars();drawForest();}
+  if(b.dataset.tab==='infer'){drawWave();}
+});
+const $=s=>document.querySelector(s);
+const tip=$('#tip');
+function showTip(e,h){tip.innerHTML=h;tip.style.display='block';tip.style.left=(e.clientX+12)+'px';tip.style.top=(e.clientY+12)+'px'}
+function hideTip(){tip.style.display='none'}
+
+/* =========================================================
+   TRAINING STEPPER
+   ========================================================= */
+const SOURCES=[
+  ['radiology_synth',595,1500,'var(--cyan)','our radiology lines, Windows TTS voices'],
+  ['kaggle_medical',6000,6085,'var(--green)','real people reading symptom phrases'],
+  ['edacc',3000,5760,'var(--violet)','real accented English conversation'],
+  ['hani89',38,1328,'var(--grey)','synthetic medical speech (mostly too long)'],
+  ['librispeech',2000,3271,'#9ecbff','everyday read English (keeps general skill)'],
+  ['parrot',1287,7587,'var(--amber)','radiologist-written reports, Kokoro TTS'],
+  ['noisy copies',3876,3876,'var(--red)','30% of the above again, with noise added'],
+];
+const LOSS=[0.646,0.35,0.769,0.678,0.49,0.431,0.336,0.234,2.65,0.138,0.08,0.054,0.771,1.025,0.795,0.408,0.583,0.54,0.252,0.792,0.091,0.61,0.407,0.204,0.404,0.221,0.243,0.445,0.269,0.074,1.118,1.738,0.094,0.443,0.141,0.673,0.342,0.316,0.069,0.695,0.103,0.168,0.323,0.325,0.077,0.203,0.686,0.917,0.288,0.088,0.304,0.537,0.309,0.066,0.067,1.0,0.16,0.112,0.208,0.129];
+const MEM=[10.9,11.2,11.5,11.5,11.1,11.0,10.8,11.2,11.2,11.2,11.4,11.0,10.9,10.9,11.0,11.2,11.2,11.3,11.3,11.3,11.2,11.2,11.2,10.9,10.9,11.5,11.3,11.0,11.2,11.2,11.0,10.9,11.2,11.0,11.2,10.8,11.2,11.2,11.3,11.3,11.3,11.3,11.2,10.9,11.2,11.0,10.9,11.3,11.1,11.2,11.2,11.2,11.0,11.5,11.3,11.0,11.3,10.9,11.2,10.9];
+
+const STEPS=[
+ {t:'Write text',loc:'pc',html:()=>`
+  <div class="row"><div>
+  <h2>1 · Invent radiology dictation lines</h2>
+  <p><code>data/gen_text.py</code> builds sentences around the app's <b>871-term radiology lexicon</b>, phrased the way a radiologist speaks: measurements, sides, "no evidence of…".</p>
+  <p class="warn">Any line that also appears in a <b>test</b> report is thrown out right here, so the test stays unseen.</p>
+  </div><div><h3>Examples of the shape (generated live)</h3><div class="textbox" id="genBox"></div></div></div>`,
+  run(){const words=['popliteal','metatarsal','subchondral','avascular necrosis','infarct','cholelithiasis','fissure','thrombotic','malleolus','effusion','osteophyte'];
+   const tpl=[w=>`There is a small ${w} measuring ${(Math.random()*9+1).toFixed(0)} mm.`,w=>`No evidence of ${w}.`,w=>`Appearances are in keeping with ${w} on the left.`,w=>`The right ${w} is unremarkable.`];
+   const box=$('#genBox');let n=0;clearInterval(this.iv);
+   this.iv=setInterval(()=>{if(!box||n>7)return clearInterval(this.iv);const w=words[Math.floor(Math.random()*words.length)];
+    box.innerHTML+=tpl[n%4](`<span style="color:var(--cyan)">${w}</span>`)+'\n';n++;},380);}},
+ {t:'Speak + collect',loc:'pc',html:()=>`
+  <h2>2 · Turn text into audio, and add real speech</h2>
+  <p>Our lines are spoken by <b>every Windows voice except one held-out voice</b> (<code>data/build_train.py</code>). On Kaggle, five public speech sets are added: real accents and real people, so the model doesn't just learn robot voices.</p>
+  <div id="srcBars"></div>
+  <div class="small muted">Striped = looked at but rejected (over 15 s, under 1 s, or a sentence shared with a test set).</div>
+  <p class="small"><b>Total: 16,796 clips · 30.6 hours.</b> Modulate's set was dropped: whole notes over 60 s with spoken numbers, so 0 usable clips.</p>`,
+  run(){const el=$('#srcBars');el.innerHTML=SOURCES.map(([n,k,l,c,d])=>`<div class="bar" title="${d}"><div>${n}<div class="small muted" style="font-size:11px">${d}</div></div><div class="track"><div class="ghost" data-w="${l/7600*100}"></div><div class="fill" style="background:${c};position:relative" data-w="${k/7600*100}"></div></div><div>${k.toLocaleString()} <span class="muted">/ ${l.toLocaleString()}</span></div></div>`).join('');
+   requestAnimationFrame(()=>el.querySelectorAll('[data-w]').forEach(x=>x.style.width=x.dataset.w+'%'));}},
+ {t:'Filter + noise',loc:'gpu',html:()=>`
+  <div class="row"><div>
+  <h2>3 · Filter, then add noisy copies</h2>
+  <ul>
+   <li>Keep clips <b>1 to 15 s</b> long (longer ones run out of GPU memory and teach little)</li>
+   <li>Drop any test-set sentence that also appears in training (parrot_test: 25 of 225 dropped)</li>
+   <li><b>30%</b> of clips get a copy with <b>babble or hiss</b> at a random <b>0 to 20 dB</b> SNR</li>
+  </ul>
+  <p class="small muted">Pink noise is deliberately <i>not</i> used in training, because the local noise test uses pink noise.</p>
+  </div><div>
+  <h3>Try it: noise level (SNR)</h3>
+  <div class="ctrl"><input type="range" id="snr" min="0" max="20" value="10"><span id="snrV"></span>
+   <button class="btn" data-nz="babble">babble</button><button class="btn sel" data-nz="hiss">hiss</button></div>
+  <canvas id="nz" height="150"></canvas>
+  <div class="legend"><span><i style="background:var(--cyan)"></i>speech</span><span><i style="background:var(--red)"></i>speech + noise (what the model trains on)</span></div>
+  </div></div>`,
+  run(){let kind='hiss';const c=$('#nz'),s=$('#snr');
+   const draw=()=>{const ctx=fit(c),W=c.width,H=c.height,snr=+s.value;$('#snrV').textContent=snr+' dB '+(snr<5?'(very noisy)':snr<12?'(noisy)':'(mild)');
+    ctx.clearRect(0,0,W,H);const amp=Math.pow(10,-snr/20);
+    const sp=x=>{const t=x/W*12;const env=Math.max(0,Math.sin(t*0.9))**2*(0.6+0.4*Math.sin(t*0.3));return env*Math.sin(t*40+Math.sin(t*7)*3)};
+    ctx.lineWidth=1.2;ctx.strokeStyle='#e5484d';ctx.beginPath();
+    for(let x=0;x<W;x++){let n=kind==='hiss'?(Math.random()*2-1):(Math.sin(x*.21)*.5+Math.sin(x*.057+1)*.4+Math.sin(x*.13+2)*.3)*(0.7+Math.random()*.3);
+     const y=H/2-(sp(x)+n*amp*0.9)*H*0.38;x?ctx.lineTo(x,y):ctx.moveTo(x,y)}ctx.stroke();
+    ctx.strokeStyle='#4cc9f0';ctx.lineWidth=1.6;ctx.beginPath();for(let x=0;x<W;x++){const y=H/2-sp(x)*H*0.38;x?ctx.lineTo(x,y):ctx.moveTo(x,y)}ctx.stroke();};
+   s.oninput=draw;document.querySelectorAll('[data-nz]').forEach(b=>b.onclick=()=>{kind=b.dataset.nz;document.querySelectorAll('[data-nz]').forEach(x=>x.classList.toggle('sel',x===b));draw()});draw();}},
+ {t:'Upload',loc:'pc',html:()=>`
+  <h2>4 · Ship to the free GPU</h2>
+  <svg class="flowsvg" viewBox="0 0 900 150" width="100%" id="upSvg">
+   <rect x="10" y="45" width="190" height="60" rx="8" fill="#1b2129" stroke="#2a323d"/><text x="105" y="72" text-anchor="middle">data/train/ clips</text><text x="105" y="90" text-anchor="middle" fill="#8b949e" font-size="11">your PC</text>
+   <rect x="300" y="45" width="190" height="60" rx="8" fill="#1b2129" stroke="#2a323d"/><text x="395" y="72" text-anchor="middle">pack.py → one .flac tarball</text><text x="395" y="90" text-anchor="middle" fill="#8b949e" font-size="11">1 upload, not hundreds</text>
+   <rect x="590" y="45" width="290" height="60" rx="8" fill="#2a1f0c" stroke="#f5a524"/><text x="735" y="72" text-anchor="middle">Kaggle T4 GPU (16 GB)</text><text x="735" y="90" text-anchor="middle" fill="#f5a524" font-size="11">kaggle_io.py runs parakeet_kernel.py</text>
+   <path d="M200 75 H300 M490 75 H590" stroke="#4cc9f0" stroke-width="2" stroke-dasharray="6 6"><animate attributeName="stroke-dashoffset" from="24" to="0" dur=".6s" repeatCount="indefinite"/></path>
+  </svg>
+  <p><code>train/kaggle_io.py</code> is the only file that talks to Kaggle. Settings from <code>train/parakeet.json</code> are written into the kernel, so a run is fully described by one JSON file, saved with the model.</p>
+  <p class="small muted">Before training, a <b>batch probe</b> runs two real steps on copies of the longest clip to find the biggest batch that fits (v4: batch 2). Two steps, because AdamW allocates its memory on the first step and the smoke run's out-of-memory came from that.</p>`},
+ {t:'Freeze layers',loc:'gpu',html:()=>`
+  <div class="row"><div>
+  <h2>5 · Decide what is allowed to learn</h2>
+  <p>The bottom <b>12 of 24</b> encoder layers are <b>frozen</b>. They hear basic sounds and already do that well. Retraining them on 30 hours would make the model forget what it learned from thousands of hours.</p>
+  <p>The top 12 layers, the decoder and the joint network <b>learn</b>: they map sounds to words like <i>popliteal</i>.</p>
+  <p class="small muted">Normalisation statistics are held fixed too (<code>hold_norm_stats</code>), so small batches can't knock them off.</p>
+  </div><div style="display:flex;gap:20px;align-items:flex-end">
+   <div><div class="layer train" style="width:260px;background:var(--green);margin-bottom:6px">TDT decoder + joint · learns</div><div class="stack" id="stack"></div><div class="small muted" style="margin-top:6px">audio in ↑</div></div>
+  </div></div>`,
+  run(){const s=$('#stack');s.innerHTML='';for(let i=0;i<24;i++){const d=document.createElement('div');d.className='layer '+(i<12?'frozen':'train');d.textContent=`layer ${i} · ${i<12?'🔒 frozen':'learns'}`;d.style.opacity=0;s.appendChild(d);setTimeout(()=>d.style.opacity=1,i*45)}}},
+ {t:'Train 3,000 steps',loc:'gpu',html:()=>`
+  <div class="row"><div>
+  <h2>6 · The training loop</h2>
+  <dl class="kv">
+   <dt>Steps</dt><dd><b id="stepN">0</b> / 3,000 (198 min on the T4)</dd>
+   <dt>Batch</dt><dd>2 clips × 8 accumulated = 16 per update</dd>
+   <dt>Optimiser</dt><dd>AdamW, betas 0.9/0.98, weight decay 0.001, gradient clip 1.0</dd>
+   <dt>Learning rate</dt><dd>warm up 300 steps to 1e-4, cosine down to 1e-6</dd>
+   <dt>Precision</dt><dd>16-bit mixed</dd>
+   <dt>GPU memory</dt><dd><b id="memN">-</b> GB peak (limit ~15): no out-of-memory</dd>
+  </dl>
+  <p class="small">Each step: play a batch → model guesses text → <b>loss</b> = how wrong the guess was → nudge the trainable weights to be less wrong.</p>
+  <div class="ctrl"><button class="btn" id="replay">↻ Replay</button></div>
+  </div><div>
+  <h3>Loss every 50 steps (raw = jumpy because batches are tiny; line = smoothed)</h3>
+  <canvas id="lossC" height="200"></canvas>
+  <h3>Learning rate</h3>
+  <canvas id="lrC" height="90"></canvas>
+  </div></div>`,
+  run(){const go=()=>{let i=0;clearInterval(this.iv);this.iv=setInterval(()=>{i++;drawLoss(i);if(i>=60)clearInterval(this.iv)},70)};$('#replay').onclick=go;go();}},
+ {t:'Test on Kaggle',loc:'gpu',html:()=>`
+  <h2>7 · First check, on the GPU: stock vs tuned on held-out sets</h2>
+  <p class="small muted">Run right after training, before anything is downloaded. Word error rate %, lower is better. "Stock" here is <b>Parakeet v3</b> (v4's base), not the v2 the app uses, and these are different clips from the local tests.</p>
+  <div id="kEval"></div>
+  <p class="small">The Kaggle "medical validate" set (12.83 → 7.67) is <b>ignored</b>: 171 of its 177 phrases are in training by design.</p>`,
+  run(){const rows=[['ekacare (real clinicians)',32.18,23.41],['edacc (real accents)',18.54,17.76],['parrot_test (radiology TTS)',8.80,4.78]];
+   const el=$('#kEval');el.innerHTML=rows.map(([n,a,b])=>`<div class="bar"><div>${n}</div><div><div class="track" style="margin-bottom:3px"><div class="fill" style="background:var(--grey)" data-w="${a/35*100}"></div></div><div class="track"><div class="fill" style="background:var(--cyan)" data-w="${b/35*100}"></div></div></div><div>${a} → <b style="color:var(--green)">${b}</b></div></div>`).join('')+'<div class="legend"><span><i style="background:var(--grey)"></i>stock</span><span><i style="background:var(--cyan)"></i>v4</span></div>';
+   requestAnimationFrame(()=>el.querySelectorAll('[data-w]').forEach(x=>x.style.width=x.dataset.w+'%'));}},
+ {t:'Export + install',loc:'pc',html:()=>`
+  <h2>8 · Export, file away, install</h2>
+  <div class="pipe">
+   <div class="node on">NeMo checkpoint</div><div class="node">→ ONNX export, fp32 (encoder + decoder_joint + vocab)</div>
+   <div class="node">→ download</div><div class="node">→ <code>models/parakeet-rad-v4/</code> (never overwrites v1–v3)</div>
+   <div class="node">→ <code>compare.py</code> paired scoring on your PC</div><div class="node on" style="border-color:var(--green);color:var(--green)">→ <code>data/models/fine_tuned/parakeet-rad-v4/</code></div>
+  </div>
+  <p>Each version folder keeps its <code>README.md</code>, the exact <code>parakeet.json</code>, <code>train_log.json</code>, the clip list and every training sentence, so any result can be traced back to its data.</p>
+  <p>In the app, the <b>Voice model</b> picker lists every folder in <code>fine_tuned/</code>. It is set to <b>parakeet-rad-v4</b> now.</p>`},
+];
+let tIdx=0,tTimer=null;
+function renderSteps(){ $('#tSteps').innerHTML=STEPS.map((s,i)=>`<div class="step ${i<tIdx?'done':''} ${i===tIdx?'on':''}" data-i="${i}"><b>STEP ${i+1}</b>${s.t}<span class="where loc-${s.loc}">${s.loc==='pc'?'PC':'GPU'}</span></div>`).join('');
+  document.querySelectorAll('.step').forEach(e=>e.onclick=()=>{stopT();go(+e.dataset.i)}); }
+function go(i){tIdx=Math.max(0,Math.min(STEPS.length-1,i));renderSteps();$('#tStage').innerHTML=STEPS[tIdx].html();$('#tStage').animate([{opacity:0,transform:'translateX(12px)'},{opacity:1,transform:'none'}],{duration:300});STEPS[tIdx].run&&STEPS[tIdx].run();}
+function stopT(){clearInterval(tTimer);tTimer=null;$('#tPlay').textContent='▶ Play'}
+$('#tNext').onclick=()=>{stopT();go(tIdx+1)};$('#tPrev').onclick=()=>{stopT();go(tIdx-1)};
+$('#tPlay').onclick=()=>{if(tTimer)return stopT();$('#tPlay').textContent='⏸ Pause';if(tIdx===STEPS.length-1)go(0);tTimer=setInterval(()=>{if(tIdx>=STEPS.length-1)return stopT();go(tIdx+1)},6000)};
+go(0);
+
+function fit(c){const r=c.getBoundingClientRect();const dpr=window.devicePixelRatio||1;c.width=r.width*dpr;c.height=(+c.getAttribute('height'))*dpr;c.style.height=c.getAttribute('height')+'px';const ctx=c.getContext('2d');ctx.setTransform(1,0,0,1,0,0);return ctx}
+
+function drawLoss(n){
+  const c=$('#lossC');if(!c)return;const ctx=fit(c),W=c.width,H=c.height,d=devicePixelRatio||1;
+  ctx.clearRect(0,0,W,H);const max=2.8,pad=30*d;
+  ctx.strokeStyle='#2a323d';ctx.fillStyle='#8b949e';ctx.font=`${11*d}px Segoe UI`;
+  [0,1,2].forEach(v=>{const y=H-pad-(v/max)*(H-pad*1.4);ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(W,y);ctx.stroke();ctx.fillText(v,6*d,y+4*d)});
+  const X=i=>pad+(i/59)*(W-pad-8*d),Y=v=>H-pad-(v/max)*(H-pad*1.4);
+  for(let i=0;i<n;i++){ctx.fillStyle='rgba(229,72,77,.55)';ctx.beginPath();ctx.arc(X(i),Y(LOSS[i]),2.6*d,0,7);ctx.fill()}
+  ctx.strokeStyle='#4cc9f0';ctx.lineWidth=2.4*d;ctx.beginPath();
+  for(let i=0;i<n;i++){const w=LOSS.slice(Math.max(0,i-7),i+1);const m=w.reduce((a,b)=>a+b)/w.length;i?ctx.lineTo(X(i),Y(m)):ctx.moveTo(X(i),Y(m))}ctx.stroke();
+  ctx.fillStyle='#8b949e';ctx.fillText('step 0',pad,H-8*d);ctx.fillText('3000',W-34*d,H-8*d);
+  $('#stepN').textContent=(n*50).toLocaleString();$('#memN').textContent=MEM[n-1];
+  // lr
+  const l=$('#lrC');const lx=fit(l),LW=l.width,LH=l.height;lx.clearRect(0,0,LW,LH);
+  const lr=s=>s<300?1e-4*s/300:1e-6+0.5*(1e-4-1e-6)*(1+Math.cos(Math.PI*(s-300)/2700));
+  lx.strokeStyle='#2a323d';lx.beginPath();lx.moveTo(0,LH-6*d);lx.lineTo(LW,LH-6*d);lx.stroke();
+  lx.strokeStyle='#f5a524';lx.lineWidth=2*d;lx.beginPath();for(let s=0;s<=3000;s+=20){const x=s/3000*LW,y=LH-6*d-lr(s)/1e-4*(LH-16*d);s?lx.lineTo(x,y):lx.moveTo(x,y)}lx.stroke();
+  const cs=n*50,cx=cs/3000*LW;lx.fillStyle='#4cc9f0';lx.beginPath();lx.arc(cx,LH-6*d-lr(cs)/1e-4*(LH-16*d),5*d,0,7);lx.fill();
+  lx.fillStyle='#8b949e';lx.font=`${11*d}px Segoe UI`;lx.fillText('1e-4 peak at step 300',310/3000*LW,12*d);
+}
+
+/* =========================================================
+   INFERENCE A: live chunk simulation
+   ========================================================= */
+const UTT=[ // [duration s, committed text]
+ [3.1,'The alignment is normal.'],[4.6,'There is a non-displaced fracture of the fifth metatarsal,'],
+ [3.4,'measuring 4 mm.'],[5.2,'No evidence of avascular necrosis.'],[2.8,'Impression:'],[3.9,'fracture of the fifth metatarsal.']];
+let aT=0,aRun=null,polished=false;const TOTAL=UTT.reduce((a,u)=>a+u[0]+0.8,0);
+function drawWave(){
+  const c=$('#wave');const ctx=fit(c),W=c.width,H=c.height,d=devicePixelRatio||1;ctx.clearRect(0,0,W,H);
+  const X=t=>t/TOTAL*W;let t0=0;const mid=H*0.45;let committed=[],tail='';
+  UTT.forEach(([dur,txt],i)=>{const t1=t0+dur,tc=t1+0.6;
+    const done=aT>=tc, active=aT>t0&&!done;
+    if(done){ctx.fillStyle=polished&&i===3?'rgba(167,139,250,.18)':'rgba(70,167,88,.13)';ctx.fillRect(X(t0),8*d,X(tc)-X(t0),H-40*d);committed.push(txt)}
+    else if(active){ctx.fillStyle='rgba(76,201,240,.12)';ctx.fillRect(X(t0),8*d,X(Math.min(aT,tc))-X(t0),H-40*d);
+      const frac=Math.min(1,(aT-t0)/dur);const ws=txt.split(' ');tail=ws.slice(0,Math.max(1,Math.round(ws.length*frac))).join(' ')}
+    // wave
+    ctx.strokeStyle=done?'#46a758':'#4cc9f0';ctx.lineWidth=1.2*d;ctx.beginPath();
+    const end=Math.min(aT,t1);for(let t=t0;t<end;t+=TOTAL/W/d*1.5){const k=(t-t0)/dur;const env=Math.sin(Math.PI*k)**.6*(0.55+0.45*Math.sin(t*5.3+i));
+      const y=mid+Math.sin(t*170+i)*env*H*0.3*Math.random();const x=X(t);t===t0?ctx.moveTo(x,y):ctx.lineTo(x,y)}ctx.stroke();
+    if(done){ctx.strokeStyle='#f5a524';ctx.setLineDash([4*d,4*d]);ctx.beginPath();ctx.moveTo(X(tc),4*d);ctx.lineTo(X(tc),H-30*d);ctx.stroke();ctx.setLineDash([]);
+      ctx.fillStyle='#8b949e';ctx.font=`${10*d}px Segoe UI`;ctx.fillText(`chunk ${i+1} · ${dur}s`,X(t0)+4*d,H-16*d);
+      if(polished&&i===3){ctx.fillStyle='#a78bfa';ctx.fillText('re-decoded (low confidence)',X(t0)+4*d,H-4*d)}}
+    t0=tc+0.2;});
+  // playhead
+  if(aT>0&&aT<TOTAL){ctx.fillStyle='#e5484d';ctx.fillRect(X(aT)-1*d,0,2*d,H-28*d)}
+  const lt=$('#liveText');lt.innerHTML=committed.map(t=>`<span style="color:var(--text)">${t}</span>`).join(' ')+(tail?` <span style="color:var(--cyan);opacity:.85">${tail}▍</span>`:'');
+  $('#aStat').textContent=aT>=TOTAL?(polished?'Stopped · polish done: only chunk 4 re-decoded, never the whole recording':'Stopped · polishing…'):aT>0?`recording ${aT.toFixed(1)} s · ${committed.length} chunk(s) committed`:'';
+}
+$('#aPlay').onclick=()=>{if(aRun)return;if(aT>=TOTAL){aT=0;polished=false}aRun=setInterval(()=>{aT+=0.1;if(aT>=TOTAL){aT=TOTAL;clearInterval(aRun);aRun=null;drawWave();setTimeout(()=>{polished=true;drawWave()},1200)}drawWave()},45)};
+$('#aReset').onclick=()=>{clearInterval(aRun);aRun=null;aT=0;polished=false;drawWave()};
+
+/* ---------------- B: engine chooser ---------------- */
+let engMode='v4';
+function drawEng(){
+  const s=$('#engSvg');const box=(x,y,w,h,t1,t2,on,col)=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${on?'#10242c':'#1b2129'}" stroke="${on?col:'#2a323d'}" stroke-width="${on?2:1}"/><text x="${x+w/2}" y="${y+h/2-3}" text-anchor="middle" font-weight="600" fill="${on?col:'#8b949e'}">${t1}</text><text x="${x+w/2}" y="${y+h/2+13}" text-anchor="middle" font-size="11" fill="#8b949e">${t2}</text>`;
+  const v4=engMode==='v4';
+  s.innerHTML=`
+   ${box(180,6,200,46,'audio chunk','16 kHz mono',true,'#4cc9f0')}
+   ${box(10,92,170,58,'1 · tuned model?','parakeet-rad-v4, onnx-asr',v4,'#4cc9f0')}
+   ${box(195,92,170,58,'2 · hotwords (v2)','sherpa-onnx: not installed here',false,'#46a758')}
+   ${box(380,92,170,58,'3 · plain Parakeet v2','onnx-asr greedy',!v4,'#46a758')}
+   ${box(150,206,260,50,'faster-whisper small.en','only if Parakeet crashes',false,'#f5a524')}
+   ${box(150,276,260,46,'→ clean-up chain (D)','',true,'#4cc9f0')}
+   <path d="M280 52 L${v4?95:465} 92" stroke="#4cc9f0" stroke-width="2.5" fill="none" stroke-dasharray="6 5"><animate attributeName="stroke-dashoffset" from="22" to="0" dur=".7s" repeatCount="indefinite"/></path>
+   <path d="M${v4?95:465} 150 L280 276" stroke="#4cc9f0" stroke-width="2.5" fill="none" stroke-dasharray="6 5"><animate attributeName="stroke-dashoffset" from="22" to="0" dur=".7s" repeatCount="indefinite"/></path>
+   <path d="M280 150 L280 206 M465 150 L330 206 M95 150 L230 206" stroke="#3a2a10" stroke-width="1.5" fill="none" stroke-dasharray="3 4"/>
+   <text x="470" y="190" font-size="10" fill="#8b949e">on crash only</text>`;
+  $('#engNote').innerHTML=v4?'<b>Now:</b> v4 decodes greedily, <b>without</b> hotword biasing, because its training already targets those words. If the folder vanished, the app falls back to "standard" and logs it.'
+   :'<b>Standard, by design:</b> Parakeet v2 in sherpa-onnx, beam search nudged toward the 871 lexicon terms. <b>On this PC sherpa-onnx is not installed</b>, so tier 2 is skipped and standard = tier 3, v2 greedy. That is the "stock" every local score compares against. (The hotword gain, 10.9% → 7.1%, is a code comment; I didn\'t re-measure it.)';
+  document.querySelectorAll('[data-eng]').forEach(b=>b.classList.toggle('sel',b.dataset.eng===engMode));
+}
+document.querySelectorAll('[data-eng]').forEach(b=>b.onclick=()=>{engMode=b.dataset.eng;drawEng()});drawEng();
+
+/* ---------------- C: TDT mini diagram ---------------- */
+(function(){const s=$('#tdtSvg');let h='';const lab=['audio','encoder ×24','frames','decoder+joint','"meta" "tar" "sal"'];
+ const col=['#5b6573','#4cc9f0','#5b6573','#46a758','#f5a524'];
+ lab.forEach((t,i)=>{const x=6+i*104;h+=`<rect x="${x}" y="40" width="92" height="40" rx="7" fill="#1b2129" stroke="${col[i]}"/><text x="${x+46}" y="64" text-anchor="middle" font-size="11">${t}</text>`;
+  if(i<4)h+=`<path d="M${x+92} 60 H${x+104}" stroke="#4cc9f0" stroke-width="2"/>`});
+ h+=`<circle r="5" fill="#4cc9f0"><animateMotion dur="2.4s" repeatCount="indefinite" path="M10 60 H510"/></circle>
+  <text x="330" y="100" font-size="10.5" fill="#8b949e">each output = word piece + "skip N frames"</text>
+  <text x="6" y="24" font-size="10.5" fill="#8b949e">v4 changed: top 12 encoder layers + decoder + joint</text>`;s.innerHTML=h})();
+
+/* ---------------- D: postprocess chain ---------------- */
+const RAW='thank you. the alignment is normal full stop there is a non displaced fracture of the fifth meta tarsal measuring four millimetres full stop new line impression colon fracture of the fifth meta tarsal full stop';
+const PSTAGES=[
+ ['filter_hallucinations','Removes phrases speech models invent from silence ("thank you", "subtitles by…").',s=>s.replace(/^thank you\. /,'')],
+ ['apply_correction_commands','"correct word X" replaces the previous word with X.',s=>s],
+ ['apply_spoken_commands','Spoken punctuation becomes punctuation: "full stop", "comma", "colon", "new line".',s=>s.replace(/ full stop/g,'.').replace(/ new line /g,'\n').replace(/ colon/g,':')],
+ ['apply_scratch_commands','"scratch that" deletes the sentence you are saying, or the one you just finished.',s=>s],
+ ['normalize_spaces','Tidies spacing around punctuation.',s=>s],
+ ['apply_measurement_standardisation','Numbers and units into report form: "four millimetres" → "4 mm".',s=>s.replace('four millimetres','4 mm')],
+ ['apply_terminology','Deliberate house style for correctly heard words: "x ray" → "X-ray", "non displaced" → "non-displaced".',s=>s.replace('non displaced','non-displaced')],
+ ['apply_uk_spelling','US → UK spelling (edema → oedema, hemorrhage → haemorrhage).',s=>s],
+ ['apply_accent_corrections','Known mishearings for the chosen accent profile.',s=>s,1],
+ ['rejoin_split_compounds','Glues medical words the model split: "meta tarsal" → "metatarsal".',s=>s.replace(/meta tarsal/g,'metatarsal'),1],
+ ['apply_medical_dictionary_suggestions','Fuzzy-snaps a misspelt non-word to the nearest of ~98k terms, preferring the 871 lexicon terms. Real words are left alone.',s=>s,1],
+ ['apply_context_correction','Fixes a real word that is wrong in context ("ileum"/"ilium" from the words around it).',s=>s,1],
+ ['apply_learned_corrections','Your own past edits, applied last so they win over everything.',s=>s],
+ ['apply_phrase_commands','"insert <phrase name>" writes your quick phrase as-is.',s=>s],
+ ['smart_capitalize','Sentence starts and headings get capitals.',s=>s.replace(/(^|[.:]\s+|\n)([a-z])/g,(m,a,b)=>a+b.toUpperCase())],
+];
+const SOFT_SKIP=new Set(['apply_terminology','apply_accent_corrections','rejoin_split_compounds','apply_medical_dictionary_suggestions','apply_context_correction','apply_learned_corrections']);
+let lvl='medium',pIdx=-1,pTimer=null;
+function diff(a,b){if(a===b)return esc(b);const A=a.split(/(\s+)/),B=b.split(/(\s+)/);let i=0;while(i<A.length&&A[i]===B[i])i++;let j=0;while(j<A.length-i&&j<B.length-i&&A[A.length-1-j]===B[B.length-1-j])j++;
+ return esc(B.slice(0,i).join(''))+(A.slice(i,A.length-j).join('')?`<del>${esc(A.slice(i,A.length-j).join(''))}</del>`:'')+`<ins>${esc(B.slice(i,B.length-j).join(''))}</ins>`+esc(B.slice(B.length-j).join(''))}
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+function textAt(k){let s=RAW;for(let i=0;i<=k;i++){const st=PSTAGES[i];if(lvl==='soft'&&SOFT_SKIP.has(st[0]))continue;s=st[2](s)}return s}
+function renderPipe(){
+ $('#pipe').innerHTML=PSTAGES.map((s,i)=>`<div class="node ${s[3]?'gated':''} ${lvl==='soft'&&SOFT_SKIP.has(s[0])?'skip':''} ${i===pIdx?'on':''} ${i<pIdx?'passed':''}" data-i="${i}">${i+1}. ${s[0].replace(/^apply_/,'').replace(/_/g,' ')}</div>`).join('')+(lvl==='hard'?`<div class="node" style="border-color:var(--violet);color:var(--violet)">+ AI polish (Hard only)</div>`:'');
+ document.querySelectorAll('#pipe .node[data-i]').forEach(n=>n.onclick=()=>{stopP();pIdx=+n.dataset.i;showP()});
+}
+function showP(){renderPipe();const before=pIdx<=0?RAW:textAt(pIdx-1),after=pIdx<0?RAW:textAt(pIdx);
+ $('#pText').innerHTML=pIdx<0?`<span class="muted">raw from model:</span>\n`+esc(RAW):diff(before,after);
+ if(pIdx<0){$('#pDesc').innerHTML='Raw text straight from the model: lowercase, spoken punctuation, words split.';return}
+ const st=PSTAGES[pIdx];const skipped=lvl==='soft'&&SOFT_SKIP.has(st[0]);
+ $('#pDesc').innerHTML=`<b>${st[0]}</b><br>${st[1]}${st[3]?'<br><br><span class="pill meh">confidence veto</span> won\'t rewrite a word the model was sure of.':''}${skipped?'<br><br><span class="pill no">skipped in Soft</span> it rewrites words by similarity, the riskiest kind of change.':''}${before===after&&!skipped?'<br><br><span class="muted">(nothing to do in this example)</span>':''}`;}
+function stopP(){clearInterval(pTimer);pTimer=null;$('#pPlay').textContent='▶ Play'}
+$('#pPlay').onclick=()=>{if(pTimer)return stopP();$('#pPlay').textContent='⏸ Pause';pIdx=-1;showP();pTimer=setInterval(()=>{pIdx++;if(pIdx>=PSTAGES.length){pIdx=PSTAGES.length-1;stopP()}showP()},1100)};
+document.querySelectorAll('[data-lvl]').forEach(b=>b.onclick=()=>{lvl=b.dataset.lvl;document.querySelectorAll('[data-lvl]').forEach(x=>x.classList.toggle('sel',x===b));showP()});
+showP();
+
+$('#after').innerHTML=['close open tail','hand back full text at once','polish: re-decode chunks with confidence < 0.75','release gate: fields · side · sex · impression','critical findings (NegEx) + who was told','copy / .txt / .docx','audit log entry'].map((t,i)=>`<div class="node" style="animation:fade .4s ${i*.12}s both">${i+1}. ${t}</div>`).join('');
+
+/* =========================================================
+   QUALITY
+   ========================================================= */
+const Q={sets:['eka','eka_noise','eka_quiet','libri','parrot*'],
+ wer:{stock:[21.35,27.72,28.97,1.63,9.26],v3:[19.15,27.54,30.07,2.18,7.79],v4:[17.19,27.54,28.90,2.12,4.62]},
+ term:{stock:[19,38,45,null,76],v3:[13,35,38,null,70],v4:[12,31,35,null,34]},
+ termClean:{stock:[14,34,38,null,null],v3:[null,null,null,null,null],v4:[12,30,33,null,null]},
+ werClean:{stock:[20.82,27.58,28.43,2.01,null],v3:[null,null,null,null,null],v4:[16.80,27.08,28.11,2.45,null]},
+ termOf:[185,185,185,null,1012]};
+let met='wer';
+function drawBars(){
+ const c=$('#qBars');const ctx=fit(c),W=c.width,H=c.height,d=devicePixelRatio||1;ctx.clearRect(0,0,W,H);
+ const data=Q[met];const isW=met.startsWith('wer');const max=isW?32:80;const pad=40*d,base=H-40*d;
+ ctx.font=`${11*d}px Segoe UI`;ctx.fillStyle='#8b949e';ctx.strokeStyle='#2a323d';
+ for(let v=0;v<=max;v+=isW?8:20){const y=base-v/max*(base-14*d);ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(W,y);ctx.stroke();ctx.fillText(v,6*d,y+4*d)}
+ const gw=(W-pad)/Q.sets.length,bw=gw/4.5;const cols={stock:'#5b6573',v3:'#a78bfa',v4:'#4cc9f0'};
+ c._hits=[];let start=performance.now();
+ (function frame(now){const k=Math.min(1,(now-start)/700),e=1-Math.pow(1-k,3);
+  ctx.clearRect(pad,0,W,base+1);ctx.strokeStyle='#2a323d';for(let v=0;v<=max;v+=isW?8:20){const y=base-v/max*(base-14*d);ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(W,y);ctx.stroke()}
+  c._hits=[];
+  Q.sets.forEach((s,i)=>{['stock','v3','v4'].forEach((m,j)=>{const v=data[m][i];if(v==null)return;const x=pad+i*gw+gw*.12+j*(bw+4*d),h=v/max*(base-14*d)*e;
+    ctx.fillStyle=cols[m];ctx.fillRect(x,base-h,bw,h);ctx.fillStyle='#e6e8eb';ctx.textAlign='center';if(k===1)ctx.fillText(v,x+bw/2,base-h-5*d);ctx.textAlign='left';
+    c._hits.push({x:x/d,y:(base-h)/d,w:bw/d,h:h/d,txt:`<b>${s} · ${m}</b><br>${isW?v+'% word errors':v+' of '+Q.termOf[i]+' medical words missed'}`})});
+   ctx.fillStyle='#8b949e';ctx.fillRect(0,0,0,0);ctx.fillText(s+(data.v4[i]==null?' (n/a)':''),pad+i*gw+gw*.12,base+18*d)});
+  if(k<1)requestAnimationFrame(frame)})(start);
+}
+$('#qBars').onmousemove=e=>{const c=e.target,r=c.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;const h=(c._hits||[]).find(b=>x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h);h?showTip(e,h.txt):hideTip()};
+$('#qBars').onmouseleave=hideTip;
+document.querySelectorAll('[data-met]').forEach(b=>b.onclick=()=>{met=b.dataset.met;document.querySelectorAll('[data-met]').forEach(x=>x.classList.toggle('sel',x===b));drawBars()});
+
+const F={stock:[['eka · WER',-4.16,-6.05,-2.31],['eka · medical words',-3.78,-7.76,0],['eka_noise · WER',-0.18,-1.94,1.54],['eka_noise · medical words',-3.78,-8.95,1.40],['eka_quiet · medical words',-5.41,-10.47,-0.53],['libri · WER',0.49,-0.11,1.16],['parrot* · WER',-4.64,-6.57,-3.05]],
+ v3:[['eka · WER',-1.96,-3.21,-0.68],['eka · medical words',-0.54,-3.55,2.66],['eka_noise · WER',0,-1.34,1.36],['eka_quiet · WER',-1.17,-2.62,0.22],['libri · WER',-0.05,-0.52,0.42],['parrot* · WER',-3.17,-3.84,-2.56]]};
+let cmp='stock';
+function drawForest(){const s=$('#forest');const rows=F[cmp];const L=210,R=580,mn=-11,mx=3;const X=v=>L+(v-mn)/(mx-mn)*(R-L);
+ let h=`<line x1="${X(0)}" y1="10" x2="${X(0)}" y2="${20+rows.length*38}" stroke="#8b949e" stroke-dasharray="4 4"/><text x="${X(0)}" y="${36+rows.length*38}" fill="#8b949e" font-size="11" text-anchor="middle">0 = no change</text>
+  <text x="${X(-8)}" y="${36+rows.length*38}" fill="#46a758" font-size="11" text-anchor="middle">← v4 better</text><text x="${X(2.2)}" y="${36+rows.length*38}" fill="#e5484d" font-size="11" text-anchor="middle">worse →</text>`;
+ rows.forEach(([n,m,lo,hi],i)=>{const y=30+i*38;const sure=hi<0?'#46a758':lo>0?'#e5484d':'#f5a524';
+  h+=`<text x="8" y="${y+4}" fill="#e6e8eb" font-size="12.5">${n}</text>
+   <line x1="${X(m)}" y1="${y}" x2="${X(m)}" y2="${y}" stroke="${sure}" stroke-width="7" stroke-linecap="round"><animate attributeName="x1" from="${X(m)}" to="${X(lo)}" dur=".7s" fill="freeze" begin="${i*.08}s"/><animate attributeName="x2" from="${X(m)}" to="${X(hi)}" dur=".7s" fill="freeze" begin="${i*.08}s"/></line>
+   <circle cx="${X(m)}" cy="${y}" r="6" fill="#0d1014" stroke="${sure}" stroke-width="2.5"/>
+   <text x="${X(hi)+8}" y="${y+4}" fill="#8b949e" font-size="11">${m>0?'+':''}${m}</text>`});
+ s.setAttribute('viewBox',`0 0 600 ${50+rows.length*38}`);s.innerHTML=h;}
+document.querySelectorAll('[data-cmp]').forEach(b=>b.onclick=()=>{cmp=b.dataset.cmp;document.querySelectorAll('[data-cmp]').forEach(x=>x.classList.toggle('sel',x===b));drawForest()});
+
+$('#bar').innerHTML=[
+ ['ok','Beats stock on real-voice WER','eka 21.35 → 17.19% raw, beyond luck (−6.05 to −2.31). After clean-up 20.82 → 16.80 (−5.91 to −2.15): survives.'],
+ ['meh','Beats stock on medical words','Raw 19 → 12 of 185, range touches 0. <b>After clean-up 14 → 12</b>: the app already fixes 5 of stock\'s 7 extra misses. A 2-word gain on 140 clips.'],
+ ['no','Everyday English no worse than +0.3','libri +0.49 raw, +0.44 after clean-up. Both over the line, both ranges cross 0. Partly the v3 base (worse at English than v2), not only the fine-tune'],
+ ['meh','Same speed','Not reliably measured (one pass, RAM-starved PC, clean re-test ran out of memory). Same encoder; decoder 2× bigger.'],
+ ['ok','Beats v3 (current best)','eka −1.96 beyond luck (raw); no set worse'],
+ ['ok','Compared against what "standard" runs on this PC','v2 greedy: sherpa-onnx is not installed, so no hotwords here. Wherever the hotword engine is installed, v4 vs that has not been measured'],
+].map(([c,t,d])=>`<div class="check"><span class="pill ${c}">${c==='ok'?'PASS':c==='no'?'MISS':'OPEN'}</span><div><b>${t}</b><div class="small muted">${d}</div></div></div>`).join('')+
+ `<p class="small" style="margin-top:10px"><b>Verdict after re-checking:</b> one solid gain, about 4 points fewer word errors on real accented clinicians, which survives clean-up. The medical-term gain mostly disappears after clean-up. General English is a little worse, and speed is unproven. It is a reasonable thing to try, not a proven upgrade.</p>`;
+
+$('#chips').innerHTML='<div class="small muted">fixed (stock wrong → v4 right)</div>'+['avascular','cholelithiasis','fissure','infarct','metatarsal','popliteal','spinal','thrombotic','venous'].map(w=>`<span class="fix">${w}</span>`).join('')+
+ '<div class="small muted" style="margin-top:6px">broke (stock right → v4 wrong)</div>'+['cholecystitis','malleolus','radius'].map(w=>`<span class="brk">${w}</span>`).join('');
+
+$('#leak').innerHTML=[
+ ['eka (local)','0 of 140 phrases',0,'5 of 2,342 four-word runs, all stock wording ("x ray pa view", "the right knee joint")'],
+ ['libri (local)','1 of 100 phrases',1,'"what was that". Different speakers and books from training.'],
+ ['parrot_test','0 of 200 phrases',0,'25 test pieces removed beforehand for sharing a sentence'],
+ ['Kaggle eka','5 of 198',2.5,'single words / pleasantries: "clear", "thanks", "take care"'],
+ ['Kaggle validate','171 of 177',96.6,'overlaps by design → score ignored'],
+].map(([n,v,p,d])=>`<div class="bar"><div>${n}</div><div class="track"><div class="fill" style="background:${p>50?'var(--red)':p>0?'var(--amber)':'var(--green)'};width:${Math.max(p,1.2)}%"></div></div><div class="small">${v}</div></div><div class="small muted" style="margin:-4px 0 8px 160px">${d}</div>`).join('');
+
+$('#guards').innerHTML=[
+ ['Data','Held-out TTS voice · test sentences removed before generating text · leak counts in every run log · clips capped at 1–15 s · LibriSpeech mixed in so general English isn\'t forgotten'],
+ ['Training','Half the encoder frozen · low LR with warm-up · gradient clip · smoke run first (20 steps, should match stock) · two-step memory probe · one JSON describes the run'],
+ ['Measuring','Same clips for every model · through the app\'s own engine code · paired 95% ranges per clip, not just averages · real voices count, synthetic only as a hint · adoption bar set <i>before</i> the run'],
+ ['In the app','Chunk decoded once, frozen · polish only on low confidence · confidence veto on guessing stages · lexicon-preferred fuzzy match · your corrections learned · release gate + critical findings · audit log'],
+].map(([h,t])=>`<div><h3>${h}</h3><div class="small">${t}</div></div>`).join('');
+
+window.addEventListener('resize',()=>{drawWave();if($('#quality').classList.contains('on')){drawBars();drawForest()}});
+</script>
+</body>
+</html>

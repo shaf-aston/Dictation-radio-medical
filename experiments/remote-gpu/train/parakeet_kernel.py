@@ -236,16 +236,36 @@ evals["parrot_test"] = eval_set(parrot_test_rows())
 log["sources"]["parrot_test"] = parrot_seen
 
 
-# 8. Noisy copies: another clip talking underneath (babble) or steady hiss, at a random loudness gap.
-#    Not pink noise: the local noise test uses pink, so training on it would flatter the result.
+def real_noises_and_rooms() -> tuple:
+    """OpenSLR 28 (Apache 2.0): recorded noises, and real room echoes (impulse responses); channels are averaged by decode()."""
+    z = TMP / "rirs_noises.zip"
+    subprocess.run(["curl", "-sSfL", "-o", str(z), cfg["rir_noise_url"]], check=True)
+    subprocess.run(["unzip", "-q", "-o", str(z), "-d", str(TMP)], check=True)
+    files = sorted((TMP / "RIRS_NOISES").rglob("*.wav"))
+    noises = [f for f in files if "pointsource_noises" in str(f) or ("real_rirs" in str(f) and "noise" in f.name)]
+    rooms = [f for f in files if "real_rirs" in str(f) and "rir" in f.name and "noise" not in f.name]
+    log["sources"]["openslr28"] = {"noises": len(noises), "rooms": len(rooms)}
+    return noises, rooms
+
+
+# 8. Noisy copies: babble (another clip), recorded noise, or steady hiss, at a random loudness gap; some
+#    also in a real room's echo. Not pink noise: the local noise test uses pink, so training on it would flatter it.
 def add_noisy_copies() -> None:
+    from scipy.signal import fftconvolve
     np_rng = np.random.default_rng(cfg["seed"])
     lo, hi = cfg["noise_snr_db"]
+    noises, rooms = real_noises_and_rooms()
     picks = rng.sample(train_rows, int(len(train_rows) * cfg["noisy_copy_fraction"]))
     for i, r in enumerate(picks):
         a = sf.read(r["audio_filepath"], dtype="float32")[0]
-        if rng.random() < 0.5:
+        if rng.random() < cfg["reverb_fraction"]:
+            room = decode(rng.choice(rooms).read_bytes())
+            a = fftconvolve(a, room / (np.max(np.abs(room)) + 1e-9))[: len(a)].astype(np.float32)
+        kind = rng.random()
+        if kind < 1 / 3:
             noise = np.resize(sf.read(rng.choice(train_rows)["audio_filepath"], dtype="float32")[0], len(a))
+        elif kind < 2 / 3:
+            noise = np.resize(decode(rng.choice(noises).read_bytes()), len(a))
         else:
             noise = np_rng.standard_normal(len(a)).astype(np.float32)
         gap = 10 ** (rng.uniform(lo, hi) / 20)

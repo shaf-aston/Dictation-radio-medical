@@ -67,9 +67,11 @@
   },
   "libri_train_shards": 2,
   "parrot_train_shards": 2,
-  "noisy_copy_fraction": 0.3,
+  "noisy_copy_fraction": 0.5,
   "noise_snr_db": [
     0,
     20
-  ]
+  ],
+  "reverb_fraction": 0.3,
+  "rir_noise_url": "https://www.openslr.org/resources/28/rirs_noises.zip"
 }

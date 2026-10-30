@@ -1,0 +1,53 @@
+{
+  "kernel": "rd-parakeet",
+  "kaggle_sources": [
+    "paultimothymooney/medical-speech-transcription-and-intent"
+  ],
+  "output": "model_onnx",
+  "check_file": "encoder-model.onnx",
+  "quantization": null,
+  "base_model": "nvidia/parakeet-tdt-0.6b-v3",
+  "onnx_repo": "istupakov/parakeet-tdt-0.6b-v3-onnx",
+  "stock_onnx_model": "nemo-parakeet-tdt-0.6b-v3",
+  "pip": [
+    "nemo_toolkit[asr]==2.7.3",
+    "onnx",
+    "onnxruntime",
+    "onnx-asr==0.12.0"
+  ],
+  "caps": {
+    "radiology_synth": 100000,
+    "kaggle_medical": 6000,
+    "edacc": 3000,
+    "hani89": 1500,
+    "librispeech": 2000,
+    "parrot": 1500
+  },
+  "hani89_shards": 4,
+  "edacc_train_shards": 12,
+  "edacc_eval_shards": 4,
+  "ekacare_eval_shards": 2,
+  "eval_clips_per_set": 200,
+  "max_duration_sec": 15,
+  "min_duration_sec": 1,
+  "freeze_encoder_layers": 12,
+  "learning_rate": 0.0001,
+  "min_learning_rate": 1e-06,
+  "weight_decay": 0.001,
+  "warmup_steps": 300,
+  "max_steps": 3000,
+  "max_train_hours": 5,
+  "batch_size": 8,
+  "effective_batch": 16,
+  "precision": "16-mixed",
+  "seed": 0,
+  "libri_train_shards": 2,
+  "parrot_train_shards": 2,
+  "noisy_copy_fraction": 0.5,
+  "noise_snr_db": [
+    0,
+    20
+  ],
+  "reverb_fraction": 0.3,
+  "rir_noise_url": "https://www.openslr.org/resources/28/rirs_noises.zip"
+}

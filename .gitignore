@@ -34,3 +34,9 @@ ux_screenshots/
 
 # Cross-process locks beside shared files (src/core/file_lock.py)
 .*.lock
+
+# Trained weights stay local (only metadata is tracked)
+experiments/remote-gpu/models/*/model/
+
+# Kilo local state
+.kilo/
