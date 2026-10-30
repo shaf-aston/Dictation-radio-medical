@@ -158,8 +158,10 @@ _SPOKEN_PATTERNS: List[Tuple[Pattern, Callable[[re.Match], str]]] = [
         (r"\bnew\s+line\b", "\n"),
         (r"\bnewline\b", "\n"),
         (r"\bnew\s+paragraph\b", "\n\n"),
-        (r"\bopen\s+bracket\b", "("),
-        (r"\bclose\s+bracket\b", ")"),
+        (r"\bopen\s+(?:round\s+)?(?:bracket|brackets|parenthesis|parentheses|paren)\b", "("),
+        (r"\bclosed?\s+(?:round\s+)?(?:bracket|brackets|parenthesis|parentheses|paren)\b", ")"),
+        (r"\bopen\s+square\s+brackets?\b", "["),
+        (r"\bclosed?\s+square\s+brackets?\b", "]"),
         # Before a word it marks a query and stays on that word: "?PE".
         (r"\bquestion\s+mark[^\S\n]+(?=\w)", " ?"),
         (r"\bquestion\s+mark\b", "?"),
@@ -181,11 +183,25 @@ _SPOKEN_PATTERNS: List[Tuple[Pattern, Callable[[re.Match], str]]] = [
 SPOKEN_COMMANDS = "|".join(f"(?:{pattern.pattern})" for pattern, _ in _SPOKEN_PATTERNS)
 
 
+#: "Slash" joins the words either side ("right slash left" -> "right/left").
+#: It skips the function-word guard: "and slash or" is the whole point, and a
+#: report never means the word itself. Commas the recogniser hears in the pause
+#: around it ("right, slash, left") go too.
+_SLASH = re.compile(r"[^\S\n]*[,;]?[^\S\n]*\b(?:forward\s+)?slash\b[,;]?[^\S\n]*", re.IGNORECASE)
+#: Stray commas the recogniser puts in the pause before a bracket command.
+_COMMA_BEFORE_CLOSE = re.compile(r"[,;]\s*([)\]])")
+_COMMA_AFTER_OPEN = re.compile(r"([(\[])\s*[,;]\s*")
+
+SPOKEN_COMMANDS = SPOKEN_COMMANDS + "|(?:" + _SLASH.pattern + ")"
+
+
 def apply_spoken_commands(text: str) -> str:
     """Replace spoken punctuation tokens with their symbol equivalents."""
+    text = _SLASH.sub("/", text)
     for pattern, repl in _SPOKEN_PATTERNS:
         text = pattern.sub(repl, text)
-    return text
+    text = _COMMA_BEFORE_CLOSE.sub(r"\1", text)
+    return _COMMA_AFTER_OPEN.sub(r"\1", text)
 
 
 # ---------------------------------------------------------------------------
