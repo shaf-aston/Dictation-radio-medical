@@ -10,3 +10,11 @@
 Load with: FasterWhisperEngine(model_path=r'C:\Users\Shaf\Downloads\vibe-code-projs\radio-dictate\experiments\remote-gpu\models\small-en-rad-v1\model')
 
 - export repair: tokenizer.json replaced by the base model's (identical vocabulary; the Kaggle-written one was unreadable locally). Weights untouched.
+
+## Weights
+
+Archived 2026-10-31 to the private Kaggle dataset `shafeinhashmi/rd-model-archive` (superseded; removed locally to save disk). Restore into this folder:
+
+    kaggle datasets download shafeinhashmi/rd-model-archive -p . --unzip
+
+then keep `small-en-rad-v1/model/`. Upload checked: sizes match, encoder sha256 matched on download.

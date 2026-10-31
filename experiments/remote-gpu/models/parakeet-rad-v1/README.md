@@ -18,3 +18,11 @@
 - verdict: superseded by v2.
 
 Load with: onnx_asr.load_model('nemo-conformer-tdt', r'C:\Users\Shaf\Downloads\vibe-code-projs\radio-dictate\experiments\remote-gpu\models\parakeet-rad-v1\model', quantization='int8')
+
+## Weights
+
+Archived 2026-10-31 to the private Kaggle dataset `shafeinhashmi/rd-model-archive` (superseded; removed locally to save disk). Restore into this folder:
+
+    kaggle datasets download shafeinhashmi/rd-model-archive -p . --unzip
+
+then keep `parakeet-rad-v1/model/`. Upload checked: sizes match, encoder sha256 matched on download.

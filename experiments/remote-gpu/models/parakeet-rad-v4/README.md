@@ -106,3 +106,7 @@ errors, so fixed minus broke is not a net gain, and a word can be on both lists:
 - Noise is unchanged: the 30% noisy copies did not move eka_noise.
 - Speed is unproven (see above).
 - Installed at `data/models/fine_tuned/parakeet-rad-v4` (packed copy; 8 of 8 parrot clips gave identical text).
+
+## Weights
+
+The app's installed copy in `data/models/fine_tuned/parakeet-rad-v4/` is the only one kept (same model, merged into 5 files; identical output on 20 test clips). compare.py reads it from there.
