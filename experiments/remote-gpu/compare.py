@@ -68,12 +68,13 @@ def candidates(only):
 
 # --features: WER drops punctuation, so it cannot see "/" or "( )". Each feature
 # is a pattern; a clip counts as right when the corrected output has exactly the
-# same matches as the reference (lower-cased, in order). Only clips whose
-# reference has the feature are counted.
+# same matches as the reference, in order: same words either side of "/", same
+# text inside the brackets (case and spacing ignored), field strength written
+# exactly "1.5 T". Only clips whose reference has the feature are counted.
 FEATURES = {
     "slash": (r"[\w.]+/[\w.]+", lambda m: m.lower()),
-    "brackets": (r"\([^()]*\)", lambda m: "()"),
-    "field T": (r"\b\d+(?:\.\d+)? ?T\b", lambda m: m.replace(" ", "")),
+    "brackets": (r"\([^()]*\)", lambda m: " ".join(m.lower().split())),
+    "field T": (r"\b\d+(?:\.\d+)? ?T\b", lambda m: m),
     "T1/T2": (r"\bT[12]\b", lambda m: m),
 }
 
@@ -106,6 +107,8 @@ def main():
     ap.add_argument("--paired", nargs=2, metavar=("A", "B"), help="B minus A, with a 95%% range over clips")
     ap.add_argument("--features", action="store_true", help="exact slash/bracket/field-strength/T1-T2 accuracy after correction")
     ap.add_argument("--show", type=int, default=0, help="print the first N clips' corrected output per model")
+    ap.add_argument("--by-source", action="store_true",
+                    help="also report each clip source separately (protocol: 'hand' = wording no model trained on)")
     a = ap.parse_args()
 
     from src.dictation.asr import TranscribeContext
@@ -114,61 +117,72 @@ def main():
 
     clips = load_set(a.set)[: a.limit or None]
     lex = list(get_correction_targets())
-    rows, per_clip, feats = [], {}, {}
+    groups = {"all": list(range(len(clips)))}
+    if a.by_source:
+        for i, c in enumerate(clips):
+            groups.setdefault(c.source or "?", []).append(i)
+    # Per model, per clip: (raw errors, words, fixed errors, words, term errors, term words, features, unseen)
+    per_clip, speed = {}, {}
     for name, make in candidates(a.only):
         eng = make()
         eng.preload()
-        raw, proc, unseen_raw, term_err, term_tok, dec, audio = [], [], [], 0, 0, 0.0, 0.0
+        dec, audio, recs = 0.0, 0.0, []
         for i, c in enumerate(clips):
             t0 = time.perf_counter()
             text = eng.transcribe(str(c.audio_path), TranscribeContext(beam_size=1)).text
             dec += time.perf_counter() - t0
             audio += sf.info(str(c.audio_path)).duration  # the manifest's figure is 0.0 when it could not be read
-            raw.append((c.reference, text))
             fixed = postprocess_transcript(text)
-            proc.append((c.reference, fixed))
-            for f, ok in feature_hits(c.reference, fixed).items():
-                feats.setdefault(name, {}).setdefault(f, []).append(ok)
             if i < a.show:
                 print(f"[{name}] {fixed}\n{'':>{len(name) + 3}}want: {c.reference}", file=sys.stderr)
-            if is_unseen(i, c):
-                unseen_raw.append((c.reference, text))
+            w, p = word_error_rate(c.reference, text), word_error_rate(c.reference, fixed)
             t = term_error_rate(c.reference, text, lex)
-            term_err += t.term_errors
-            term_tok += t.term_tokens
-            w = word_error_rate(c.reference, text)
-            per_clip.setdefault(name, []).append(
-                (w.substitutions + w.deletions + w.insertions, w.ref_words, t.term_errors, t.term_tokens))
-        rows.append((name, wer(raw), wer(unseen_raw), wer(proc),
-                     term_err / term_tok if term_tok else 0.0, dec / (audio / 60)))
+            recs.append((w.substitutions + w.deletions + w.insertions, w.ref_words,
+                         p.substitutions + p.deletions + p.insertions, p.ref_words,
+                         t.term_errors, t.term_tokens, feature_hits(c.reference, fixed), is_unseen(i, c)))
+        per_clip[name], speed[name] = recs, dec / (audio / 60)
         print(f"done {name}", file=sys.stderr, flush=True)
 
-    print(f"\nset={a.set}  clips={len(clips)}  (lower is better; speed = seconds per audio minute)")
-    print(f"{'model':<22}{'WER raw':>9}{'WER unseen':>12}{'WER +fix':>10}{'term err':>10}{'s/min':>8}")
-    for n, w, u, p, t, s in rows:
-        print(f"{n:<22}{w:>9.2%}{u:>12.2%}{p:>10.2%}{t:>10.2%}{s:>8.1f}")
-    if a.features:
-        print(f"\nexact after correction (clips right / clips with the feature)")
-        print(f"{'model':<22}" + "".join(f"{f:>14}" for f in FEATURES))
-        for n, *_ in rows:
-            cells = [feats.get(n, {}).get(f, []) for f in FEATURES]
-            print(f"{n:<22}" + "".join(f"{f'{sum(c)}/{len(c)} {sum(c) / len(c):.0%}' if c else '-':>14}" for c in cells))
-    if a.paired:
-        print_paired(*(per_clip[n] for n in a.paired), a.paired)
+    # "unseen" (a voice no version trained on) only means something on the tts set,
+    # where every third clip is the held-out voice; elsewhere it is printed as "-".
+    show_unseen = a.set == "tts"
+    for g, idx in groups.items():
+        print(f"\nset={a.set}  clips={len(idx)}" + (f"  source={g}" if g != "all" else "")
+              + "  (lower is better; speed = seconds per audio minute)")
+        print(f"{'model':<22}{'WER raw':>9}{'WER unseen':>12}{'WER +fix':>10}{'term err':>10}{'terms':>7}{'s/min':>8}")
+        for n, recs in per_clip.items():
+            r = [recs[i] for i in idx]
+            u = [x for x in r if x[7]]
+            print(f"{n:<22}{_rate(r, 0, 1):>9.2%}{(f'{_rate(u, 0, 1):.2%}' if show_unseen else '-'):>12}"
+                  f"{_rate(r, 2, 3):>10.2%}{_rate(r, 4, 5):>10.2%}{sum(x[5] for x in r):>7}{speed[n]:>8.1f}")
+        if a.features:
+            print(f"exact after correction (clips right / clips with the feature)")
+            print(f"{'model':<22}" + "".join(f"{f:>14}" for f in FEATURES))
+            for n, recs in per_clip.items():
+                cells = [[recs[i][6][f] for i in idx if f in recs[i][6]] for f in FEATURES]
+                print(f"{n:<22}" + "".join(f"{f'{sum(c)}/{len(c)} {sum(c) / len(c):.0%}' if c else '-':>14}"
+                                           for c in cells))
+        if a.paired:
+            print_paired(*([per_clip[n][i] for i in idx] for n in a.paired), a.paired)
+
+
+def _rate(recs, e, n):
+    return sum(r[e] for r in recs) / max(1, sum(r[n] for r in recs))
 
 
 def print_paired(base, new, names, resamples=10_000):
-    """Change B minus A in WER and term error, with a paired bootstrap over clips:
-    a 95% range that crosses zero means the change could be luck."""
+    """Change B minus A, with a paired bootstrap over clips: a 95% range that
+    crosses zero means the change could be luck. The range is within this set
+    (these sentences, this voice), not over speakers."""
     import random
 
     def rate(clips, e, n):
-        return 100 * sum(c[e] for c in clips) / max(1, sum(c[n] for c in clips))
+        return 100 * _rate(clips, e, n)
 
     rng = random.Random(0)
     idx = range(len(base))
-    print(f"\n{names[1]} minus {names[0]} (points; 95% range over {resamples} resamples)")
-    for label, e, n in (("WER", 0, 1), ("term err", 2, 3)):
+    print(f"{names[1]} minus {names[0]} (points; 95% range over {resamples} resamples of {len(base)} clips)")
+    for label, e, n in (("WER raw", 0, 1), ("WER +fix", 2, 3), ("term err", 4, 5)):
         diffs = sorted(rate([new[i] for i in s], e, n) - rate([base[i] for i in s], e, n)
                        for s in ([rng.choice(idx) for _ in idx] for _ in range(resamples)))
         print(f"{label:<10}{rate(new, e, n) - rate(base, e, n):+.2f}  "

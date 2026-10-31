@@ -55,12 +55,17 @@ def apply_measurement_standardisation(text: str) -> str:
     text = _MEASURE_DEG.sub(r"\1°", text)
     text = _MEASURE_TESLA_WORDS.sub(lambda m: _TESLA_WORDS[" ".join(m[1].lower().split())] + " T", text)
     text = _MEASURE_TESLA.sub(r"\1 T", text)
+    # Also here, before the dictionary stage can respell a mishearing into
+    # something unmatchable ("disla" -> "disl"); apply_field_strength catches
+    # the ones that stage respells into "tesla" ("tisla").
+    text = _FIELD_MISHEARD.sub(r"\1 T", text)
     return text
 
 
 #: Field strengths a scanner is sold at, then "tesla" as Parakeet mishears it
 #: (seen in the protocol eval set), then the word that says it is a scanner.
-#: The trailing scanner word keeps this away from ordinary text.
+#: The trailing scanner word keeps this away from ordinary text; it must come
+#: straight after ("1.5 tisla open scanner" is left alone), a deliberate limit.
 _FIELD_MISHEARD = re.compile(
     r"\b(0\.5|1\.0|1\.5|3\.0|3|7)[\s-]*"
     r"(?:teslas?|tisla|tesler|tysler|tessler|disla|distel|distiller|distillar)"

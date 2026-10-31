@@ -64,17 +64,19 @@ def main() -> None:
         raise SystemExit(f"no exported model at {src}")
     if dest.exists():
         raise SystemExit(f"{dest} already exists; remove it first to reinstall")
-    pack(src, dest)
-    out = subprocess.run([a.check_python, "-c", CHECK, str(src), str(dest), str(a.clips)],
-                         cwd=REPO, capture_output=True, text=True)
-    try:
-        r = json.loads(out.stdout.strip().splitlines()[-1])
-    except (IndexError, json.JSONDecodeError):
-        shutil.rmtree(dest)
-        raise SystemExit(f"check failed to run; install removed\n{out.stderr[-2000:]}")
-    if r["different"] or not r["clips"]:
-        shutil.rmtree(dest)
-        raise SystemExit(f"packed copy differs on {r['different'] or 'no clips'}; install removed")
+    try:  # any failure (onnx missing, disk full, bad --check-python) must not leave a half install
+        pack(src, dest)
+        out = subprocess.run([a.check_python, "-c", CHECK, str(src), str(dest), str(a.clips)],
+                             cwd=REPO, capture_output=True, text=True)
+        try:
+            r = json.loads(out.stdout.strip().splitlines()[-1])
+        except (IndexError, json.JSONDecodeError):
+            raise SystemExit(f"check failed to run; install removed\n{out.stderr[-2000:]}")
+        if r["different"] or not r["clips"]:
+            raise SystemExit(f"packed copy differs on {r['different'] or 'no clips'}; install removed")
+    except BaseException:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise
     print(f"installed {dest} ({r['clips']} clips, identical output)")
     if a.remove_source:
         shutil.rmtree(src)

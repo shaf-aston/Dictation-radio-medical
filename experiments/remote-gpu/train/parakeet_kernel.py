@@ -25,6 +25,15 @@ from pathlib import Path
 
 cfg = {}  # kaggle_io.run_kernel writes train/parakeet.json in here at push time
 
+# Fail loudly on a stale dataset version, before any paid GPU time: Kaggle can
+# start this job before it has finished processing a fresh upload, and then
+# mounts the previous one.
+DATA = next(Path("/kaggle/input").rglob("manifest.jsonl")).parent
+_want = cfg.get("data_sha256")
+_got = hashlib.sha256((DATA / "manifest.jsonl").read_bytes()).hexdigest()
+if _want and _got != _want:
+    raise SystemExit(f"stale training data: manifest sha256 {_got[:12]} != uploaded {_want[:12]}")
+
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", *cfg["pip"]], check=True)
 
 import numpy as np  # noqa: E402
@@ -168,13 +177,6 @@ def eval_set(rows) -> list:
 
 
 # 1. Our synthetic radiology dictation (rd-train-data).
-DATA = next(Path("/kaggle/input").rglob("manifest.jsonl")).parent
-# Fail loudly on a stale dataset version: Kaggle can start this job before it
-# has finished processing a fresh upload, and then mounts the previous one.
-_want = cfg.get("data_sha256")
-_got = hashlib.sha256((DATA / "manifest.jsonl").read_bytes()).hexdigest()
-if _want and _got != _want:
-    raise SystemExit(f"stale training data: manifest sha256 {_got[:12]} != uploaded {_want[:12]}")
 AUDIO = DATA / "audio"
 if not AUDIO.is_dir():
     AUDIO = TMP / "audio"

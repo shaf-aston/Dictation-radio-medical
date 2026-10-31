@@ -34,7 +34,8 @@ TRAIN_MANIFEST = Path(__file__).resolve().parent / "train" / "manifest.jsonl"
 SEED = 4242
 
 HAND = [
-    "Multiplanar, multisequence MRI of the right slash left elbow performed on a one point five tesla magnet.",
+    # The user's sentence, reworded: the exact wording is a training template.
+    "Multiplanar, multisequence MRI of the right slash left elbow was carried out on a one point five tesla system.",
     "Sequences colon coronal PD fat saturated, coronal T one, sagittal PD fat saturated, axial PD fat saturated.",
     "MRI of the left shoulder on a three tesla scanner.",
     "The anterior slash posterior labrum is intact.",
@@ -54,6 +55,87 @@ HAND = [
     "Grade two strain of the medial head of gastrocnemius.",
     "No fracture, dislocation or bone bruise.",
     "Sequences colon sagittal T one, sagittal STIR, axial gradient echo.",
+    # 2026-10-31: 80 more, so the generalisation number rests on ~100 clips.
+    "MRI lumbar spine on the three tesla unit.",
+    "Disc bulge at L four slash five with mild canal narrowing.",
+    "Broad based protrusion at L five slash S one contacting the traversing nerve root.",
+    "Modic type one endplate change at L three slash four.",
+    "Facet joint effusions bilaterally open bracket greater on the right close bracket.",
+    "The conus terminates at the level of L one slash two.",
+    "Cervical spine MRI shows uncovertebral hypertrophy at C five slash six.",
+    "Mild foraminal stenosis on the left at C six slash seven.",
+    "No cord signal abnormality on sagittal T two.",
+    "Pituitary protocol on a one point five tesla system with dynamic contrast.",
+    "Brain MRI on the three T scanner, axial FLAIR and diffusion.",
+    "Scattered white matter hyperintensities open bracket Fazekas grade one close bracket.",
+    "No restricted diffusion to suggest acute infarct.",
+    "The internal auditory meati are symmetrical on thin section T two images.",
+    "Small vestibular schwannoma on the right open bracket five millimetres close bracket.",
+    "Hip MRI on a one point five tesla magnet, coronal STIR and axial T one.",
+    "Labral tear at the anterosuperior labrum open bracket twelve to two o'clock close bracket.",
+    "Cam slash pincer morphology of the right hip.",
+    "Gluteus medius tendinopathy without full thickness tear.",
+    "Trochanteric bursal fluid open bracket small volume close bracket.",
+    "Ankle MRI shows a sprain of the anterior talofibular ligament.",
+    "The peroneus brevis slash longus tendons are intact.",
+    "Osteochondral lesion of the medial talar dome open bracket eight millimetres close bracket.",
+    "Plantar fascia thickening at its calcaneal origin open bracket six millimetres close bracket.",
+    "Achilles tendinopathy with intrasubstance signal on T two fat saturated images.",
+    "Wrist MRI on a three tesla magnet with a dedicated coil.",
+    "Central perforation of the triangular fibrocartilage slash TFCC.",
+    "The scapholunate slash lunotriquetral ligaments are intact.",
+    "Undisplaced fracture of the scaphoid waist on coronal T one.",
+    "Ganglion arising from the scapholunate interval open bracket nine millimetres close bracket.",
+    "Shoulder MRI shows subacromial slash subdeltoid bursitis.",
+    "Partial thickness articular surface tear of supraspinatus open bracket PASTA lesion close bracket.",
+    "Biceps tendon is located in the bicipital groove on axial PD.",
+    "Acromioclavicular joint arthropathy with inferior osteophytes.",
+    "Hill Sachs defect on the posterolateral humeral head.",
+    "Knee MRI on a one point five T unit.",
+    "Bucket handle tear of the medial meniscus open bracket double PCL sign close bracket.",
+    "Horizontal tear of the posterior horn slash body of the lateral meniscus.",
+    "Grade one MCL sprain with periligamentous oedema.",
+    "Patellar tendinopathy at the proximal attachment.",
+    "Chondral fissuring of the patellar apex open bracket grade two close bracket.",
+    "Baker's cyst open bracket thirty millimetres close bracket without rupture.",
+    "Bone bruise of the lateral femoral condyle slash posterolateral tibial plateau.",
+    "Elbow MRI shows lateral epicondylitis with a partial tear.",
+    "The radial collateral slash lateral ulnar collateral ligaments are intact.",
+    "Distal biceps tendon is intact on FABS view.",
+    "Olecranon bursitis open bracket fluid collection close bracket.",
+    "Prostate MRI on the three tesla scanner without an endorectal coil.",
+    "PI RADS four lesion in the left peripheral zone open bracket eleven millimetres close bracket.",
+    "Liver MRI shows a T two bright lesion consistent with a haemangioma.",
+    "Simple renal cyst on the left open bracket Bosniak one close bracket.",
+    "MRCP shows no filling defect in the common bile duct.",
+    "Pancreatic duct is not dilated open bracket two millimetres close bracket.",
+    "Pelvic MRI on a one point five tesla magnet, sagittal T two and axial T one.",
+    "Intramural fibroid open bracket forty millimetres close bracket.",
+    "Endometrial thickness is normal for age.",
+    "Sacroiliac joints show subchondral oedema on the right on STIR.",
+    "No erosions at the sacroiliac joints on T one.",
+    "Thoracic spine shows a haemangioma in T eight.",
+    "Wedge compression fracture of T twelve with no retropulsion.",
+    "Marrow signal is normal on T one and STIR.",
+    "Previous right slash left comparison is not available.",
+    "Image quality is degraded by motion open bracket axial series close bracket.",
+    "Post contrast T one fat saturated images show no enhancement.",
+    "Gadolinium was given intravenously open bracket fifteen millilitres close bracket.",
+    "Diffusion weighted imaging shows no restriction.",
+    "Small effusion in the radiocarpal joint.",
+    "The median nerve is normal in calibre at the carpal tunnel.",
+    "Tenosynovitis of the extensor carpi ulnaris.",
+    "Rotator cuff muscles show no fatty atrophy open bracket Goutallier zero close bracket.",
+    "Calcific tendinopathy is better assessed on radiographs.",
+    "There is mild degenerative change slash spondylosis.",
+    "Recommend correlation with ultrasound slash clinical findings.",
+    "Findings discussed with the orthopaedic team on the day.",
+    "Conclusion colon full thickness supraspinatus tear with retraction.",
+    "Conclusion colon no internal derangement of the knee.",
+    "Opinion colon features in keeping with plantar fasciitis.",
+    "The examination was performed on the three T wide bore scanner.",
+    "Follow up MRI in six months open bracket same protocol close bracket.",
+    "Overall appearances are stable compared with the prior study slash report.",
 ]
 
 
@@ -80,14 +162,24 @@ def trained_lines() -> set:
     return {s.strip() for s in seen if s.strip()}
 
 
+def _norm_sentences(line: str) -> set:
+    """Each sentence of *line* as WER sees it: digits, no case, no punctuation."""
+    from scripts.eval.metrics import normalize_words
+    return {" ".join(normalize_words(to_target(s))) for s in re.split(r"(?<=[.!?])\s+", line) if s.strip()}
+
+
 def lines(count: int) -> list:
-    banned, rng, out = trained_lines(), random.Random(SEED), list(HAND)
-    sentences = {s for line in banned for s in re.split(r"(?<=\.)\s+", line)}
+    """HAND, then generated lines none of whose sentences is in any training set."""
+    rng, out = random.Random(SEED), list(HAND)
+    trained = set().union(*(_norm_sentences(t) for t in trained_lines()))
+    leaked = [h for h in HAND if _norm_sentences(h) & trained]
+    if leaked:
+        raise SystemExit(f"hand-written lines found in training: {leaked}")
     tries = 0
     while len(out) < count and tries < count * 200:
         tries += 1
         s = _protocol_line(rng)
-        if s not in sentences and to_target(s) not in sentences and s not in out:
+        if not _norm_sentences(s) & trained and s not in out:
             out.append(s)
     return out
 

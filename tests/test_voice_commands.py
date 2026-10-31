@@ -108,6 +108,7 @@ def test_no_template_wording_triggers_a_command(phrases):
         ("on a 1.5 distiller magnet", "On a 1.5 T magnet"),
         ("on a 3-tysler scanner", "On a 3 T scanner"),
         ("on a 1.5T system", "On a 1.5 T system"),
+        ("performed on a 1.5 disla scanner", "Performed on a 1.5 T scanner"),  # dictionary would make it "disl"
         ("the distiller was cleaned", "The distiller was cleaned"),
         ("three tumours", "Three tumours"),
         ("is it stable question mark", "Is it stable?"),

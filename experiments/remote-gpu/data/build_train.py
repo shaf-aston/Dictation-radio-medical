@@ -25,13 +25,16 @@ def main(count: int) -> None:
     rows = []
     for i, text in enumerate(generate(count)):
         wav = OUT / f"t_{i:04d}.wav"
-        eng.setProperty("voice", voices[i % len(voices)])
+        voice = voices[i % len(voices)]
+        assert HELD_OUT not in voice.lower(), "held-out voice must never read training audio"
+        eng.setProperty("voice", voice)
         eng.setProperty("rate", base + (i % 3 - 1) * 20)
         eng.save_to_file(text, str(wav))
         eng.runAndWait()
         if not wav.exists() or wav.stat().st_size < 1024:
             raise SystemExit(f"no audio for line {i}")
-        rows.append({"audio": wav.name, "text": to_target(text), "spoken": text})
+        rows.append({"audio": wav.name, "text": to_target(text), "spoken": text,
+                     "voice": voice.rsplit("\\", 1)[-1]})
         if i % 50 == 0:
             print(i, flush=True)
     (OUT / "manifest.jsonl").write_text(
