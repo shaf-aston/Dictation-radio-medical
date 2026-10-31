@@ -41,6 +41,10 @@ def push_dataset(pack: Path) -> None:
         kaggle("datasets", "version", "-p", str(pack), "-m", f"data {date.today()}", "--dir-mode", "zip")
     else:
         kaggle("datasets", "create", "-p", str(pack), "--dir-mode", "zip")
+    # "ready" right after a version describes the PREVIOUS version, so wait a
+    # while before believing it. The kernel also checks the manifest's hash
+    # (cfg["data_sha256"]) and stops if Kaggle mounts stale data anyway.
+    time.sleep(180)
     for _ in range(40):
         if "ready" in kaggle("datasets", "status", f"{USER}/{DATASET}", check=False).lower():
             return
