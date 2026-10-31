@@ -56,3 +56,25 @@ def apply_measurement_standardisation(text: str) -> str:
     text = _MEASURE_TESLA_WORDS.sub(lambda m: _TESLA_WORDS[" ".join(m[1].lower().split())] + " T", text)
     text = _MEASURE_TESLA.sub(r"\1 T", text)
     return text
+
+
+#: Field strengths a scanner is sold at, then "tesla" as Parakeet mishears it
+#: (seen in the protocol eval set), then the word that says it is a scanner.
+#: The trailing scanner word keeps this away from ordinary text.
+_FIELD_MISHEARD = re.compile(
+    r"\b(0\.5|1\.0|1\.5|3\.0|3|7)[\s-]*"
+    r"(?:teslas?|tisla|tesler|tysler|tessler|disla|distel|distiller|distillar)"
+    r"(?=\s+(?:magnet|scanner|system|unit|machine|MRI|MR)\b)",
+    re.IGNORECASE)
+_FIELD_NOSPACE = re.compile(r"\b(0\.5|1\.0|1\.5|3\.0|3|7)T\b")
+
+
+def apply_field_strength(text: str) -> str:
+    """Field strength written as "1.5 T" once later stages have fixed the spelling.
+
+    Runs after the dictionary and context stages: "3-tisla" only becomes
+    "3-tesla" there, after apply_measurement_standardisation has run.
+    """
+    text = _MEASURE_TESLA.sub(r"\1 T", text)
+    text = _FIELD_MISHEARD.sub(r"\1 T", text)
+    return _FIELD_NOSPACE.sub(r"\1 T", text)

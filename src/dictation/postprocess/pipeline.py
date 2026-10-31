@@ -21,6 +21,8 @@ Stage order
 7. Medical dictionary fuzzy, :func:`apply_medical_dictionary_suggestions`
 7.5 Context real-word fix, :func:`apply_context_correction` (confusable
                                   real words: "spinal chord"->"cord")
+7.8 Field strength, :func:`apply_field_strength` ("3-tisla" is only
+                                  spelled "3-tesla" by stage 7; make it "3 T")
 8. Learned user corrections: :func:`apply_learned_corrections` (runs last
                                   so user overrides win)
 8.5 "Insert <phrase>": :func:`apply_phrase_commands` (after every rewriting
@@ -72,7 +74,7 @@ from src.dictation.postprocess.voice_commands import (
     apply_spoken_commands,
 )
 from src.dictation.postprocess.text_utils import normalize_spaces, smart_capitalize
-from src.dictation.postprocess.measurements import apply_measurement_standardisation
+from src.dictation.postprocess.measurements import apply_field_strength, apply_measurement_standardisation
 from src.dictation.postprocess.terminology import apply_terminology
 from src.medical.spelling import apply_uk_spelling
 from src.dictation.postprocess.medical_dict_match import apply_medical_dictionary_suggestions
@@ -149,6 +151,7 @@ def pipeline_stages(accent: str = "neutral") -> List[Tuple[str, Callable, Option
         ("rejoin_split_compounds", rejoin_split_compounds, None),
         ("apply_medical_dictionary_suggestions", apply_medical_dictionary_suggestions, None),
         ("apply_context_correction", apply_context_correction, None),
+        ("apply_field_strength", apply_field_strength, None),
         ("apply_learned_corrections", apply_learned_corrections, None),
         # After every rewriting stage, so a quick phrase lands as written.
         ("apply_phrase_commands", apply_phrase_commands, None),

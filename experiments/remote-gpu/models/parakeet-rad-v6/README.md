@@ -36,3 +36,19 @@ Spot check, held-out voice (Hazel), through the app's post-processing:
 Slash and brackets are heard by every model, so the post-processing rules carry them. "Tesla" is still misheard by all: needs v7's short sentences.
 
 First attempt at this run trained on the previous dataset version (Kaggle mounted it before the new upload finished processing) and came back bit-identical to v5. `run_train.py` now sends the manifest's sha256 and the kernel stops on a mismatch.
+
+## Protocol benchmark (2026-10-31, later)
+
+`data/build_protocol_test.py`: 150 MRI-protocol lines (20 hand-written in real-report wording, 130 from the templates with a separate seed, none in any training set), held-out voice only. Scored on what the app writes; `compare.py --features` checks "/", "( )", "1.5 T" and "T1/T2" exactly, since WER ignores punctuation.
+
+| (lower is better) | stock | v5 | v6 |
+|---|---|---|---|
+| WER raw | 26.75 | 22.26 | 22.39 |
+| WER after correction | 14.00 | 13.22 | **9.72** |
+| medical-term errors | 23.33 | 7.13 | **3.24** |
+
+v6 minus v5 in term errors: -3.9 points, 95% range -6.2 to -1.9 (not luck). Raw WER is level.
+
+Exact after correction (clips right / with the feature), every model the same within one clip: slash 83%, brackets 100%, field strength 82%, T1/T2 100%. Field strength was 55% before the new `apply_field_strength` stage; its mishearing list was taken from this set, so 82% is optimistic.
+
+**Revised verdict:** v6 is the better model for protocol dictation; v5 is better on general medical phrases (Kaggle set 6.87 vs 8.12). The v7 data fixes the reason v6 learned so little (see `data/audit_train.py`).

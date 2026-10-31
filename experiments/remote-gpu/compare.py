@@ -66,6 +66,29 @@ def candidates(only):
     return [c for c in found if not only or c[0] in only]
 
 
+# --features: WER drops punctuation, so it cannot see "/" or "( )". Each feature
+# is a pattern; a clip counts as right when the corrected output has exactly the
+# same matches as the reference (lower-cased, in order). Only clips whose
+# reference has the feature are counted.
+FEATURES = {
+    "slash": (r"[\w.]+/[\w.]+", lambda m: m.lower()),
+    "brackets": (r"\([^()]*\)", lambda m: "()"),
+    "field T": (r"\b\d+(?:\.\d+)? ?T\b", lambda m: m.replace(" ", "")),
+    "T1/T2": (r"\bT[12]\b", lambda m: m),
+}
+
+
+def feature_hits(ref, hyp):
+    """{feature: True/False} for each feature present in *ref*."""
+    import re
+    out = {}
+    for name, (pat, key) in FEATURES.items():
+        want = [key(m) for m in re.findall(pat, ref)]
+        if want:
+            out[name] = [key(m) for m in re.findall(pat, hyp)] == want
+    return out
+
+
 def wer(pairs):
     """Errors summed clip by clip over all reference words. Joining the clips into one
     string would let the aligner match words across clip boundaries."""
@@ -81,6 +104,8 @@ def main():
     ap.add_argument("--only", nargs="*")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--paired", nargs=2, metavar=("A", "B"), help="B minus A, with a 95%% range over clips")
+    ap.add_argument("--features", action="store_true", help="exact slash/bracket/field-strength/T1-T2 accuracy after correction")
+    ap.add_argument("--show", type=int, default=0, help="print the first N clips' corrected output per model")
     a = ap.parse_args()
 
     from src.dictation.asr import TranscribeContext
@@ -89,7 +114,7 @@ def main():
 
     clips = load_set(a.set)[: a.limit or None]
     lex = list(get_correction_targets())
-    rows, per_clip = [], {}
+    rows, per_clip, feats = [], {}, {}
     for name, make in candidates(a.only):
         eng = make()
         eng.preload()
@@ -100,7 +125,12 @@ def main():
             dec += time.perf_counter() - t0
             audio += sf.info(str(c.audio_path)).duration  # the manifest's figure is 0.0 when it could not be read
             raw.append((c.reference, text))
-            proc.append((c.reference, postprocess_transcript(text)))
+            fixed = postprocess_transcript(text)
+            proc.append((c.reference, fixed))
+            for f, ok in feature_hits(c.reference, fixed).items():
+                feats.setdefault(name, {}).setdefault(f, []).append(ok)
+            if i < a.show:
+                print(f"[{name}] {fixed}\n{'':>{len(name) + 3}}want: {c.reference}", file=sys.stderr)
             if is_unseen(i, c):
                 unseen_raw.append((c.reference, text))
             t = term_error_rate(c.reference, text, lex)
@@ -117,6 +147,12 @@ def main():
     print(f"{'model':<22}{'WER raw':>9}{'WER unseen':>12}{'WER +fix':>10}{'term err':>10}{'s/min':>8}")
     for n, w, u, p, t, s in rows:
         print(f"{n:<22}{w:>9.2%}{u:>12.2%}{p:>10.2%}{t:>10.2%}{s:>8.1f}")
+    if a.features:
+        print(f"\nexact after correction (clips right / clips with the feature)")
+        print(f"{'model':<22}" + "".join(f"{f:>14}" for f in FEATURES))
+        for n, *_ in rows:
+            cells = [feats.get(n, {}).get(f, []) for f in FEATURES]
+            print(f"{n:<22}" + "".join(f"{f'{sum(c)}/{len(c)} {sum(c) / len(c):.0%}' if c else '-':>14}" for c in cells))
     if a.paired:
         print_paired(*(per_clip[n] for n in a.paired), a.paired)
 
