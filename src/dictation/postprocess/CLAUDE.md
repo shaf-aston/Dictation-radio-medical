@@ -8,7 +8,7 @@ reading a sample.
 The pipeline runs `pipeline.pipeline_stages()` in order: hallucinations →
 correction commands → spoken punctuation → scratch-that → whitespace →
 measurements → terminology → UK spelling → accent → split-compound rejoin →
-fuzzy dictionary → context real-word fix → learned corrections → insert-phrase
+fuzzy dictionary → context real-word fix → field strength → learned corrections → insert-phrase
 → capitalisation. The pipeline only sequences them; the stages live in their
 own modules (some outside this folder: `medical/spelling.py`,
 `features/adaptive_learning.py`). Cleanup level "soft" skips the guessing

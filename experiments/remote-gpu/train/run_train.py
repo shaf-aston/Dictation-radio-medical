@@ -8,6 +8,7 @@ models/<name>-vN/. An existing version is never touched. --smoke runs a few step
 the kernel works end to end; its output stays in train/_out and no version is saved.
 """
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -89,6 +90,11 @@ def main() -> None:
     dest = next_version(a.name)
     clips = pack_data(a.data.resolve())
     print(f"packed {clips} clips -> {'smoke run' if a.smoke else dest.name}", flush=True)
+    # The kernel refuses to train unless the manifest it finds on Kaggle is this
+    # one. v6's first run trained on the previous dataset version, because the
+    # job started before Kaggle finished processing the new upload, and came
+    # back bit-identical to v5 without any error.
+    cfg["data_sha256"] = hashlib.sha256((PACK / "manifest.jsonl").read_bytes()).hexdigest()
     push_dataset(PACK)
     run_kernel(a.engine, cfg)
     fetch_output(OUT, cfg)

@@ -10,6 +10,7 @@ Training text keeps capitals and punctuation, because Parakeet writes them: a se
 the model to stop. Rows with spelled-out numbers are dropped for the same reason.
 """
 import csv
+import hashlib
 import io
 import json
 import os
@@ -168,6 +169,12 @@ def eval_set(rows) -> list:
 
 # 1. Our synthetic radiology dictation (rd-train-data).
 DATA = next(Path("/kaggle/input").rglob("manifest.jsonl")).parent
+# Fail loudly on a stale dataset version: Kaggle can start this job before it
+# has finished processing a fresh upload, and then mounts the previous one.
+_want = cfg.get("data_sha256")
+_got = hashlib.sha256((DATA / "manifest.jsonl").read_bytes()).hexdigest()
+if _want and _got != _want:
+    raise SystemExit(f"stale training data: manifest sha256 {_got[:12]} != uploaded {_want[:12]}")
 AUDIO = DATA / "audio"
 if not AUDIO.is_dir():
     AUDIO = TMP / "audio"

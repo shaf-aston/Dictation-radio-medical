@@ -92,6 +92,35 @@ PROTOCOL = [
 ]
 
 
+MAX_WORDS = 26  # ~13 s at the slowest TTS rate; the kernel drops clips over 15 s
+
+_UNITS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+          "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+          "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19}
+_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50}
+_NUM_RE = re.compile(
+    r"\b(?:(?P<tens>" + "|".join(_TENS) + r")(?: (?P<tu>" + "|".join(k for k, v in _UNITS.items() if v < 10) + r"))?"
+    r"|(?P<unit>" + "|".join(sorted(_UNITS, key=len, reverse=True)) + r"))"
+    r"(?: point (?P<dec>" + "|".join(k for k, v in _UNITS.items() if v < 10) + r"))?\b")
+
+
+def to_target(spoken: str) -> str:
+    """The label for a spoken line, written the way Parakeet writes it.
+
+    The voice says "one point five tesla", "T two", "four millimetres"; Parakeet
+    writes "1.5 tesla", "T2", "4 mm". Training on spelled-out numbers would teach
+    the model to fight its own (and the app's) digit style, and the kernel's text
+    filter drops number words anyway. Spoken symbols ("slash", "open bracket")
+    stay as words: the app's rules turn those into "/" and "( )".
+    """
+    def num(m):
+        n = _TENS[m["tens"]] + _UNITS.get(m["tu"] or "", 0) if m["tens"] else _UNITS[m["unit"]]
+        return f"{n}.{_UNITS[m['dec']]}" if m["dec"] else str(n)
+    t = _NUM_RE.sub(num, spoken)
+    t = re.sub(r"\bT (\d)\b", r"T\1", t)
+    return re.sub(r"\b(\d+(?:\.\d+)?) millimetres?\b", r"\1 mm", t)
+
+
 def _protocol_line(rng: random.Random) -> str:
     q = rng.sample(SEQ, 4)
     return rng.choice(PROTOCOL).format(
@@ -115,10 +144,11 @@ def _test_sentences() -> set:
 
 
 def generate(count: int, seed: int = 1, protocol_share: float = 0.15) -> list:
-    """*count* lines: the original mix, then a *protocol_share* of v6 protocol lines.
+    """*count* spoken lines: report lines, then a *protocol_share* of protocol lines.
 
-    The original lines come first from their own random stream, so the first
-    part of a v6 set is exactly a v5 set of the smaller size.
+    Every line is at most MAX_WORDS, and protocol lines are one sentence each,
+    so the kernel's 15 s cap keeps them (v6 joined up to three and lost most).
+    Use to_target() for the label of each line.
     """
     n_protocol = round(count * protocol_share)
     lines = _report_lines(count - n_protocol, seed)
@@ -126,9 +156,8 @@ def generate(count: int, seed: int = 1, protocol_share: float = 0.15) -> list:
     tries = 0
     while len(lines) < count and tries < count * 50:
         tries += 1
-        parts = [_protocol_line(rng) for _ in range(rng.randint(1, 3))]
-        text = " ".join(p for p in parts if p.lower() not in banned)
-        if len(text.split()) >= 6 and text not in seen:
+        text = _protocol_line(rng)
+        if text.lower() not in banned and 4 <= len(text.split()) <= MAX_WORDS and text not in seen:
             seen.add(text)
             lines.append(text)
     rng.shuffle(lines)
@@ -140,16 +169,18 @@ def _report_lines(count: int, seed: int) -> list:
     terms, banned = _terms(), _test_sentences()
     seen, lines = set(), []
     while len(lines) < count:
-        parts = [rng.choice(EXAM)] if rng.random() < 0.5 else []
-        for _ in range(rng.randint(2, 4)):
+        parts = [rng.choice(EXAM)] if rng.random() < 0.3 else []
+        for _ in range(rng.randint(1, 2)):
             parts.append(rng.choice(PATTERNS).format(
                 t=rng.choice(terms), t2=rng.choice(terms), n=rng.choice(NUM),
                 s=rng.choice(SIDE), r=rng.choice(REGION)))
-        if rng.random() < 0.6:
+        if rng.random() < 0.4:
             parts.append(rng.choice(IMPRESSION).format(t=rng.choice(terms), t2=rng.choice(terms)))
         parts = [p for p in parts if p.lower() not in banned]
+        while len(" ".join(parts).split()) > MAX_WORDS and len(parts) > 1:
+            parts.pop()
         text = " ".join(parts)
-        if len(text.split()) >= 8 and text not in seen:
+        if 8 <= len(text.split()) <= MAX_WORDS and text not in seen:
             seen.add(text)
             lines.append(text)
     return lines
