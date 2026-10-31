@@ -18,3 +18,11 @@
 - verdict: not adopted. Beats stock at the same precision (int8) everywhere, but the app now runs stock at fp32, and in noise fp32 stock still wins (16.35% vs 17.17% term error). Only int8 was exported; the fp32 export is v3.
 
 Load with: onnx_asr.load_model('nemo-conformer-tdt', r'C:\Users\Shaf\Downloads\vibe-code-projs\radio-dictate\experiments\remote-gpu\models\parakeet-rad-v2\model', quantization='int8')
+
+## Weights
+
+Archived 2026-10-31 to the private Kaggle dataset `shafeinhashmi/rd-model-archive` (superseded; removed locally to save disk). Restore into this folder:
+
+    kaggle datasets download shafeinhashmi/rd-model-archive -p . --unzip
+
+then keep `parakeet-rad-v2/model/`. Upload checked: sizes match, encoder sha256 matched on download.
