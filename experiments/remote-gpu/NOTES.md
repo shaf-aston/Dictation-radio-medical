@@ -91,6 +91,7 @@ Two halves, kept apart. Run commands, file-by-file flow and glossary: [CORE-FLOW
 - App: `apply_field_strength` (after the dictionary stage: "3-tisla" only becomes "3-tesla" there) and the same mishearing list inside `apply_measurement_standardisation` (before the dictionary turns "disla" into "disl") -> "3 T". Its mishearing list came from the first protocol set, so "+fix" field-strength numbers flatter every model equally.
 - Disk (2026-10-31): v1, v2, small-en v1/v2 weights archived to private Kaggle dataset `shafeinhashmi/rd-model-archive` (restore line in each README). Installed models live only in `data/models/fine_tuned/` (`install_model.py` packs, checks identical output, removes the experiment copy).
 - v7 `parakeet-rad-v7` (2026-10-31): v6 with the fixed data. Against v4: protocol hand WER +fix -2.59 (range -4.60 to -0.80), "1.5 T" exact 54% -> 92%; eka WER +fix +0.96 (+0.04 to +1.94), worse on real voices. Not adopted. Table: its README.
+- v8 `parakeet-rad-v8` (2026-11-06): v4's noise mix + v7's protocol data + long PARROT/Hani89 clips cut at sentence ends (25,101 clips, 53 h). Against v4: protocol hand WER +fix -3.18 (range -5.18 to -1.44), parrot -0.84, eka_noise -1.35; eka and libri tie; worse nowhere. **Adopted**, installed and selected as the voice model. Kaggle now decodes every local test set greedy and with hotwords, so scoring a new version locally takes seconds. Table: its README.
 
 ## How to run a version (checklist)
 1. `python data/build_train.py 1500` then `python data/audit_train.py` (must pass).
