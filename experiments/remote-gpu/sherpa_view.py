@@ -1,13 +1,14 @@
 """A tuned Parakeet folder (onnx-asr layout) rebuilt in the layout sherpa-onnx loads, so the
 radiology hotwords (sherpa's beam search) can run on a tuned model, not only on stock.
 
-    python experiments/remote-gpu/sherpa_view.py <model folder>     # prints the view folder
+    python experiments/remote-gpu/sherpa_view.py <model folder> <view folder>
 
 onnx-asr keeps the prediction network and the joint in one file (decoder_joint-model.onnx);
 sherpa wants them apart (decoder.onnx, joiner.onnx), cut where NeMo's own separate export
 cuts them: the decoder hands the joint its output as [batch, 640, steps]. The encoder is
 the same network: only sherpa's metadata is added, and its weight files are hard-linked,
-not copied. Output goes to cache_dir()/sherpa/<name>/ (derived, safe to delete).
+not copied. compare.py puts the view in cache_dir()/sherpa/<name>/ (derived, safe to delete); the
+Kaggle kernel ships this file with the training data and builds its view in /tmp.
 """
 import os
 import shutil
@@ -28,13 +29,8 @@ PRED_OUT = "/joint/Transpose_1_output_0"  # prediction-network output as the joi
 FILES = ("encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt")
 
 
-def build(src: Path, dest: Path | None = None) -> Path:
-    src = Path(src)
-    if dest is None:  # the Kaggle kernel passes its own; it has no src/
-        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-        from src.core.paths import cache_dir
-        # experiments keep a version's weights in <version>/model, the app in fine_tuned/<version>
-        dest = cache_dir() / "sherpa" / (src.parent.name if src.name == "model" else src.name)
+def build(src: Path, dest: Path) -> Path:
+    """The view of the model in `src`, built in `dest` unless it is already there; returns `dest`."""
     if all((dest / f).exists() for f in FILES):
         return dest
     dest.mkdir(parents=True, exist_ok=True)
@@ -73,4 +69,4 @@ def build(src: Path, dest: Path | None = None) -> Path:
 
 
 if __name__ == "__main__":
-    print(build(Path(sys.argv[1])))
+    print(build(Path(sys.argv[1]), Path(sys.argv[2])))

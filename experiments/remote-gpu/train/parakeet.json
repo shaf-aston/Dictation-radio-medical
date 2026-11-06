@@ -82,5 +82,8 @@
   "hotword_score": 1.0,
   "hotword_beam": 4,
   "view_check_clips": 40,
-  "cut_lead_sec": 0.1
+  "cut_lead_sec": 0.1,
+  "eval_max_duration_sec": 30,
+  "score_batch": 8,
+  "parrot_repo": "ysdede/parrot-radiology-asr-en"
 }

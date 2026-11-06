@@ -1,4 +1,4 @@
-"""Build the local `protocol` eval set: python data/build_protocol_test.py [count]
+"""Build the local `protocol` eval set: python data/build_protocol_eval.py [count]
 
 MRI protocol dictation spoken with symbols ("right slash left", "open bracket ...
 close bracket", "one point five tesla"), read only by settings.json's held-out
@@ -20,13 +20,10 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pyttsx3  # noqa: E402
-from config import MODELS, REPO, SETTINGS  # noqa: E402
+from config import MODELS, SETTINGS  # noqa: E402
 from gen_text import _protocol_line, to_target  # noqa: E402
-
-sys.path.insert(0, str(REPO))
 from scripts.eval.corpus import Clip, audio_duration, write_manifest  # noqa: E402
 from src.core.paths import eval_set_dir  # noqa: E402
 
@@ -207,4 +204,4 @@ def main(count: int) -> None:
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]) if len(sys.argv) > 1 else 150)
+    main(int(sys.argv[1]) if len(sys.argv) > 1 else 250)

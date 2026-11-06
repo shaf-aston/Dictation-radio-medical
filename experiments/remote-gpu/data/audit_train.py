@@ -1,19 +1,22 @@
 """Check the synthetic training set BEFORE uploading: python data/audit_train.py
 
 Applies the kernel's own keep rules (duration window from parakeet.json, and
-usable() copied out of parakeet_kernel.py by AST, so they cannot drift) and
-counts, per feature, how many clips were generated and how many will train.
-Exits non-zero if any feature ends up with fewer than MIN_KEPT clips.
+text_rules.usable, the same file the kernel imports) and counts, per feature,
+how many clips were generated and how many will train. Exits non-zero if any
+feature except "number WORDS" (dropped by design) ends up with fewer than
+MIN_KEPT clips.
 """
-import ast
 import json
 import re
+import sys
 import wave
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(HERE))
+from text_rules import usable  # noqa: E402
+
 MANIFEST = HERE / "data" / "train" / "manifest.jsonl"
-KERNEL = HERE / "train" / "parakeet_kernel.py"
 CFG = json.loads((HERE / "train" / "parakeet.json").read_text())
 MIN_KEPT = 30
 
@@ -29,25 +32,12 @@ FEATURES = {
 }
 
 
-def kernel_usable():
-    """Return the kernel's usable() with the module-level names it depends on."""
-    tree = ast.parse(KERNEL.read_text(encoding="utf-8"))
-    keep = [n for n in tree.body
-            if (isinstance(n, ast.FunctionDef) and n.name == "usable")
-            or (isinstance(n, ast.Assign) and any(getattr(t, "id", "") in {"NUMBER_WORDS", "ODD_CHARS"}
-                                                  for t in n.targets))]
-    ns = {"re": re}
-    exec(compile(ast.Module(body=keep, type_ignores=[]), str(KERNEL), "exec"), ns)
-    return ns["usable"]
-
-
 def duration(path: Path) -> float:
     with wave.open(str(path)) as w:
         return w.getnframes() / w.getframerate()
 
 
 def audit(manifest: Path = MANIFEST) -> dict:
-    usable = kernel_usable()
     lo, hi = CFG["min_duration_sec"], CFG["max_duration_sec"]
     stats = {k: {"made": 0, "kept": 0} for k in ["ALL", *FEATURES]}
     reasons = {"too long": 0, "too short": 0, "text rule": 0}

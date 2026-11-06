@@ -1,8 +1,9 @@
 """Write many radiology-style dictation lines (no patient data, all invented).
 
 Vocabulary comes from the app's own lexicon so the model hears every term the
-correction pipeline claims to protect. Lines equal to a sentence in the test
-reports are dropped, so the test set stays unseen.
+correction pipeline claims to protect. A share of lines (protocol_share) is MRI
+protocol wording with spoken symbols. Lines equal to a sentence in the eval
+reports are dropped, so the eval set stays unseen.
 """
 import random
 import re
@@ -60,7 +61,7 @@ PATTERNS = [
 ]
 
 
-# --- v6: MRI protocol wording and spoken symbols -----------------------------
+# --- MRI protocol wording and spoken symbols -----------------------------
 # Lines are written the way they are SPOKEN ("slash", "open bracket", "one point
 # five tesla"): the model learns to hear the words, and the app's post-processing
 # turns them into "/", "( )" and "1.5 T". Never write the symbols here, or the

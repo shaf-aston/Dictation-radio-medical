@@ -44,11 +44,11 @@ def push_dataset(pack: Path, name: str = DATASET) -> None:
     # "ready" right after a version describes the PREVIOUS version, so wait a
     # while before believing it. The kernel also checks the manifest's hash
     # (cfg["data_sha256"]) and stops if Kaggle mounts stale data anyway.
-    time.sleep(180)
-    for _ in range(40):
+    time.sleep(SETTINGS["dataset_ready_wait_sec"])
+    for _ in range(SETTINGS["dataset_polls"]):
         if "ready" in kaggle("datasets", "status", f"{USER}/{name}", check=False).lower():
             return
-        time.sleep(15)
+        time.sleep(SETTINGS["dataset_poll_sec"])
     raise SystemExit("dataset never became ready")
 
 

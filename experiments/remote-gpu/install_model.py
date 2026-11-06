@@ -1,4 +1,4 @@
-"""Install a tuned Parakeet into the app: python install_model.py parakeet-rad-v6
+"""Install a tuned Parakeet into the app: python install_model.py <name> [--remove-source]
 
 Packs models/<name>/model/ (one file per tensor, as exported) into the app's
 layout (encoder-model.onnx + one encoder-model.onnx.data) at
@@ -15,11 +15,9 @@ import argparse
 import json
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 from config import MODELS, REPO  # noqa: E402
 
 CHECK = r"""

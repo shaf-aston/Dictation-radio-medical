@@ -12,27 +12,27 @@ Everything lives in this folder. Delete the folder = experiment gone. Nothing in
 ## Accounts connected (all free, set up 2026-09-21 in the studio project)
 | Service | Key in .env | What it gives | Tested |
 |---|---|---|---|
-| Kaggle | KAGGLE_API_TOKEN | free GPU notebooks ~30h/week, batch (minutes to start, not live). CLI: `kaggle kernels push/status/output` | auth OK, no job run |
+| Kaggle | KAGGLE_API_TOKEN | free GPU notebooks ~30h/week, batch (minutes to start, not live). CLI: `kaggle kernels push/status/output` | in use: every training run since 2026-09-21 |
 | Cloudflare | CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN (Workers AI scope) | REST AI, 10k free units/day, hard stop no bill. Has Whisper models in its catalogue (unverified here) | FLUX image call works; Whisper not tried |
 | Lightning.ai | LIGHTNING_API_KEY (sk-lit-…) | Model APIs, ~15 free credits then pay-as-you-go. Card need unconfirmed | key not yet tested |
 
-## Things worth testing (each separate, each optional)
-1. Cloudflare Whisper speech-to-text: latency and accuracy vs local faster-whisper on non-patient radiology-style audio.
+## Things worth testing (each separate, each optional; not pursued: Kaggle fine-tuning took over)
+1. Cloudflare Whisper ASR: latency and accuracy vs local faster-whisper on non-patient radiology-style audio.
 2. Kaggle GPU batch: run a large Whisper model offline over recorded audio to build a "gold" transcript for measuring the local engine's accuracy.
 3. Lightning Model APIs: only if a text model there beats local Ollama at cleaning up report text. Watch the credit balance.
 
 ## Measure before adopting
 Same audio through local vs remote: word error rate, seconds per audio minute, failures. Live dictation needs answers in well under a second, so remote is unlikely to fit live use; batch/accuracy checking is the realistic use.
 
-## How to plug in later (keeps it swappable)
-Add one engine file behind the existing ASR engine seam (see `src/dictation/asr/engines/`, `fallback_engine.py`), default off in config. Failure must fall back to the local engine, so the main path never depends on this.
+## How a version plugs into the app
+Done (2026-10-24): `install_model.py` packs a version into `data/models/fine_tuned/`, and the `parakeet_model` setting ("Voice model") picks it. The app's own engines load it; nothing in `src/` imports this folder.
 
 ## Housekeeping
 - Keys were pasted into a chat: rotate them when the experiment ends.
 - Old Cloudflare token "First" (API Tokens Write scope) should be deleted in the Cloudflare dashboard.
 
 ## Fine-tune track (Shaf, 2026-09-21)
-Goal: train a radiology-tuned speech model on free cloud GPU, then test THAT model easily and separately from the app.
+Goal: train a radiology-tuned ASR model on free cloud GPU, then test THAT model easily and separately from the app.
 - Train: Kaggle GPU notebook (fine-tune a Whisper size on non-patient/synthetic radiology audio + transcripts). Output = a model folder, downloaded with `kaggle kernels output`.
 - Keep versions separate: `models/<name>-v1/`, `v2/` … each with a small `README` (base model, data used, date, measured error rate). Never overwrite a version. The stock local model stays the default.
 - Easy test: one script `compare.py` runs the same audio through stock vs each tuned version and prints word error rate + seconds. No app changes needed.
@@ -42,7 +42,7 @@ Goal: train a radiology-tuned speech model on free cloud GPU, then test THAT mod
 ## Plan and how to run (built 2026-09-21)
 Two halves, kept apart. Run commands, file-by-file flow and glossary: [CORE-FLOW.md](CORE-FLOW.md).
 - **Training side** (free Kaggle GPU, 2x T4, internet on, no card): synthetic radiology lines -> spoken by Windows voices (one held out) -> trained on Kaggle -> saved as a NEW `models/<name>-vN/`. Knobs live in `train/<engine>.json` and `settings.json`.
-- **Inference side** (no app change): the app's `FasterWhisperEngine(model_path=...)` loads any `models/<name>-vN/model`. `compare.py` scores stock vs every version on the same audio.
+- **Inference side** (no app change): the app's own engines load a version (`ParakeetEngine` greedy, `ParakeetHotwordEngine` with hotwords via `sherpa_view.py`; `FasterWhisperEngine` for Whisper versions). `compare.py` scores stock vs every version on the same audio.
 - **Rules:** synthetic or own-voice non-patient audio only. Main app untouched until a version wins on unseen-voice WER AND term error without slowing down. Then: one optional setting for a model path, default off.
 - **Known limits:** training lines are random term slots, so some are medically odd; one TTS voice family can mislead. Real recordings of Shaf reading non-patient scripts are the strongest next data.
 
@@ -87,14 +87,17 @@ Two halves, kept apart. Run commands, file-by-file flow and glossary: [CORE-FLOW
   - **Corrected after review (2026-10-31):** the first protocol result (WER +fix 9.72 vs v5 13.22, term err 3.24 vs 7.13) came from template wording v6 trained on, and 72% of its term words were just sagittal/axial/coronal. On the rebuilt set's 100 hand-written lines (wording no model trained on), v6 vs v4: WER +fix -0.71 (range -2.02 to +0.57, a tie), raw WER +2.00 (+0.46 to +3.60, worse), term err +1.78 (crosses zero). Its one real gain on unseen wording: brackets exact 77% vs 62%. On the 150 generated lines it wins (WER +fix -2.96, range -4.23 to -1.74): that is trained wording in a new voice, not generalisation.
   - **Why v6 learned little:** the kernel's `usable()` drops any label with number words and clips >15 s; that removed 973 of 1500 synthetic clips incl. every Tesla line. `data/audit_train.py` now replays those rules locally (and exits non-zero if a feature has <30 clips). Fixed in `gen_text.py`: one protocol sentence per clip, <=26 words, labels in digits as Parakeet writes them (`to_target`; the voice still says the words). Result 1500/1500 kept.
   - **Stale-data trap:** Kaggle mounted the previous dataset version and v6's first run came back identical to v5. `run_train.py` now sends the manifest sha256 and the kernel exits on mismatch.
-- `protocol` eval set (rebuilt 2026-10-31 after review; manifest sha256 starts 479327B6A048666C, keep it fixed): `data/build_protocol_test.py 250`, 100 hand-written lines (real-report wording, not the templates) + 150 template lines with seed 4242, none sharing a normalised sentence with any training set, held-out voice only (one TTS voice: ranges are within this set, not over speakers). **Judge on `--by-source` "hand"**; "gen" = trained wording in a new voice. WER cannot see "/" or "( )": `--features` scores exact slash, bracket text, "1.5 T", T1/T2 after correction. Term error here is mostly sequence names (sagittal/axial/coronal), so it says little about medical vocabulary: use eka for that. "WER unseen" is only meaningful on the tts set.
+- `protocol` eval set (rebuilt 2026-10-31 after review; manifest sha256 starts 479327B6A048666C, keep it fixed): `data/build_protocol_eval.py 250`, 100 hand-written lines (real-report wording, not the templates) + 150 template lines with seed 4242, none sharing a normalised sentence with any training set, held-out voice only (one TTS voice: ranges are within this set, not over speakers). **Judge on `--by-source` "hand"**; "gen" = trained wording in a new voice. WER cannot see "/" or "( )": `--features` scores exact slash, bracket text, "1.5 T", T1/T2 after correction. Term error here is mostly sequence names (sagittal/axial/coronal), so it says little about medical vocabulary: use eka for that. "WER unseen" is only meaningful on the tts set.
 - App: `apply_field_strength` (after the dictionary stage: "3-tisla" only becomes "3-tesla" there) and the same mishearing list inside `apply_measurement_standardisation` (before the dictionary turns "disla" into "disl") -> "3 T". Its mishearing list came from the first protocol set, so "+fix" field-strength numbers flatter every model equally.
+- Whisper training (`train/whisper_kernel.py`, `whisper.json`) removed 2026-11-06: unused since small-en-rad-v2, Parakeet beat it on every measure; restore from git history (commit 8ead131) if ever needed. compare.py still scores `stock-whisper` and restored Whisper versions.
 - Disk (2026-10-31): v1, v2, small-en v1/v2 weights archived to private Kaggle dataset `shafeinhashmi/rd-model-archive` (restore line in each README). Installed models live only in `data/models/fine_tuned/` (`install_model.py` packs, checks identical output, removes the experiment copy).
 - v7 `parakeet-rad-v7` (2026-10-31): v6 with the fixed data. Against v4: protocol hand WER +fix -2.59 (range -4.60 to -0.80), "1.5 T" exact 54% -> 92%; eka WER +fix +0.96 (+0.04 to +1.94), worse on real voices. Not adopted. Table: its README.
-- v8 `parakeet-rad-v8` (2026-11-06): v4's noise mix + v7's protocol data + long PARROT/Hani89 clips cut at sentence ends (25,101 clips, 53 h). Against v4: protocol hand WER +fix -3.18 (range -5.18 to -1.44), parrot -0.84, eka_noise -1.35; eka and libri tie; worse nowhere. **Adopted**, installed and selected as the voice model. Kaggle now decodes every local test set greedy and with hotwords, so scoring a new version locally takes seconds. Table: its README.
+- v8 `parakeet-rad-v8` (2026-11-06): v4's noise mix + v7's protocol data + long PARROT/Hani89 clips cut at sentence ends (25,101 clips, 53 h). Against v4: protocol hand WER +fix -3.18 (range -5.18 to -1.44), parrot -0.84, eka_noise -1.35; eka and libri tie; worse nowhere. **Adopted**, installed and selected as the voice model. Kaggle now decodes every local eval set greedy and with hotwords, so scoring a new version locally takes seconds. Table: its README.
 
 ## How to run a version (checklist)
 1. `python data/build_train.py 1500` then `python data/audit_train.py` (must pass).
-2. `python train/run_train.py --engine parakeet --name parakeet-rad --note "..."` (~3.5 h on Kaggle T4; saves `models/parakeet-rad-vN`). If the download step fails, the output stays on Kaggle: rerun `kaggle_io.fetch_output` + `run_train.save_version`.
-3. `compare.py --set protocol --features --by-source` and `--set eka`, with `--paired <old> <new>`; a change counts only if its 95% range misses zero on protocol "hand" or eka (real voices). Slow on this PC (~12 min per model on protocol): pass only the models you need with `--only`.
-4. Winner: `python install_model.py <name> --remove-source`, pick it under Voice model. Weights never go in git (gitignored); only README / train_log / manifests.
+2. Eval sets, only when one changes: `python data/build_protocol_eval.py 250`, `python data/build_parrot_eval.py models/<adopted>/train_texts.txt`, then `python data/pack_eval.py` (uploads them, with the hotword list and bpe.vocab of that moment, for the kernel to decode).
+3. `python train/run_train.py --engine parakeet --name parakeet-rad --smoke` (about 30 min; saves nothing, must pass).
+4. `python train/run_train.py --engine parakeet --name parakeet-rad --note "..."` (~4 h on Kaggle T4; saves `models/parakeet-rad-vN` and files Kaggle's decodes into decode_store). If the download step fails, the output stays on Kaggle: `python -c "import sys; sys.path[:0]=['.','train']; from run_train import *; cfg=json.load(open('train/parakeet.json')); cfg.pop('smoke'); fetch_output(OUT, cfg); save_version(next_version('parakeet-rad'), 'parakeet', cfg, <clips>, HERE/'data'/'train', '<note>')"`.
+5. `python compare.py --set protocol --features --by-source --only <old> <new> <new>+hw --paired <old> <new>`, and the same with `--set eka` (and parrot, eka_noise, libri); a change counts only if its 95% range misses zero on protocol "hand" or eka (real voices). Seconds, from the stored decodes; `--fresh` decodes on this PC instead (~12 min per model on protocol).
+6. Winner: `python install_model.py <name> --remove-source`, pick it under Voice model. Weights never go in git (gitignored); only README / train_log / manifests.

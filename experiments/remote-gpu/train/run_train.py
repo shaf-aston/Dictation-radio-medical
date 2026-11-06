@@ -22,14 +22,20 @@ from kaggle_io import fetch_output, push_dataset, run_kernel  # noqa: E402
 from pack import PACK, pack_data  # noqa: E402
 
 OUT = HERE / "train" / "_out"
+# The modules each kernel imports. Kaggle runs one script, so they ride along with the training data.
+KERNEL_FILES = {
+    "parakeet": [HERE / "text_rules.py", HERE / "sherpa_view.py", *(HERE / "train" / f for f in (
+        "sources.py", "long_clips.py", "augment.py", "export_onnx.py", "eval_decode.py"))],
+}
 LOAD_LINE = {
-    "whisper": "FasterWhisperEngine(model_path=r'{model}')",
     "parakeet": "onnx_asr.load_model('nemo-conformer-tdt', r'{model}', quantization={quantization!r})",
 }
+
+
 def check_smoke(log: dict, cfg: dict) -> None:
     """A smoke run learns almost nothing, so our export must match the published model, the trained model
     must match the untouched one at full precision, and the BatchNorm averages must not have moved.
-    The tuned int8 score is printed, not gated: rounding magnifies even a 1e-7 change on 24 clips."""
+    The tuned score at the export precision is printed, not gated: int8 rounding magnifies even a 1e-7 change on 24 clips."""
     if log.get("training", "finished") != "finished":
         raise SystemExit(f"smoke run failed: training {log['training']}")
     scores, gap = log.get("eval", {}), SETTINGS["smoke_max_wer_gap_pp"]
@@ -59,18 +65,16 @@ def next_version(name: str) -> Path:
 
 
 def file_decodes(dest: Path) -> None:
-    """The kernel's decodes of the local test sets go into compare.py's cache, greedy as <version>
-    and with hotwords as <version>+hw, so `compare.py --only <version>` scores them without decoding."""
-    from compare import decode_cache
+    """The kernel's decodes of the local eval sets go into decode_store, greedy as <version> and with
+    hotwords as <version>+hw, so `compare.py --only <version>` scores them without decoding."""
+    import decode_store
     if not (OUT / "decodes").is_dir():
         return
     shutil.move(str(OUT / "decodes"), dest / "decodes")
     for f in (dest / "decodes").glob("*.json"):
         d = json.loads(f.read_text(encoding="utf-8"))
         for kind, model in (("greedy", dest.name), ("hotwords", f"{dest.name}+hw")):
-            c = decode_cache(f.stem, model)
-            c.parent.mkdir(parents=True, exist_ok=True)
-            c.write_text(json.dumps({clip: [text, None] for clip, text in d[kind].items()}), encoding="utf-8")
+            decode_store.save(f.stem, model, {clip: [text, None] for clip, text in d[kind].items()})
 
 
 def save_version(dest: Path, engine: str, cfg: dict, clips: int, data: Path, note: str) -> None:
@@ -94,7 +98,7 @@ def save_version(dest: Path, engine: str, cfg: dict, clips: int, data: Path, not
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--engine", choices=sorted(LOAD_LINE), required=True)
+    ap.add_argument("--engine", choices=sorted(KERNEL_FILES), required=True)
     ap.add_argument("--name", required=True)
     ap.add_argument("--note", default="")
     ap.add_argument("--data", type=Path, default=HERE / "data" / "train")
@@ -110,12 +114,14 @@ def main() -> None:
     dest = next_version(a.name)
     clips = pack_data(a.data.resolve())
     print(f"packed {clips} clips -> {'smoke run' if a.smoke else dest.name}", flush=True)
-    # The kernel refuses to train unless the manifest it finds on Kaggle is this
-    # one. v6's first run trained on the previous dataset version, because the
-    # job started before Kaggle finished processing the new upload, and came
-    # back bit-identical to v5 without any error.
-    cfg["data_sha256"] = hashlib.sha256((PACK / "manifest.jsonl").read_bytes()).hexdigest()
-    shutil.copy(HERE / "sherpa_view.py", PACK / "sherpa_view.py")  # the kernel builds its hotword view with it
+    for f in KERNEL_FILES[a.engine]:
+        shutil.copy(f, PACK / f.name)
+    # The kernel refuses to train unless the manifest and modules it finds on Kaggle are these.
+    # v6's first run trained on the previous dataset version, because the job started before
+    # Kaggle finished processing the new upload, and came back bit-identical to v5 without any error.
+    cfg["kernel_files"] = [f.name for f in KERNEL_FILES[a.engine]]
+    cfg["data_sha256"] = hashlib.sha256(b"".join((PACK / n).read_bytes()
+                                                 for n in ["manifest.jsonl", *cfg["kernel_files"]])).hexdigest()
     push_dataset(PACK)
     run_kernel(a.engine, cfg)
     fetch_output(OUT, cfg)

@@ -15,5 +15,12 @@
     "parrot",
     "libri"
   ],
-  "view_check_max_word_gap": 0.1
+  "view_check_max_word_gap": 0.3,
+  "dataset_ready_wait_sec": 180,
+  "dataset_poll_sec": 15,
+  "dataset_polls": 40,
+  "public_speech_licences": [
+    "MIT",
+    "CC BY 4.0"
+  ]
 }

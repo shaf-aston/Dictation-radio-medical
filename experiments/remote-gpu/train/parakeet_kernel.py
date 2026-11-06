@@ -3,22 +3,23 @@
 Reads /kaggle/input/rd-train-data/{manifest.jsonl,audio.tar} (our synthetic radiology clips), the Kaggle
 medical-speech dataset, and five Hugging Face sets; settings come from train/parakeet.json.
 Writes /kaggle/working/model_onnx/ (onnx_asr.load_model("nemo-conformer-tdt", path, quantization=cfg["quantization"]))
-+ train_log.json, which also holds stock vs tuned error rates on test sets the model never trained on,
-+ train_texts.txt, every training line, so the local test sets can be leak-checked against it,
-+ decodes/<set>.json, the tuned model's raw text for every clip of the local test sets (rd-eval-sets), greedy
-  as the app's onnx-asr engine decodes and with radiology hotwords as its sherpa-onnx engine does.
++ train_log.json, which also holds stock vs tuned error rates on four held-out sets the model never trained on,
++ train_texts.txt, every training line, so the local eval sets can be leak-checked against it,
++ decodes/<set>.json, the tuned model's raw text for every clip of the local eval sets (eval_decode.py).
+
+This file is the run, step by step; the parts it calls ship beside the training data (run_train.py
+KERNEL_FILES): sources.py reads audio, long_clips.py cuts long clips, augment.py adds noisy copies,
+export_onnx.py writes the onnx-asr folder, eval_decode.py decodes the local eval sets, and text_rules.py
+holds the text rules the local scripts share.
 
 Training text keeps capitals and punctuation, because Parakeet writes them: a set without them would teach
 the model to stop. Rows with spelled-out numbers are dropped for the same reason.
 """
 import csv
 import hashlib
-import io
 import json
 import os
 import random
-import re
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -27,28 +28,32 @@ from pathlib import Path
 
 cfg = {}  # kaggle_io.run_kernel writes train/parakeet.json in here at push time
 
-# Fail loudly on a stale dataset version, before any paid GPU time: Kaggle can
+# Fail loudly on a stale dataset version (manifest and the shipped modules), before any paid GPU time: Kaggle can
 # start this job before it has finished processing a fresh upload, and then
 # mounts the previous one.
 DATA = next(p.parent for p in Path("/kaggle/input").rglob("manifest.jsonl")
             if (p.parent / "audio.tar").exists() or (p.parent / "audio").is_dir())
 _want = cfg.get("data_sha256")
-_got = hashlib.sha256((DATA / "manifest.jsonl").read_bytes()).hexdigest()
+_got = hashlib.sha256(b"".join((DATA / n).read_bytes()
+                              for n in ["manifest.jsonl", *cfg.get("kernel_files", [])])).hexdigest()
 if _want and _got != _want:
-    raise SystemExit(f"stale training data: manifest sha256 {_got[:12]} != uploaded {_want[:12]}")
+    raise SystemExit(f"stale training data: manifest + modules sha256 {_got[:12]} != uploaded {_want[:12]}")
 
 subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "-q", "onnxruntime"], check=False)
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", *cfg["pip"]], check=True)
 
-import numpy as np  # noqa: E402
-import pyarrow.parquet as pq  # noqa: E402
+sys.path.insert(0, str(DATA))  # the kernel's own modules ship flat beside manifest.jsonl
 import soundfile as sf  # noqa: E402
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")  # less memory lost to gaps
 import torch  # noqa: E402
-from huggingface_hub import HfApi, hf_hub_download  # noqa: E402
-from scipy.signal import resample_poly  # noqa: E402
 import onnx_asr  # noqa: E402
 import onnxruntime as ort  # noqa: E402
+
+from augment import add_noisy_copies  # noqa: E402
+from export_onnx import copy_precision, export  # noqa: E402
+from long_clips import Cutter  # noqa: E402
+from sources import SR, column, decode, eval_set, hf_files, parallel, parquet_rows, read_clip  # noqa: E402
+from text_rules import leak_report, normalise, parrot_text, sentence_case, sentences, usable  # noqa: E402
 
 # Scoring on the GPU: on the CPU it took 54 of v7's 213 minutes. torch has loaded the CUDA libraries
 # onnxruntime needs; preload_dlls (newer builds) points it at them.
@@ -59,7 +64,6 @@ PROVIDERS = [(p, {"arena_extend_strategy": "kSameAsRequested"}) if p == "CUDAExe
              for p in ("CUDAExecutionProvider", "CPUExecutionProvider") if p in ort.get_available_providers()]
 print("onnxruntime providers", PROVIDERS, flush=True)
 
-SR = 16000
 OUT = Path("/kaggle/working")
 TMP = Path("/tmp/rd")
 CLIPS = TMP / "clips"
@@ -74,65 +78,6 @@ def save_log(**kw) -> None:
     log.update(kw, elapsed_min=round((time.time() - started) / 60, 1))
     (OUT / "train_log.json").write_text(json.dumps(log, indent=2))
     print(json.dumps(kw)[:2000], flush=True)
-
-
-# ---------- audio and text ----------
-def decode(b: bytes) -> np.ndarray:
-    """Any encoded clip (wav/flac/mp3) -> 16 kHz mono float32."""
-    try:
-        a, sr = sf.read(io.BytesIO(b), dtype="float32")
-    except Exception:
-        r = subprocess.run(["ffmpeg", "-v", "error", "-i", "pipe:0", "-f", "f32le", "-ac", "1", "-ar", str(SR),
-                            "pipe:1"], input=b, capture_output=True, check=True)
-        return np.frombuffer(r.stdout, np.float32)
-    if a.ndim > 1:
-        a = a.mean(axis=1)
-    return a if sr == SR else resample_poly(a, SR, sr).astype(np.float32)
-
-
-NUMBER_WORDS = re.compile(r"\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|"
-                          r"fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|"
-                          r"eighty|ninety|hundred|thousand|million|percent)\b", re.I)
-ODD_CHARS = re.compile(r"[^A-Za-z0-9' ,.;:?!()/%-]")  # markup, other scripts, symbols: drop the row
-
-
-def usable(text: str) -> bool:
-    return len(text.split()) >= 3 and not NUMBER_WORDS.search(text) and not ODD_CHARS.search(text)
-
-
-def sentence_case(t: str) -> str:
-    """EdAcc and LibriSpeech are UPPERCASE (EdAcc with <LAUGH>-style tags): strip tags, sentence-case it."""
-    t = " ".join(re.sub(r"<[^>]*>", " ", t).split()).lower()
-    t = re.sub(r"\bi\b", "I", t)
-    return t[:1].upper() + t[1:]
-
-
-def parrot_text(t: str) -> str:
-    """PARROT marks line and paragraph breaks with the words NEWLINE and PARAGRAPH: drop them."""
-    return " ".join(re.sub(r"(NEWLINE|PARAGRAPH)", " ", t).split())
-
-
-def normalise(t: str) -> str:
-    """For scoring only: lowercase, no punctuation, so only the words are compared."""
-    return " ".join(re.sub(r"[^a-z0-9' ]", " ", t.lower()).split())
-
-
-def sentences(t: str) -> set:
-    """The sentences of four words or more, normalised (a decimal point does not end one)."""
-    return {s for s in (normalise(x) for x in re.split(r"(?<!\d)[.;:?!](?!\d)", t)) if len(s.split()) >= 4}
-
-
-def runs(t: str, n: int = 4) -> set:
-    """Every run of `n` words in a row, normalised."""
-    w = normalise(t).split()
-    return {" ".join(w[i:i + n]) for i in range(len(w) - n + 1)}
-
-
-def column(names: list, *wanted: str) -> str:
-    for w in wanted:
-        if w in names:
-            return w
-    raise SystemExit(f"none of {wanted} in columns {names}")
 
 
 # ---------- data ----------
@@ -164,126 +109,24 @@ def add_train(source: str, items) -> None:
         print(f"{source} long clips cut:", log["sources"][f"{source}_split"], flush=True)
 
 
-# ---------- long clips: cut at sentence ends ----------
-# PARROT's median piece is 22.7 s and 83% are over max_duration_sec, so v4-v7 trained on 1 in 6 of its
-# reports. The stock model times each word; a clip is cut just before a sentence's first word, wherever
-# that word and the one before it are both heard exactly as written (a cut elsewhere could split a word).
-# Each piece is decoded again and kept only if it starts and ends on its own text's first and last word.
-_aligner = []
-
-
-def aligner():
-    if not _aligner:
-        _aligner.append(onnx_asr.load_model(cfg["stock_onnx_model"], providers=PROVIDERS).with_timestamps())
-    return _aligner[0]
-
-
-def heard_words(res) -> list:
-    """(normalised word, start second) from a timed result; a piece starting with a space starts a word."""
-    words = []
-    for tok, t in zip(res.tokens or [], res.timestamps or []):
-        if tok.startswith((" ", "▁")) or not words:
-            words.append([tok, t])
-        else:
-            words[-1][0] += tok
-    return [(w, t) for tok, t in words for w in normalise(tok).split()[:1]]
-
-
-def cut_at_sentences(a: np.ndarray, text: str, split_log: dict):
-    import difflib
-    sents = [x for x in re.split(r"(?<=[.;:?!])\s+", text) if normalise(x)]
-    ref, first = [], []
-    for x in sents:
-        first.append(len(ref))
-        ref += normalise(x).split()
-    heard = heard_words(aligner().recognize(a, sample_rate=SR))
-    match = {}
-    for b in difflib.SequenceMatcher(None, ref, [w for w, _ in heard], autojunk=False).get_matching_blocks():
-        match.update({b.a + j: b.b + j for j in range(b.size)})
-    # sentence k can start a piece at this second (sentence 0 at the start of the clip)
-    starts = {0: 0.0, **{k: max(0.0, heard[match[i]][1] - cfg["cut_lead_sec"]) for k, i in enumerate(first)
-                         if k and i in match and i - 1 in match}}
-    bounds = sorted(starts) + [len(sents)]
-    k0 = 0
-    while k0 < len(sents):
-        # furthest boundary that keeps the piece within max_duration_sec
-        fits = [k for k in bounds if k > k0 and (starts.get(k, len(a) / SR) - starts[k0]) <= cfg["max_duration_sec"]]
-        if not fits:
-            split_log["no_cut_fits"] += 1
-            nxt = [k for k in bounds if k > k0 and k in starts]
-            if not nxt:
-                return
-            k0 = nxt[0]
-            continue
-        k1 = fits[-1]
-        t0, t1 = starts[k0], starts.get(k1, len(a) / SR)
-        piece, words = a[int(t0 * SR): int(t1 * SR)], " ".join(sents[k0:k1])
-        got = normalise(aligner().recognize(piece, sample_rate=SR).text).split()
-        want = normalise(words).split()
-        if got and got[0] == want[0] and got[-1] == want[-1]:
-            split_log["pieces"] += 1
-            yield piece, words
-        else:
-            split_log["edge_mismatch"] += 1
-        if k1 not in starts:
-            return
-        k0 = k1
+cutter = Cutter(lambda: onnx_asr.load_model(cfg["stock_onnx_model"], providers=PROVIDERS).with_timestamps(),
+                cfg["max_duration_sec"], cfg["cut_lead_sec"])
 
 
 def split_long(source: str, items):
-    """Clips within max_duration_sec pass through; longer ones are cut at sentence ends."""
-    split_log = log["sources"].setdefault(f"{source}_split", {"long": 0, "pieces": 0, "edge_mismatch": 0,
-                                                                "no_cut_fits": 0})
-    for a, text in items:
-        if len(a) / SR <= cfg["max_duration_sec"]:
-            yield a, text
-            continue
-        split_log["long"] += 1
-        yield from cut_at_sentences(a, text, split_log)
+    return cutter.split(items, log["sources"].setdefault(f"{source}_split", {}))
 
 
-def hf_files(repo: str, prefix: str, n: int) -> list:
-    """`n` parquet shards spread evenly across the repo's `prefix` shards (EdAcc groups shards by speaker)."""
-    names = sorted(f for f in HfApi().list_repo_files(repo, repo_type="dataset")
-                   if f.startswith(prefix) and f.endswith(".parquet"))
-    if not names:
-        raise SystemExit(f"no {prefix}*.parquet in {repo}")
-    pick = names[:: max(1, len(names) // n)][:n]
-    return [hf_hub_download(repo, f, repo_type="dataset", local_dir=TMP / "hf") for f in pick]
+def hf(repo: str, prefix: str, n: int) -> list:
+    return hf_files(repo, prefix, n, TMP / "hf")
 
 
-def parquet_rows(files: list, text_cols: tuple, audio_col: str = "audio"):
-    """Yields (audio bytes, text) from parquet shards, shuffled within each shard."""
-    for f in files:
-        pf = pq.ParquetFile(f)
-        tcol = column(pf.schema_arrow.names, *text_cols)
-        rows = pf.read(columns=[tcol, audio_col]).to_pylist()
-        rng.shuffle(rows)
-        for r in rows:
-            a = r[audio_col]
-            yield (a["bytes"] if isinstance(a, dict) else a), r[tcol]
+def rows_of(files: list, *text_cols: str):
+    return parquet_rows(files, text_cols, rng)
 
 
-def read_clip(path: str) -> np.ndarray:
-    return decode(Path(path).read_bytes())
-
-
-def parallel(fn, items):
-    """fn over items on every CPU core, results in order."""
-    from concurrent.futures import ProcessPoolExecutor
-    with ProcessPoolExecutor(os.cpu_count()) as ex:
-        yield from ex.map(fn, items, chunksize=16)
-
-
-def eval_set(rows) -> list:
-    out = []
-    for b, text in rows:
-        a = decode(b)
-        if normalise(text) and cfg["min_duration_sec"] <= len(a) / SR <= 30:
-            out.append((a, text))
-        if len(out) >= cfg["eval_clips_per_set"]:
-            break
-    return out
+def held_out(rows) -> list:
+    return eval_set(rows, cfg["min_duration_sec"], cfg["eval_max_duration_sec"], cfg["eval_clips_per_set"])
 
 
 # 1. Our synthetic radiology dictation (rd-train-data).
@@ -306,35 +149,34 @@ held = [r for r in rows if wavs[r[fcol]].parent.name == "validate"]
 train_med = [r for r in rows if wavs[r[fcol]].parent.name != "validate"]
 add_train("kaggle_medical", zip(parallel(read_clip, [str(wavs[r[fcol]]) for r in train_med]),
                                 (r[pcol].strip() for r in train_med)))
-evals = {"kaggle_medical_validate": eval_set((wavs[r[fcol]].read_bytes(), r[pcol]) for r in held)}
+evals = {"kaggle_medical_validate": held_out((wavs[r[fcol]].read_bytes(), r[pcol]) for r in held)}
 
 # 3. EdAcc: real accented English conversation (validation to train, test held out).
 add_train("edacc", ((decode(b), sentence_case(t)) for b, t in
-                    parquet_rows(hf_files("edinburghcstr/edacc", "data/validation-", cfg["edacc_train_shards"]),
-                                 ("text",))))
-evals["edacc_test"] = eval_set((b, sentence_case(t)) for b, t in parquet_rows(
-    hf_files("edinburghcstr/edacc", "data/test-", cfg["edacc_eval_shards"]), ("text",)))
+                    rows_of(hf("edinburghcstr/edacc", "data/validation-", cfg["edacc_train_shards"]), "text")))
+evals["edacc_test"] = held_out((b, sentence_case(t)) for b, t in rows_of(
+    hf("edinburghcstr/edacc", "data/test-", cfg["edacc_eval_shards"]), "text"))
 
-# 4. Hani89: synthetic medical speech, long clips, so only the short ones fit.
-add_train("hani89", split_long("hani89", ((decode(b), t.strip()) for b, t in parquet_rows(
-    hf_files("Hani89/Synthetic-Medical-Speech-Dataset", "data/train-", cfg["hani89_shards"]), ("text",)))))
+# 4. Hani89: synthetic medical speech, long clips, cut at sentence ends.
+add_train("hani89", split_long("hani89", ((decode(b), t.strip()) for b, t in rows_of(
+    hf("Hani89/Synthetic-Medical-Speech-Dataset", "data/train-", cfg["hani89_shards"]), "text"))))
 
-# 5. Eka Care: real Indian-accented medical speech. Test only, never trained on.
-evals["ekacare_en"] = eval_set(parquet_rows(
-    hf_files("ekacare/eka-medical-asr-evaluation-dataset", "en/", cfg["ekacare_eval_shards"]),
-    ("text", "transcription", "sentence")))
+# 5. Eka Care: real Indian-accented medical speech. Eval only, never trained on.
+evals["ekacare_en"] = held_out(rows_of(
+    hf("ekacare/eka-medical-asr-evaluation-dataset", "en/", cfg["ekacare_eval_shards"]),
+    "text", "transcription", "sentence"))
 
 # 6. LibriSpeech train-clean-100: everyday read English, so the model keeps normal speech (v3 lost a little).
 #    The local libri check uses test-clean: different speakers, never trained on.
-add_train("librispeech", ((decode(b), sentence_case(t)) for b, t in parquet_rows(
-    hf_files("openslr/librispeech_asr", "clean/train.100/", cfg["libri_train_shards"]), ("text",))))
+add_train("librispeech", ((decode(b), sentence_case(t)) for b, t in rows_of(
+    hf("openslr/librispeech_asr", "clean/train.100/", cfg["libri_train_shards"]), "text")))
 
 # 7. PARROT: radiology reports written by radiologists (MSK included), read by Kokoro TTS voices and cut at
-#    pauses into pieces under 30 s (only those up to max_duration_sec are kept). Train split to train.
+#    pauses into pieces under 30 s, then at sentence ends to fit max_duration_sec. Train split to train.
 #    Licence CC-BY-NC-SA 4.0: a model trained on it is for non-commercial use only.
-PARROT = "ysdede/parrot-radiology-asr-en"
-add_train("parrot", split_long("parrot", ((decode(b), parrot_text(t)) for b, t in parquet_rows(
-    hf_files(PARROT, "data/train-", cfg["parrot_train_shards"]), ("transcription",)))))
+add_train("parrot", split_long("parrot", ((decode(b), parrot_text(t)) for b, t in rows_of(
+    hf(cfg["parrot_repo"], "data/train-", cfg["parrot_train_shards"]), "transcription"))))
+cutter.free()  # every long clip is cut: give the aligner's GPU memory back before scoring and training
 
 # PARROT's test split is a random cut of the same reports' pieces, not a split by report, and reports share
 # stock sentences ("No free fluid."). So a test piece is only scored if none of its sentences is a training line's.
@@ -343,7 +185,7 @@ parrot_seen = {"looked_at": 0, "shares_a_training_sentence": 0}
 
 
 def parrot_test_rows():
-    for b, t in parquet_rows(hf_files(PARROT, "data/test-", 1), ("transcription",)):
+    for b, t in rows_of(hf(cfg["parrot_repo"], "data/test-", 1), "transcription"):
         t = parrot_text(t)
         parrot_seen["looked_at"] += 1
         if sentences(t) & train_sentences:
@@ -352,71 +194,17 @@ def parrot_test_rows():
         yield b, t
 
 
-evals["parrot_test"] = eval_set(parrot_test_rows())
+evals["parrot_test"] = held_out(parrot_test_rows())
 log["sources"]["parrot_test"] = parrot_seen
 
+# 8. Noisy copies of a share of every source.
+log["sources"].update(add_noisy_copies(train_rows, cfg, rng, TMP, CLIPS))
 
-def real_noises_and_rooms() -> tuple:
-    """OpenSLR 28 (Apache 2.0): recorded noises, and real room echoes (impulse responses); channels are averaged by decode()."""
-    z = TMP / "rirs_noises.zip"
-    subprocess.run(["curl", "-sSfL", "-o", str(z), cfg["rir_noise_url"]], check=True)
-    subprocess.run(["unzip", "-q", "-o", str(z), "-d", str(TMP)], check=True)
-    files = sorted((TMP / "RIRS_NOISES").rglob("*.wav"))
-    noises = [f for f in files if "pointsource_noises" in str(f) or ("real_rirs" in str(f) and "noise" in f.name)]
-    rooms = [f for f in files if "real_rirs" in str(f) and "rir" in f.name and "noise" not in f.name]
-    log["sources"]["openslr28"] = {"noises": len(noises), "rooms": len(rooms)}
-    return noises, rooms
-
-
-# 8. Noisy copies: babble (another clip), recorded noise, or steady hiss, at a random loudness gap; some
-#    also in a real room's echo. Not pink noise: the local noise test uses pink, so training on it would flatter it.
-def add_noisy_copies() -> None:
-    from scipy.signal import fftconvolve
-    np_rng = np.random.default_rng(cfg["seed"])
-    lo, hi = cfg["noise_snr_db"]
-    noises, rooms = real_noises_and_rooms()
-    picks = rng.sample(train_rows, int(len(train_rows) * cfg["noisy_copy_fraction"]))
-    for i, r in enumerate(picks):
-        a = sf.read(r["audio_filepath"], dtype="float32")[0]
-        if rng.random() < cfg["reverb_fraction"]:
-            room = decode(rng.choice(rooms).read_bytes())
-            a = fftconvolve(a, room / (np.max(np.abs(room)) + 1e-9))[: len(a)].astype(np.float32)
-        kind = rng.random()
-        if kind < 1 / 3:
-            noise = np.resize(sf.read(rng.choice(train_rows)["audio_filepath"], dtype="float32")[0], len(a))
-        elif kind < 2 / 3:
-            noise = np.resize(decode(rng.choice(noises).read_bytes()), len(a))
-        else:
-            noise = np_rng.standard_normal(len(a)).astype(np.float32)
-        gap = 10 ** (rng.uniform(lo, hi) / 20)
-        rms = lambda x: float(np.sqrt(np.mean(x ** 2))) + 1e-9  # noqa: E731
-        mixed = np.clip(a + noise * (rms(a) / rms(noise) / gap), -1, 1)
-        path = CLIPS / f"noisy_{i:05d}.flac"
-        sf.write(path, mixed, SR)
-        train_rows.append({**r, "audio_filepath": str(path), "source": r["source"] + "+noise"})
-    log["sources"]["noisy_copies"] = len(picks)
-
-
-add_noisy_copies()
-
-
-# Leak check: how much of each test set's text the model has seen in training. Whole phrases should be 0;
-# four-word runs show near-misses. Kaggle "validate" overlaps by design (same phrase list), so it is not used.
-def leak_check() -> None:
-    texts = sorted({r["text"] for r in train_rows})
-    (OUT / "train_texts.txt").write_text("\n".join(texts) + "\n", encoding="utf-8")
-    joined = "| " + " | ".join(normalise(t) for t in texts) + " |"  # spaces: match whole words only
-    train_runs = set().union(*(runs(t) for t in texts))
-    log["leak"] = {}
-    for name, items in evals.items():
-        phrases = {normalise(t) for _, t in items} - {""}
-        test_runs = set().union(*(runs(t) for _, t in items))
-        found = sorted(p for p in phrases if f" {p} " in joined)
-        log["leak"][name] = {"phrases": len(phrases), "phrases_in_training": len(found), "found": found[:20],
-                             "four_word_runs": len(test_runs), "four_word_runs_in_training": len(test_runs & train_runs)}
-
-
-leak_check()
+# Leak check: how much of each held-out set's text the model has seen in training.
+# Kaggle "validate" overlaps by design (same phrase list), so it is not used.
+texts = sorted({r["text"] for r in train_rows})
+(OUT / "train_texts.txt").write_text("\n".join(texts) + "\n", encoding="utf-8")
+log["leak"] = leak_report(texts, {name: [t for _, t in items] for name, items in evals.items()})
 rng.shuffle(train_rows)
 manifest = TMP / "train_manifest.jsonl"
 manifest.write_text("\n".join(json.dumps({k: r[k] for k in ("audio_filepath", "duration", "text")})
@@ -429,16 +217,15 @@ from nemo.collections.asr.metrics.wer import word_error_rate  # noqa: E402
 
 
 def score(asr) -> dict:
-    res = {}
+    res, n = {}, cfg["score_batch"]
     for name, items in evals.items():
         hyps = []
-        for i in range(0, len(items), 8):
-            hyps += asr.recognize([a for a, _ in items[i:i + 8]], sample_rate=SR)
+        for i in range(0, len(items), n):
+            hyps += asr.recognize([a for a, _ in items[i:i + n]], sample_rate=SR)
         res[name] = round(100 * word_error_rate([normalise(h) for h in hyps], [normalise(t) for _, t in items]), 2)
     return res
 
 
-_aligner.clear()  # the cutter is done: give its GPU memory back before scoring and training
 log["eval"]["stock"] = score(onnx_asr.load_model(cfg["stock_onnx_model"], quantization=cfg["quantization"], providers=PROVIDERS))
 save_log(eval=log["eval"])
 
@@ -465,32 +252,12 @@ def hold_norm_stats() -> None:
         m.eval()
 
 
-def export(folder: Path, net) -> None:
-    """Write the four files onnx-asr reads, in fp32 and int8, the way the published model was built.
-
-    NeMo's export leaves `net` unfit to train (every layer frozen, the decoder's start token
-    dropped), so never pass the model that is about to be trained."""
-    from onnxruntime.quantization import QuantType, quantize_dynamic
-
-    folder.mkdir(parents=True)
-    net.cpu().eval().export(str(folder / "model.onnx"))  # writes encoder-model.onnx (+ .data) and decoder_joint-model.onnx
-    for part in ("encoder-model", "decoder_joint-model"):
-        # Unsigned weights, as the published int8 files have; signed cost 1.4 to 3.8 points of WER.
-        quantize_dynamic(folder / f"{part}.onnx", folder / f"{part}.int8.onnx", weight_type=QuantType.QUInt8)
-    vocab = "".join(f"{tok} {i}\n" for i, tok in enumerate([*net.tokenizer.vocab, "<blk>"]))
-    published = Path(hf_hub_download(cfg["onnx_repo"], "vocab.txt", local_dir=TMP / "stock")).read_text(encoding="utf-8")
-    if vocab.split() != published.split():
-        raise SystemExit("token list differs from the published model's; onnx-asr would decode the wrong words")
-    (folder / "vocab.txt").write_text(vocab, encoding="utf-8")
-    shutil.copy(hf_hub_download(cfg["onnx_repo"], "config.json", local_dir=TMP / "stock"), folder / "config.json")
-
-
 if cfg.get("check_export"):
     # The untouched model through our export: if this already differs from stock, the recipe is at fault.
     # A second copy from the download cache: the model being trained cannot be copied
     # (NeMo holds an object proxy deepcopy refuses) and must not be exported.
     untouched = nemo_asr.models.ASRModel.from_pretrained(cfg["base_model"], map_location="cpu")
-    export(TMP / "untouched", untouched)
+    export(TMP / "untouched", untouched, cfg["onnx_repo"], TMP / "stock")
     for q in (None, "int8"):
         log["eval"][f"untouched_{q or 'fp32'}"] = score(onnx_asr.load_model("nemo-conformer-tdt", str(TMP / "untouched"),
                                                                              quantization=q, providers=PROVIDERS))
@@ -502,6 +269,24 @@ def data_cfg(bs: int, path: Path, shuffle: bool) -> DictConfig:
                        "num_workers": 2, "pin_memory": True, "max_duration": cfg["max_duration_sec"],
                        "min_duration": cfg["min_duration_sec"], "trim_silence": False,
                        "use_start_end_token": False, "use_lhotse": False, "is_tarred": False})
+
+
+def two_steps(batch, opt) -> None:
+    """Forward, backward and an optimiser step, twice, on one batch."""
+    sig, sig_len, tr, tr_len = batch
+    for _ in range(2):
+        with torch.autocast("cuda", dtype=torch.float16):
+            enc, enc_len = model.forward(input_signal=sig, input_signal_length=sig_len)
+            dec, tgt_len, _ = model.decoder(targets=tr, target_length=tr_len)
+            if model.joint.fuse_loss_wer:
+                loss = model.joint(encoder_outputs=enc, decoder_outputs=dec, encoder_lengths=enc_len,
+                                   transcripts=tr, transcript_lengths=tr_len, compute_wer=False)[0]
+            else:
+                loss = model.loss(log_probs=model.joint(encoder_outputs=enc, decoder_outputs=dec), targets=tr,
+                                  input_lengths=enc_len, target_lengths=tgt_len)
+        loss.backward()
+        opt.step()
+        del enc, dec, loss
 
 
 def fits(bs: int) -> bool:
@@ -516,26 +301,13 @@ def fits(bs: int) -> bool:
                                for i in range(bs)))
     model.cuda().train()
     hold_norm_stats()
-    sig, sig_len, tr, tr_len = (t.cuda() for t in next(iter(model._setup_dataloader_from_config(
-        data_cfg(bs, probe, False)))))
+    batch = [t.cuda() for t in next(iter(model._setup_dataloader_from_config(data_cfg(bs, probe, False))))]
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=0.0)
     # The fused joint clears its loss reduction while it runs and restores it after; an
     # out-of-memory mid-run skips the restore, and training then gets one loss per clip.
     reduction = model.joint.loss.reduction if model.joint.fuse_loss_wer else None
     try:
-        for _ in range(2):
-            with torch.autocast("cuda", dtype=torch.float16):
-                enc, enc_len = model.forward(input_signal=sig, input_signal_length=sig_len)
-                dec, tgt_len, _ = model.decoder(targets=tr, target_length=tr_len)
-                if model.joint.fuse_loss_wer:
-                    loss = model.joint(encoder_outputs=enc, decoder_outputs=dec, encoder_lengths=enc_len,
-                                       transcripts=tr, transcript_lengths=tr_len, compute_wer=False)[0]
-                else:
-                    loss = model.loss(log_probs=model.joint(encoder_outputs=enc, decoder_outputs=dec), targets=tr,
-                                      input_lengths=enc_len, target_lengths=tgt_len)
-            loss.backward()
-            opt.step()
-            del enc, dec, loss
+        two_steps(batch, opt)
         ok = True
     except torch.cuda.OutOfMemoryError:
         ok = False
@@ -543,7 +315,7 @@ def fits(bs: int) -> bool:
         if model.joint.fuse_loss_wer:
             model.joint.loss.reduction = reduction
     peak = torch.cuda.max_memory_allocated() / 2**30
-    del opt
+    del opt, batch
     model.zero_grad(set_to_none=True)
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
@@ -598,16 +370,11 @@ except torch.cuda.OutOfMemoryError as e:
     log["out_of_memory"] = str(e)[:500]
 save_log(batch_size=bs, accumulate=accumulate, steps_done=trainer.global_step, training=stopped)
 
-# ---------- export: only the files for the chosen precision go to the output (null = full precision) ----------
-export(TMP / "tuned", model)
+# ---------- export ----------
+export(TMP / "tuned", model, cfg["onnx_repo"], TMP / "stock")
 torch.cuda.empty_cache()  # export moved the model to the CPU; free its GPU memory for onnxruntime
 dest = OUT / cfg["output"]
-dest.mkdir()
-for f in (TMP / "tuned").iterdir():
-    # fp32 keeps every non-int8 file, so the encoder's separate weights file comes along whatever it is named
-    if f.name in ("vocab.txt", "config.json") or (".int8." in f.name) == bool(cfg["quantization"]):
-        shutil.copy(f, dest / f.name)
-save_log(exported=sorted(p.name for p in dest.iterdir()))
+save_log(exported=copy_precision(TMP / "tuned", dest, cfg["quantization"]))
 
 log["eval"]["tuned"] = score(onnx_asr.load_model("nemo-conformer-tdt", str(dest), quantization=cfg["quantization"], providers=PROVIDERS))
 if cfg.get("check_export"):
@@ -622,67 +389,6 @@ if cfg.get("check_export"):
     log["max_change"] = change
 save_log(eval=log["eval"], max_change=log.get("max_change"))
 
-
-# ---------- the local test sets, decoded here so the PC only scores text ----------
-def decode_eval_sets(folder: Path) -> None:
-    """Greedy (onnx-asr, GPU) and hotwords (sherpa-onnx beam search, CPU), the app's two ways of decoding."""
-    marker = next(Path("/kaggle/input").rglob("eval_sets.json"), None)
-    if marker is None:
-        return
-    root = marker.parent
-    sets = TMP / "eval_sets"
-    if (root / "eval.tar").exists():
-        tarfile.open(root / "eval.tar").extractall(sets)
-    else:  # Kaggle unpacked the archive itself
-        sets = next(p.parent.parent for p in root.rglob("manifest.jsonl"))
-    sys.path.insert(0, str(DATA))  # run_train.py ships sherpa_view.py with the training data
-    import sherpa_onnx
-    import sherpa_view
-    view = sherpa_view.build(folder, TMP / "sherpa_view")
-    # Same arguments as the app's ParakeetHotwordEngine (beam and score from its settings, in parakeet.json).
-    hot = sherpa_onnx.OfflineRecognizer.from_transducer(
-        encoder=str(view / "encoder.onnx"), decoder=str(view / "decoder.onnx"), joiner=str(view / "joiner.onnx"),
-        tokens=str(view / "tokens.txt"), model_type="nemo_transducer", num_threads=os.cpu_count(),
-        decoding_method="modified_beam_search", max_active_paths=cfg["hotword_beam"],
-        hotwords_file=str(root / "hotwords.txt"), hotwords_score=cfg["hotword_score"],
-        modeling_unit="bpe", bpe_vocab=str(root / "bpe.vocab"))
-    greedy = onnx_asr.load_model("nemo-conformer-tdt", str(folder), quantization=cfg["quantization"],
-                                 providers=PROVIDERS).with_timestamps()
-    # The view must be the same network: sherpa's own greedy search on it should write nearly what onnx-asr
-    # writes. Not exactly: sherpa computes its own audio features, which flipped 3-8% of words on hard Eka
-    # clips in the smoke run (pooled 4.4%); a wrongly cut network writes gibberish.
-    plain = sherpa_onnx.OfflineRecognizer.from_transducer(
-        encoder=str(view / "encoder.onnx"), decoder=str(view / "decoder.onnx"), joiner=str(view / "joiner.onnx"),
-        tokens=str(view / "tokens.txt"), model_type="nemo_transducer", num_threads=os.cpu_count(),
-        decoding_method="greedy_search")
-    check, pairs = {"same": 0, "clips": 0, "differ": []}, []
-    (OUT / "decodes").mkdir(exist_ok=True)
-    for name in json.loads(marker.read_text()):
-        rows = [json.loads(ln) for ln in (sets / name / "manifest.jsonl").read_text().splitlines() if ln.strip()]
-        rows = rows[: cfg.get("eval_set_limit") or None]  # smoke: a few clips prove the path
-        out = {"greedy": {}, "hotwords": {}}
-        for r in rows:
-            a, sr = sf.read(sets / name / r["audio"], dtype="float32")
-            a = a.mean(axis=1) if a.ndim > 1 else a
-            out["greedy"][r["audio"]] = greedy.recognize(a, sample_rate=sr).text
-            st = hot.create_stream()
-            st.accept_waveform(sr, a)
-            hot.decode_stream(st)
-            out["hotwords"][r["audio"]] = (st.result.text or "").strip()
-            if check["clips"] < cfg["view_check_clips"]:
-                st = plain.create_stream()
-                st.accept_waveform(sr, a)
-                plain.decode_stream(st)
-                pairs.append((normalise(st.result.text or ""), normalise(out["greedy"][r["audio"]])))
-                same = pairs[-1][0] == pairs[-1][1]
-                check["clips"] += 1
-                check["word_gap"] = round(word_error_rate(*zip(*pairs)), 4)  # onnx-asr's text as the reference
-                check["same"] += same
-                if not same and len(check["differ"]) < 5:
-                    check["differ"].append([out["greedy"][r["audio"]], st.result.text])
-        (OUT / "decodes" / f"{name}.json").write_text(json.dumps(out), encoding="utf-8")
-        save_log(decoded={**log.get("decoded", {}), name: len(rows)}, view_check=check)
-
-
 if cfg.get("score_eval_sets"):
-    decode_eval_sets(TMP / "tuned")
+    from eval_decode import decode_eval_sets
+    decode_eval_sets(TMP / "tuned", cfg, PROVIDERS, TMP, OUT, save_log)
