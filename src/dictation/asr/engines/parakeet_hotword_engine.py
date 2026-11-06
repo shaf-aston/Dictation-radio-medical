@@ -46,7 +46,16 @@ logger = logging.getLogger(__name__)
 
 #: The sherpa-onnx export of the app's default Parakeet (see parakeet_engine).
 REPO_ID = "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
-_FILES = ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt")
+#: The upstream commit and file checksums this engine was measured with. A download is
+#: pinned to the commit and every file is checked before use: a file that differs is
+#: deleted and the engine refuses to load (downloaded artifacts are validated).
+_REVISION = "1ab9323565ddb038682214b292f588070a538ce2"
+_FILES = {
+    "encoder.int8.onnx": "a32b12d17bbbc309d0686fbbcc2987b5e9b8333a7da83fa6b089f0a2acd651ab",
+    "decoder.int8.onnx": "b6bb64963457237b900e496ee9994b59294526439fbcc1fecf705b31a15c6b4e",
+    "joiner.int8.onnx": "7946164367946e7f9f29a122407c3252b680dbae9a51343eb2488d057c3c43d2",
+    "tokens.txt": "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d",
+}
 SAMPLE_RATE = 16000
 #: Beam width for modified beam search. Hotwords only act during beam search;
 #: 4 measured the same speed as greedy on this CPU.
@@ -54,6 +63,22 @@ _BEAM = 4
 
 _RECOGNISERS: dict = {}
 _LOCK = threading.Lock()
+
+
+def _download(root: Path) -> None:
+    """Fetch the pinned sherpa export into *root*; delete and refuse any file whose checksum differs."""
+    import hashlib  # noqa: PLC0415
+
+    from huggingface_hub import snapshot_download  # noqa: PLC0415
+
+    logger.info("Downloading %s into %s (one time)", REPO_ID, root)
+    snapshot_download(REPO_ID, revision=_REVISION, local_dir=root, allow_patterns=list(_FILES))
+    for name, want in _FILES.items():
+        with open(root / name, "rb") as fh:
+            got = hashlib.file_digest(fh, "sha256").hexdigest()
+        if got != want:
+            (root / name).unlink()
+            raise ProviderUnavailable(f"{name} from {REPO_ID} does not match its pinned checksum; deleted it")
 
 
 def write_bpe_vocab(tokens_txt: Path, out: Path) -> None:
@@ -151,9 +176,7 @@ class ParakeetHotwordEngine:
 
         root = self.model_dir or cache_dir() / "sherpa" / REPO_ID.split("/")[-1]
         if self.model_dir is None and not all((root / f).exists() for f in _FILES):
-            from huggingface_hub import snapshot_download  # noqa: PLC0415
-            logger.info("Downloading %s into %s (one time)", REPO_ID, root)
-            snapshot_download(REPO_ID, local_dir=root, allow_patterns=list(_FILES))
+            _download(root)
         write_bpe_vocab(root / "tokens.txt", root / "bpe.vocab")
         count = write_hotwords(get_correction_targets(), root / "hotwords.txt")
         logger.info("Parakeet (sherpa-onnx) with %d radiology hotwords, score %.1f",
