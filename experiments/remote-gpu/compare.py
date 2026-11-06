@@ -43,10 +43,26 @@ def parakeet(path=None, quantization=None):
     return ParakeetEngine(quantization=quantization, model_dir=Path(path) if path else None)
 
 
+def hotwords(path=None):
+    """The app's ParakeetHotwordEngine (sherpa-onnx beam search + radiology hotwords); a tuned
+    folder is first rebuilt in sherpa's layout by sherpa_view."""
+    from sherpa_view import build
+    from src.dictation.asr.engines.parakeet_hotword_engine import ParakeetHotwordEngine
+    from src.core.settings import Settings
+    return ParakeetHotwordEngine(Settings().get("hotword_score"), model_dir=build(Path(path)) if path else None)
+
+
+def decode_cache(set_name, model):
+    """Raw text per clip, {audio file: [text, decode seconds or None]}; run_train.py files the kernel's here too."""
+    from src.core.paths import cache_dir
+    return cache_dir() / "compare_decodes" / set_name / f"{model}.json"
+
+
 def candidates(only):
     # The app runs Parakeet at fp32; v1 and v2 exported int8 only, so int8 stock is their like-for-like row.
+    # "+hw" = the same model decoded with radiology hotwords; stock-hotwords is the app's default without a voice model.
     found = [("stock-whisper", lambda: whisper(model_size="small.en")), ("stock-parakeet", parakeet),
-             ("stock-parakeet-int8", lambda: parakeet(quantization="int8"))]
+             ("stock-parakeet-int8", lambda: parakeet(quantization="int8")), ("stock-hotwords", hotwords)]
     for v in sorted(p for p in MODELS.iterdir() if p.is_dir()):
         d = v / "model"
         if (v / "parakeet.json").exists():
@@ -58,6 +74,8 @@ def candidates(only):
             # Versions saved before the quantization knob were int8.
             q = json.loads((v / "parakeet.json").read_text()).get("quantization", "int8")
             found.append((v.name, lambda d=d, q=q: parakeet(str(d), q)))
+            if not q:  # the sherpa view is built from the full-precision files
+                found.append((f"{v.name}+hw", lambda d=d: hotwords(str(d))))
         elif d.exists():
             found.append((v.name, lambda d=d: whisper(model_path=str(d))))
     unknown = sorted(set(only or ()) - {n for n, _ in found})
@@ -109,6 +127,7 @@ def main():
     ap.add_argument("--show", type=int, default=0, help="print the first N clips' corrected output per model")
     ap.add_argument("--by-source", action="store_true",
                     help="also report each clip source separately (protocol: 'hand' = wording no model trained on)")
+    ap.add_argument("--fresh", action="store_true", help="decode again instead of reusing stored decodes")
     a = ap.parse_args()
 
     from src.dictation.asr import TranscribeContext
@@ -124,13 +143,23 @@ def main():
     # Per model, per clip: (raw errors, words, fixed errors, words, term errors, term words, features, unseen)
     per_clip, speed = {}, {}
     for name, make in candidates(a.only):
-        eng = make()
-        eng.preload()
+        # A version is never edited after it is saved, so its raw text per clip is decoded once and
+        # kept; re-scoring (a new correction rule, a new feature) then takes seconds. --fresh redoes it.
+        cache = decode_cache(a.set, name)
+        stored = {} if a.fresh or not cache.exists() else json.loads(cache.read_text(encoding="utf-8"))
+        eng = None
         dec, audio, recs = 0.0, 0.0, []
         for i, c in enumerate(clips):
-            t0 = time.perf_counter()
-            text = eng.transcribe(str(c.audio_path), TranscribeContext(beam_size=1)).text
-            dec += time.perf_counter() - t0
+            key = c.audio_path.name
+            if key not in stored:
+                if eng is None:
+                    eng = make()
+                    eng.preload()
+                t0 = time.perf_counter()
+                stored[key] = [eng.transcribe(str(c.audio_path), TranscribeContext(beam_size=1)).text,
+                               time.perf_counter() - t0]
+            text, secs = stored[key]
+            dec = None if dec is None or secs is None else dec + secs  # None: decoded on Kaggle's GPU, no CPU timing
             audio += sf.info(str(c.audio_path)).duration  # the manifest's figure is 0.0 when it could not be read
             fixed = postprocess_transcript(text)
             if i < a.show:
@@ -140,8 +169,11 @@ def main():
             recs.append((w.substitutions + w.deletions + w.insertions, w.ref_words,
                          p.substitutions + p.deletions + p.insertions, p.ref_words,
                          t.term_errors, t.term_tokens, feature_hits(c.reference, fixed), is_unseen(i, c)))
-        per_clip[name], speed[name] = recs, dec / (audio / 60)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(stored), encoding="utf-8")
+        per_clip[name], speed[name] = recs, (float("nan") if dec is None else dec / (audio / 60))
         print(f"done {name}", file=sys.stderr, flush=True)
+        del eng  # one model in memory at a time
 
     # "unseen" (a voice no version trained on) only means something on the tts set,
     # where every third clip is the held-out voice; elsewhere it is printed as "-".
@@ -156,7 +188,7 @@ def main():
             print(f"{n:<22}{_rate(r, 0, 1):>9.2%}{(f'{_rate(u, 0, 1):.2%}' if show_unseen else '-'):>12}"
                   f"{_rate(r, 2, 3):>10.2%}{_rate(r, 4, 5):>10.2%}{sum(x[5] for x in r):>7}{speed[n]:>8.1f}")
         if a.features:
-            print(f"exact after correction (clips right / clips with the feature)")
+            print("exact after correction (clips right / clips with the feature)")
             print(f"{'model':<22}" + "".join(f"{f:>14}" for f in FEATURES))
             for n, recs in per_clip.items():
                 cells = [[recs[i][6][f] for i in idx if f in recs[i][6]] for f in FEATURES]

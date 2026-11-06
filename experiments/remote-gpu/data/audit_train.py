@@ -8,7 +8,6 @@ Exits non-zero if any feature ends up with fewer than MIN_KEPT clips.
 import ast
 import json
 import re
-import sys
 import wave
 from pathlib import Path
 

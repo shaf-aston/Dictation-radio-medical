@@ -1,1 +1,19 @@
-{"kaggle_user": "shafeinhashmi", "dataset": "rd-train-data", "held_out_voice": "hazel", "kernel_start_wait_sec": 90, "poll_sec": 30, "max_wait_hours": 11, "machine": "NvidiaTeslaT4", "smoke_max_wer_gap_pp": 1.0}
+{
+  "kaggle_user": "shafeinhashmi",
+  "dataset": "rd-train-data",
+  "held_out_voice": "hazel",
+  "kernel_start_wait_sec": 90,
+  "poll_sec": 30,
+  "max_wait_hours": 11,
+  "machine": "NvidiaTeslaT4",
+  "smoke_max_wer_gap_pp": 1.0,
+  "eval_dataset": "rd-eval-sets",
+  "eval_sets": [
+    "eka",
+    "eka_noise",
+    "protocol",
+    "parrot",
+    "libri"
+  ],
+  "view_check_max_word_gap": 0.1
+}

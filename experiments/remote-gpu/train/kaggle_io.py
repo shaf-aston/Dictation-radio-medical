@@ -31,13 +31,13 @@ def _windows_upload_state_dir(pack: Path) -> None:
     (Path(tempfile.gettempdir()) / ".kaggle" / "uploads" / tail).mkdir(parents=True, exist_ok=True)
 
 
-def push_dataset(pack: Path) -> None:
-    """Create or version the private dataset, then wait until Kaggle has processed it."""
+def push_dataset(pack: Path, name: str = DATASET) -> None:
+    """Create or version the private dataset `name`, then wait until Kaggle has processed it."""
     _windows_upload_state_dir(pack)
     (pack / "dataset-metadata.json").write_text(json.dumps({
-        "title": DATASET, "id": f"{USER}/{DATASET}", "licenses": [{"name": "CC0-1.0"}], "isPrivate": True}))
+        "title": name, "id": f"{USER}/{name}", "licenses": [{"name": "CC0-1.0"}], "isPrivate": True}))
     mine = kaggle("datasets", "list", "--mine", "--csv", check=False).splitlines()
-    if any(ln.split(",", 1)[0] == f"{USER}/{DATASET}" for ln in mine):
+    if any(ln.split(",", 1)[0] == f"{USER}/{name}" for ln in mine):
         kaggle("datasets", "version", "-p", str(pack), "-m", f"data {date.today()}", "--dir-mode", "zip")
     else:
         kaggle("datasets", "create", "-p", str(pack), "--dir-mode", "zip")
@@ -46,7 +46,7 @@ def push_dataset(pack: Path) -> None:
     # (cfg["data_sha256"]) and stops if Kaggle mounts stale data anyway.
     time.sleep(180)
     for _ in range(40):
-        if "ready" in kaggle("datasets", "status", f"{USER}/{DATASET}", check=False).lower():
+        if "ready" in kaggle("datasets", "status", f"{USER}/{name}", check=False).lower():
             return
         time.sleep(15)
     raise SystemExit("dataset never became ready")
@@ -66,7 +66,8 @@ def run_kernel(engine: str, cfg: dict) -> None:
         "id": f"{USER}/{kernel}", "title": kernel, "code_file": code_file,
         "language": "python", "kernel_type": "script", "is_private": "true",
         "enable_gpu": "true", "enable_internet": "true", "machine_shape": SETTINGS["machine"],
-        "dataset_sources": [f"{USER}/{DATASET}", *cfg["kaggle_sources"]]}))
+        "dataset_sources": [f"{USER}/{DATASET}", *([f"{USER}/{SETTINGS['eval_dataset']}"] if cfg.get("score_eval_sets") else []),
+                            *cfg["kaggle_sources"]]}))
     kaggle("kernels", "push", "-p", str(KDIR))
     started = time.time()
     time.sleep(SETTINGS["kernel_start_wait_sec"])  # right after a push, status still shows the PREVIOUS run

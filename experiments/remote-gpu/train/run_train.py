@@ -42,6 +42,10 @@ def check_smoke(log: dict, cfg: dict) -> None:
         off = {s: scores[label][s] for s in scores[ref] if abs(scores[label][s] - scores[ref][s]) > gap}
         if off:
             raise SystemExit(f"smoke run failed: {label} differs from {ref} by more than {gap} pp: {off}")
+    view = log.get("view_check")
+    print("sherpa view vs onnx-asr, same text:", view)
+    if cfg.get("score_eval_sets") and (not view or view.get("word_gap", 1.0) > SETTINGS["view_check_max_word_gap"]):
+        raise SystemExit("smoke run failed: the sherpa view of the model does not decode like the model itself")
     moved = log.get("max_change", {}).get("buffers")
     if moved != 0.0:
         raise SystemExit(f"smoke run failed: BatchNorm averages moved by {moved} (None = not measured)")
@@ -54,6 +58,21 @@ def next_version(name: str) -> Path:
     return MODELS / f"{name}-v{n}"
 
 
+def file_decodes(dest: Path) -> None:
+    """The kernel's decodes of the local test sets go into compare.py's cache, greedy as <version>
+    and with hotwords as <version>+hw, so `compare.py --only <version>` scores them without decoding."""
+    from compare import decode_cache
+    if not (OUT / "decodes").is_dir():
+        return
+    shutil.move(str(OUT / "decodes"), dest / "decodes")
+    for f in (dest / "decodes").glob("*.json"):
+        d = json.loads(f.read_text(encoding="utf-8"))
+        for kind, model in (("greedy", dest.name), ("hotwords", f"{dest.name}+hw")):
+            c = decode_cache(f.stem, model)
+            c.parent.mkdir(parents=True, exist_ok=True)
+            c.write_text(json.dumps({clip: [text, None] for clip, text in d[kind].items()}), encoding="utf-8")
+
+
 def save_version(dest: Path, engine: str, cfg: dict, clips: int, data: Path, note: str) -> None:
     data_label = os.path.relpath(data, HERE)  # before anything moves: a failure here must not strand the model
     dest.mkdir(parents=True)  # fails loudly if it somehow exists: never overwrite
@@ -61,6 +80,7 @@ def save_version(dest: Path, engine: str, cfg: dict, clips: int, data: Path, not
     for name in ("train_log.json", "train_texts.txt"):  # train_texts.txt: for the leak check on local sets
         if (OUT / name).exists():
             shutil.move(str(OUT / name), dest / name)
+    file_decodes(dest)
     (dest / f"{engine}.json").write_text(json.dumps(cfg, indent=2))
     shutil.copy(PACK / "manifest.jsonl", dest / "train_manifest.jsonl")
     (dest / "README.md").write_text(
@@ -95,6 +115,7 @@ def main() -> None:
     # job started before Kaggle finished processing the new upload, and came
     # back bit-identical to v5 without any error.
     cfg["data_sha256"] = hashlib.sha256((PACK / "manifest.jsonl").read_bytes()).hexdigest()
+    shutil.copy(HERE / "sherpa_view.py", PACK / "sherpa_view.py")  # the kernel builds its hotword view with it
     push_dataset(PACK)
     run_kernel(a.engine, cfg)
     fetch_output(OUT, cfg)

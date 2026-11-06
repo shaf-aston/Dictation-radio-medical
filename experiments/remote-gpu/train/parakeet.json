@@ -12,16 +12,17 @@
   "pip": [
     "nemo_toolkit[asr]==2.7.3",
     "onnx",
-    "onnxruntime",
-    "onnx-asr==0.12.0"
+    "onnxruntime-gpu==1.23.2",
+    "onnx-asr==0.12.0",
+    "sherpa-onnx==2.0.0"
   ],
   "caps": {
     "radiology_synth": 100000,
     "kaggle_medical": 6000,
     "edacc": 3000,
-    "hani89": 1500,
-    "librispeech": 2000,
-    "parrot": 1500
+    "hani89": 3000,
+    "librispeech": 3000,
+    "parrot": 4000
   },
   "hani89_shards": 4,
   "edacc_train_shards": 12,
@@ -35,7 +36,7 @@
   "min_learning_rate": 1e-06,
   "weight_decay": 0.001,
   "warmup_steps": 300,
-  "max_steps": 3000,
+  "max_steps": 4000,
   "max_train_hours": 5,
   "batch_size": 8,
   "effective_batch": 16,
@@ -63,15 +64,23 @@
     "max_steps": 20,
     "max_train_hours": 0.5,
     "libri_train_shards": 1,
-    "parrot_train_shards": 1
+    "parrot_train_shards": 1,
+    "score_eval_sets": true,
+    "eval_set_limit": 6,
+    "view_check_clips": 12
   },
-  "libri_train_shards": 2,
+  "libri_train_shards": 3,
   "parrot_train_shards": 2,
-  "noisy_copy_fraction": 0.5,
+  "noisy_copy_fraction": 0.3,
   "noise_snr_db": [
     0,
     20
   ],
-  "reverb_fraction": 0.3,
-  "rir_noise_url": "https://www.openslr.org/resources/28/rirs_noises.zip"
+  "reverb_fraction": 0.0,
+  "rir_noise_url": "https://www.openslr.org/resources/28/rirs_noises.zip",
+  "score_eval_sets": true,
+  "hotword_score": 1.0,
+  "hotword_beam": 4,
+  "view_check_clips": 40,
+  "cut_lead_sec": 0.1
 }

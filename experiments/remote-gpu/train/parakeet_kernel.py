@@ -4,7 +4,9 @@ Reads /kaggle/input/rd-train-data/{manifest.jsonl,audio.tar} (our synthetic radi
 medical-speech dataset, and five Hugging Face sets; settings come from train/parakeet.json.
 Writes /kaggle/working/model_onnx/ (onnx_asr.load_model("nemo-conformer-tdt", path, quantization=cfg["quantization"]))
 + train_log.json, which also holds stock vs tuned error rates on test sets the model never trained on,
-+ train_texts.txt, every training line, so the local test sets can be leak-checked against it.
++ train_texts.txt, every training line, so the local test sets can be leak-checked against it,
++ decodes/<set>.json, the tuned model's raw text for every clip of the local test sets (rd-eval-sets), greedy
+  as the app's onnx-asr engine decodes and with radiology hotwords as its sherpa-onnx engine does.
 
 Training text keeps capitals and punctuation, because Parakeet writes them: a set without them would teach
 the model to stop. Rows with spelled-out numbers are dropped for the same reason.
@@ -28,12 +30,14 @@ cfg = {}  # kaggle_io.run_kernel writes train/parakeet.json in here at push time
 # Fail loudly on a stale dataset version, before any paid GPU time: Kaggle can
 # start this job before it has finished processing a fresh upload, and then
 # mounts the previous one.
-DATA = next(Path("/kaggle/input").rglob("manifest.jsonl")).parent
+DATA = next(p.parent for p in Path("/kaggle/input").rglob("manifest.jsonl")
+            if (p.parent / "audio.tar").exists() or (p.parent / "audio").is_dir())
 _want = cfg.get("data_sha256")
 _got = hashlib.sha256((DATA / "manifest.jsonl").read_bytes()).hexdigest()
 if _want and _got != _want:
     raise SystemExit(f"stale training data: manifest sha256 {_got[:12]} != uploaded {_want[:12]}")
 
+subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "-q", "onnxruntime"], check=False)
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", *cfg["pip"]], check=True)
 
 import numpy as np  # noqa: E402
@@ -43,6 +47,17 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")  # 
 import torch  # noqa: E402
 from huggingface_hub import HfApi, hf_hub_download  # noqa: E402
 from scipy.signal import resample_poly  # noqa: E402
+import onnx_asr  # noqa: E402
+import onnxruntime as ort  # noqa: E402
+
+# Scoring on the GPU: on the CPU it took 54 of v7's 213 minutes. torch has loaded the CUDA libraries
+# onnxruntime needs; preload_dlls (newer builds) points it at them.
+getattr(ort, "preload_dlls", lambda: None)()
+# The GPU is shared with torch (the model being trained sits on it): onnxruntime's default doubles its
+# memory pool each time it grows, which ran the T4 out; growing by what is asked for does not.
+PROVIDERS = [(p, {"arena_extend_strategy": "kSameAsRequested"}) if p == "CUDAExecutionProvider" else p
+             for p in ("CUDAExecutionProvider", "CPUExecutionProvider") if p in ort.get_available_providers()]
+print("onnxruntime providers", PROVIDERS, flush=True)
 
 SR = 16000
 OUT = Path("/kaggle/working")
@@ -128,10 +143,14 @@ def add_train(source: str, items) -> None:
     """items yields (audio array, text). Keeps those that fit the length and text rules, up to the cap."""
     kept = seen = 0
     cap = cfg["caps"][source]
+    dropped = {"too_short": 0, "too_long": 0, "text": 0}
     for a, text in items:
         seen += 1
         dur = len(a) / SR
-        if not (cfg["min_duration_sec"] <= dur <= cfg["max_duration_sec"]) or not usable(text):
+        why = ("too_short" if dur < cfg["min_duration_sec"] else "too_long" if dur > cfg["max_duration_sec"]
+               else None if usable(text) else "text")
+        if why:
+            dropped[why] += 1
             continue
         path = CLIPS / f"{source}_{kept:05d}.flac"
         sf.write(path, a, SR)
@@ -139,8 +158,88 @@ def add_train(source: str, items) -> None:
         kept += 1
         if kept >= cap:
             break
-    log["sources"][source] = {"seen": seen, "kept": kept}
-    print(f"{source}: kept {kept} of {seen} looked at", flush=True)
+    log["sources"][source] = {"seen": seen, "kept": kept, "dropped": dropped}
+    print(f"{source}: kept {kept} of {seen} looked at; dropped {dropped}", flush=True)
+    if f"{source}_split" in log["sources"]:
+        print(f"{source} long clips cut:", log["sources"][f"{source}_split"], flush=True)
+
+
+# ---------- long clips: cut at sentence ends ----------
+# PARROT's median piece is 22.7 s and 83% are over max_duration_sec, so v4-v7 trained on 1 in 6 of its
+# reports. The stock model times each word; a clip is cut just before a sentence's first word, wherever
+# that word and the one before it are both heard exactly as written (a cut elsewhere could split a word).
+# Each piece is decoded again and kept only if it starts and ends on its own text's first and last word.
+_aligner = []
+
+
+def aligner():
+    if not _aligner:
+        _aligner.append(onnx_asr.load_model(cfg["stock_onnx_model"], providers=PROVIDERS).with_timestamps())
+    return _aligner[0]
+
+
+def heard_words(res) -> list:
+    """(normalised word, start second) from a timed result; a piece starting with a space starts a word."""
+    words = []
+    for tok, t in zip(res.tokens or [], res.timestamps or []):
+        if tok.startswith((" ", "▁")) or not words:
+            words.append([tok, t])
+        else:
+            words[-1][0] += tok
+    return [(w, t) for tok, t in words for w in normalise(tok).split()[:1]]
+
+
+def cut_at_sentences(a: np.ndarray, text: str, split_log: dict):
+    import difflib
+    sents = [x for x in re.split(r"(?<=[.;:?!])\s+", text) if normalise(x)]
+    ref, first = [], []
+    for x in sents:
+        first.append(len(ref))
+        ref += normalise(x).split()
+    heard = heard_words(aligner().recognize(a, sample_rate=SR))
+    match = {}
+    for b in difflib.SequenceMatcher(None, ref, [w for w, _ in heard], autojunk=False).get_matching_blocks():
+        match.update({b.a + j: b.b + j for j in range(b.size)})
+    # sentence k can start a piece at this second (sentence 0 at the start of the clip)
+    starts = {0: 0.0, **{k: max(0.0, heard[match[i]][1] - cfg["cut_lead_sec"]) for k, i in enumerate(first)
+                         if k and i in match and i - 1 in match}}
+    bounds = sorted(starts) + [len(sents)]
+    k0 = 0
+    while k0 < len(sents):
+        # furthest boundary that keeps the piece within max_duration_sec
+        fits = [k for k in bounds if k > k0 and (starts.get(k, len(a) / SR) - starts[k0]) <= cfg["max_duration_sec"]]
+        if not fits:
+            split_log["no_cut_fits"] += 1
+            nxt = [k for k in bounds if k > k0 and k in starts]
+            if not nxt:
+                return
+            k0 = nxt[0]
+            continue
+        k1 = fits[-1]
+        t0, t1 = starts[k0], starts.get(k1, len(a) / SR)
+        piece, words = a[int(t0 * SR): int(t1 * SR)], " ".join(sents[k0:k1])
+        got = normalise(aligner().recognize(piece, sample_rate=SR).text).split()
+        want = normalise(words).split()
+        if got and got[0] == want[0] and got[-1] == want[-1]:
+            split_log["pieces"] += 1
+            yield piece, words
+        else:
+            split_log["edge_mismatch"] += 1
+        if k1 not in starts:
+            return
+        k0 = k1
+
+
+def split_long(source: str, items):
+    """Clips within max_duration_sec pass through; longer ones are cut at sentence ends."""
+    split_log = log["sources"].setdefault(f"{source}_split", {"long": 0, "pieces": 0, "edge_mismatch": 0,
+                                                                "no_cut_fits": 0})
+    for a, text in items:
+        if len(a) / SR <= cfg["max_duration_sec"]:
+            yield a, text
+            continue
+        split_log["long"] += 1
+        yield from cut_at_sentences(a, text, split_log)
 
 
 def hf_files(repo: str, prefix: str, n: int) -> list:
@@ -163,6 +262,17 @@ def parquet_rows(files: list, text_cols: tuple, audio_col: str = "audio"):
         for r in rows:
             a = r[audio_col]
             yield (a["bytes"] if isinstance(a, dict) else a), r[tcol]
+
+
+def read_clip(path: str) -> np.ndarray:
+    return decode(Path(path).read_bytes())
+
+
+def parallel(fn, items):
+    """fn over items on every CPU core, results in order."""
+    from concurrent.futures import ProcessPoolExecutor
+    with ProcessPoolExecutor(os.cpu_count()) as ex:
+        yield from ex.map(fn, items, chunksize=16)
 
 
 def eval_set(rows) -> list:
@@ -193,8 +303,9 @@ fcol, pcol = column(list(rows[0]), "file_name"), column(list(rows[0]), "phrase")
 rows = [r for r in rows if r[fcol] in wavs]
 rng.shuffle(rows)
 held = [r for r in rows if wavs[r[fcol]].parent.name == "validate"]
-add_train("kaggle_medical", ((decode(wavs[r[fcol]].read_bytes()), r[pcol].strip())
-                             for r in rows if wavs[r[fcol]].parent.name != "validate"))
+train_med = [r for r in rows if wavs[r[fcol]].parent.name != "validate"]
+add_train("kaggle_medical", zip(parallel(read_clip, [str(wavs[r[fcol]]) for r in train_med]),
+                                (r[pcol].strip() for r in train_med)))
 evals = {"kaggle_medical_validate": eval_set((wavs[r[fcol]].read_bytes(), r[pcol]) for r in held)}
 
 # 3. EdAcc: real accented English conversation (validation to train, test held out).
@@ -205,8 +316,8 @@ evals["edacc_test"] = eval_set((b, sentence_case(t)) for b, t in parquet_rows(
     hf_files("edinburghcstr/edacc", "data/test-", cfg["edacc_eval_shards"]), ("text",)))
 
 # 4. Hani89: synthetic medical speech, long clips, so only the short ones fit.
-add_train("hani89", ((decode(b), t.strip()) for b, t in parquet_rows(
-    hf_files("Hani89/Synthetic-Medical-Speech-Dataset", "data/train-", cfg["hani89_shards"]), ("text",))))
+add_train("hani89", split_long("hani89", ((decode(b), t.strip()) for b, t in parquet_rows(
+    hf_files("Hani89/Synthetic-Medical-Speech-Dataset", "data/train-", cfg["hani89_shards"]), ("text",)))))
 
 # 5. Eka Care: real Indian-accented medical speech. Test only, never trained on.
 evals["ekacare_en"] = eval_set(parquet_rows(
@@ -222,8 +333,8 @@ add_train("librispeech", ((decode(b), sentence_case(t)) for b, t in parquet_rows
 #    pauses into pieces under 30 s (only those up to max_duration_sec are kept). Train split to train.
 #    Licence CC-BY-NC-SA 4.0: a model trained on it is for non-commercial use only.
 PARROT = "ysdede/parrot-radiology-asr-en"
-add_train("parrot", ((decode(b), parrot_text(t)) for b, t in parquet_rows(
-    hf_files(PARROT, "data/train-", cfg["parrot_train_shards"]), ("transcription",))))
+add_train("parrot", split_long("parrot", ((decode(b), parrot_text(t)) for b, t in parquet_rows(
+    hf_files(PARROT, "data/train-", cfg["parrot_train_shards"]), ("transcription",)))))
 
 # PARROT's test split is a random cut of the same reports' pieces, not a split by report, and reports share
 # stock sentences ("No free fluid."). So a test piece is only scored if none of its sentences is a training line's.
@@ -314,7 +425,6 @@ save_log(train_clips=len(train_rows), train_hours=round(sum(r["duration"] for r 
          eval_clips={k: len(v) for k, v in evals.items()})
 
 # ---------- scoring ----------
-import onnx_asr  # noqa: E402
 from nemo.collections.asr.metrics.wer import word_error_rate  # noqa: E402
 
 
@@ -328,7 +438,8 @@ def score(asr) -> dict:
     return res
 
 
-log["eval"]["stock"] = score(onnx_asr.load_model(cfg["stock_onnx_model"], quantization=cfg["quantization"]))
+_aligner.clear()  # the cutter is done: give its GPU memory back before scoring and training
+log["eval"]["stock"] = score(onnx_asr.load_model(cfg["stock_onnx_model"], quantization=cfg["quantization"], providers=PROVIDERS))
 save_log(eval=log["eval"])
 
 # ---------- training ----------
@@ -382,7 +493,7 @@ if cfg.get("check_export"):
     export(TMP / "untouched", untouched)
     for q in (None, "int8"):
         log["eval"][f"untouched_{q or 'fp32'}"] = score(onnx_asr.load_model("nemo-conformer-tdt", str(TMP / "untouched"),
-                                                                             quantization=q))
+                                                                             quantization=q, providers=PROVIDERS))
     save_log(eval=log["eval"])
 
 
@@ -489,6 +600,7 @@ save_log(batch_size=bs, accumulate=accumulate, steps_done=trainer.global_step, t
 
 # ---------- export: only the files for the chosen precision go to the output (null = full precision) ----------
 export(TMP / "tuned", model)
+torch.cuda.empty_cache()  # export moved the model to the CPU; free its GPU memory for onnxruntime
 dest = OUT / cfg["output"]
 dest.mkdir()
 for f in (TMP / "tuned").iterdir():
@@ -497,11 +609,11 @@ for f in (TMP / "tuned").iterdir():
         shutil.copy(f, dest / f.name)
 save_log(exported=sorted(p.name for p in dest.iterdir()))
 
-log["eval"]["tuned"] = score(onnx_asr.load_model("nemo-conformer-tdt", str(dest), quantization=cfg["quantization"]))
+log["eval"]["tuned"] = score(onnx_asr.load_model("nemo-conformer-tdt", str(dest), quantization=cfg["quantization"], providers=PROVIDERS))
 if cfg.get("check_export"):
     # Full precision too: int8 rounds each weight, so a change far too small to learn anything still tips
     # some weights into the next step. Comparing fp32 to fp32 tells training apart from rounding.
-    log["eval"]["tuned_fp32"] = score(onnx_asr.load_model("nemo-conformer-tdt", str(TMP / "tuned")))
+    log["eval"]["tuned_fp32"] = score(onnx_asr.load_model("nemo-conformer-tdt", str(TMP / "tuned"), providers=PROVIDERS))
     # How far training moved anything: weights by the learning rate, the held BatchNorm averages not at all.
     names, after, change = {n for n, _ in model.named_parameters()}, model.state_dict(), {"weights": 0.0, "buffers": 0.0}
     for k, v in untouched.state_dict().items():
@@ -509,3 +621,68 @@ if cfg.get("check_export"):
         change[kind] = max(change[kind], float((after[k].cpu().double() - v.double()).abs().max()) if v.numel() else 0.0)
     log["max_change"] = change
 save_log(eval=log["eval"], max_change=log.get("max_change"))
+
+
+# ---------- the local test sets, decoded here so the PC only scores text ----------
+def decode_eval_sets(folder: Path) -> None:
+    """Greedy (onnx-asr, GPU) and hotwords (sherpa-onnx beam search, CPU), the app's two ways of decoding."""
+    marker = next(Path("/kaggle/input").rglob("eval_sets.json"), None)
+    if marker is None:
+        return
+    root = marker.parent
+    sets = TMP / "eval_sets"
+    if (root / "eval.tar").exists():
+        tarfile.open(root / "eval.tar").extractall(sets)
+    else:  # Kaggle unpacked the archive itself
+        sets = next(p.parent.parent for p in root.rglob("manifest.jsonl"))
+    sys.path.insert(0, str(DATA))  # run_train.py ships sherpa_view.py with the training data
+    import sherpa_onnx
+    import sherpa_view
+    view = sherpa_view.build(folder, TMP / "sherpa_view")
+    # Same arguments as the app's ParakeetHotwordEngine (beam and score from its settings, in parakeet.json).
+    hot = sherpa_onnx.OfflineRecognizer.from_transducer(
+        encoder=str(view / "encoder.onnx"), decoder=str(view / "decoder.onnx"), joiner=str(view / "joiner.onnx"),
+        tokens=str(view / "tokens.txt"), model_type="nemo_transducer", num_threads=os.cpu_count(),
+        decoding_method="modified_beam_search", max_active_paths=cfg["hotword_beam"],
+        hotwords_file=str(root / "hotwords.txt"), hotwords_score=cfg["hotword_score"],
+        modeling_unit="bpe", bpe_vocab=str(root / "bpe.vocab"))
+    greedy = onnx_asr.load_model("nemo-conformer-tdt", str(folder), quantization=cfg["quantization"],
+                                 providers=PROVIDERS).with_timestamps()
+    # The view must be the same network: sherpa's own greedy search on it should write nearly what onnx-asr
+    # writes. Not exactly: sherpa computes its own audio features, which flipped 3-8% of words on hard Eka
+    # clips in the smoke run (pooled 4.4%); a wrongly cut network writes gibberish.
+    plain = sherpa_onnx.OfflineRecognizer.from_transducer(
+        encoder=str(view / "encoder.onnx"), decoder=str(view / "decoder.onnx"), joiner=str(view / "joiner.onnx"),
+        tokens=str(view / "tokens.txt"), model_type="nemo_transducer", num_threads=os.cpu_count(),
+        decoding_method="greedy_search")
+    check, pairs = {"same": 0, "clips": 0, "differ": []}, []
+    (OUT / "decodes").mkdir(exist_ok=True)
+    for name in json.loads(marker.read_text()):
+        rows = [json.loads(ln) for ln in (sets / name / "manifest.jsonl").read_text().splitlines() if ln.strip()]
+        rows = rows[: cfg.get("eval_set_limit") or None]  # smoke: a few clips prove the path
+        out = {"greedy": {}, "hotwords": {}}
+        for r in rows:
+            a, sr = sf.read(sets / name / r["audio"], dtype="float32")
+            a = a.mean(axis=1) if a.ndim > 1 else a
+            out["greedy"][r["audio"]] = greedy.recognize(a, sample_rate=sr).text
+            st = hot.create_stream()
+            st.accept_waveform(sr, a)
+            hot.decode_stream(st)
+            out["hotwords"][r["audio"]] = (st.result.text or "").strip()
+            if check["clips"] < cfg["view_check_clips"]:
+                st = plain.create_stream()
+                st.accept_waveform(sr, a)
+                plain.decode_stream(st)
+                pairs.append((normalise(st.result.text or ""), normalise(out["greedy"][r["audio"]])))
+                same = pairs[-1][0] == pairs[-1][1]
+                check["clips"] += 1
+                check["word_gap"] = round(word_error_rate(*zip(*pairs)), 4)  # onnx-asr's text as the reference
+                check["same"] += same
+                if not same and len(check["differ"]) < 5:
+                    check["differ"].append([out["greedy"][r["audio"]], st.result.text])
+        (OUT / "decodes" / f"{name}.json").write_text(json.dumps(out), encoding="utf-8")
+        save_log(decoded={**log.get("decoded", {}), name: len(rows)}, view_check=check)
+
+
+if cfg.get("score_eval_sets"):
+    decode_eval_sets(TMP / "tuned")

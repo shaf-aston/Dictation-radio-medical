@@ -20,7 +20,9 @@ pieces) is derived from ``tokens.txt``: the tokenizer's scores are its pieces'
 ranks, so nothing larger has to be downloaded.
 
 A fine-tuned export (picked with ``parakeet_model``) is in onnx-asr's layout and still
-runs through :mod:`parakeet_engine`; the factory picks.
+runs through :mod:`parakeet_engine`; the factory picks. ``model_dir`` can also name a
+full-precision folder in sherpa's layout (``encoder.onnx``, ``decoder.onnx``,
+``joiner.onnx``; experiments/remote-gpu/sherpa_view.py rebuilds a fine-tune that way).
 """
 
 from __future__ import annotations
@@ -92,7 +94,8 @@ class ParakeetHotwordEngine:
     # -- port ---------------------------------------------------------------
 
     def identity(self) -> tuple:
-        return ("parakeet-hotwords", REPO_ID, self.hotword_score)
+        # The folder is part of it: two engines on different models must not share a recogniser.
+        return ("parakeet-hotwords", str(self.model_dir or REPO_ID), self.hotword_score)
 
     def capabilities(self) -> EngineCaps:
         # Beam-search scores here include the hotword bonus, so they are not
@@ -147,7 +150,7 @@ class ParakeetHotwordEngine:
         from src.medical.medical_dict import get_correction_targets  # noqa: PLC0415
 
         root = self.model_dir or cache_dir() / "sherpa" / REPO_ID.split("/")[-1]
-        if not all((root / f).exists() for f in _FILES):
+        if self.model_dir is None and not all((root / f).exists() for f in _FILES):
             from huggingface_hub import snapshot_download  # noqa: PLC0415
             logger.info("Downloading %s into %s (one time)", REPO_ID, root)
             snapshot_download(REPO_ID, local_dir=root, allow_patterns=list(_FILES))
@@ -155,10 +158,11 @@ class ParakeetHotwordEngine:
         count = write_hotwords(get_correction_targets(), root / "hotwords.txt")
         logger.info("Parakeet (sherpa-onnx) with %d radiology hotwords, score %.1f",
                     count, self.hotword_score)
+        part = ".onnx" if (root / "encoder.onnx").exists() else ".int8.onnx"  # full precision when present
         return sherpa_onnx.OfflineRecognizer.from_transducer(
-            encoder=str(root / "encoder.int8.onnx"),
-            decoder=str(root / "decoder.int8.onnx"),
-            joiner=str(root / "joiner.int8.onnx"),
+            encoder=str(root / f"encoder{part}"),
+            decoder=str(root / f"decoder{part}"),
+            joiner=str(root / f"joiner{part}"),
             tokens=str(root / "tokens.txt"),
             model_type="nemo_transducer",
             num_threads=self.threads,
