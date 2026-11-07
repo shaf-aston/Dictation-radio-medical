@@ -1,14 +1,16 @@
 """Runs ON Kaggle (GPU). Fine-tunes Parakeet TDT 0.6b v3, exports the ONNX folder the app's engine loads, at the precision in parakeet.json.
 
 Reads /kaggle/input/rd-train-data/{manifest.jsonl,audio.tar} (our synthetic radiology clips), the Kaggle
-medical-speech dataset, and five Hugging Face sets; settings come from train/parakeet.json.
+medical-speech dataset, five Hugging Face sets and two recorded clinical-talk sets (PriMock57 from GitHub,
+Fareez from figshare); settings come from train/parakeet.json.
 Writes /kaggle/working/model_onnx/ (onnx_asr.load_model("nemo-conformer-tdt", path, quantization=cfg["quantization"]))
 + train_log.json, which also holds stock vs tuned error rates on four held-out sets the model never trained on,
 + train_texts.txt, every training line, so the local eval sets can be leak-checked against it,
 + decodes/<set>.json, the tuned model's raw text for every clip of the local eval sets (eval_decode.py).
 
 This file is the run, step by step; the parts it calls ship beside the training data (run_train.py
-KERNEL_FILES): sources.py reads audio, long_clips.py cuts long clips, augment.py adds noisy copies,
+KERNEL_FILES): sources.py reads audio, talk.py reads the clinical-talk sets, long_clips.py cuts long clips,
+augment.py adds noisy copies,
 export_onnx.py writes the onnx-asr folder, eval_decode.py decodes the local eval sets, and text_rules.py
 holds the text rules the local scripts share.
 
@@ -53,6 +55,7 @@ from augment import add_noisy_copies  # noqa: E402
 from export_onnx import copy_precision, export  # noqa: E402
 from long_clips import Cutter  # noqa: E402
 from sources import SR, column, decode, eval_set, hf_files, parallel, parquet_rows, read_clip  # noqa: E402
+from talk import Slips, fareez, primock  # noqa: E402
 from text_rules import leak_report, normalise, parrot_text, sentence_case, sentences, usable  # noqa: E402
 
 # Scoring on the GPU: on the CPU it took 54 of v7's 213 minutes. torch has loaded the CUDA libraries
@@ -110,11 +113,11 @@ def add_train(source: str, items) -> None:
 
 
 cutter = Cutter(lambda: onnx_asr.load_model(cfg["stock_onnx_model"], providers=PROVIDERS).with_timestamps(),
-                cfg["max_duration_sec"], cfg["cut_lead_sec"])
+                cfg["max_duration_sec"], cfg["cut_lead_sec"], cfg["align_window_sec"])
 
 
-def split_long(source: str, items):
-    return cutter.split(items, log["sources"].setdefault(f"{source}_split", {}))
+def split_long(source: str, items, known=None):
+    return cutter.split(items, log["sources"].setdefault(f"{source}_split", {}), known)
 
 
 def hf(repo: str, prefix: str, n: int) -> list:
@@ -176,6 +179,32 @@ add_train("librispeech", ((decode(b), sentence_case(t)) for b, t in rows_of(
 #    Licence CC-BY-NC-SA 4.0: a model trained on it is for non-commercial use only.
 add_train("parrot", split_long("parrot", ((decode(b), parrot_text(t)) for b, t in rows_of(
     hf(cfg["parrot_repo"], "data/train-", cfg["parrot_train_shards"]), "transcription"))))
+
+# 8. Real recorded clinical talk with hand-made transcripts (talk.py): PriMock57 GP consultations (CC BY 4.0)
+#    and Fareez OSCE interviews (CC0), whole consultations held out. A training line with a transcriber's slip
+#    ("athsma", talk.Slips) is dropped. Held-out sets skip that check (it asks the stock model: no bias to it).
+import symspellpy  # noqa: E402
+
+KNOWN = {ln.split()[0] for ln in (Path(symspellpy.__file__).parent / "frequency_dictionary_en_82_765.txt")
+         .read_text(encoding="utf-8").splitlines() if ln.strip()}
+KNOWN |= {w for ln in (DATA / "radiology_lexicon.txt").read_text(encoding="utf-8").splitlines()
+          if not ln.startswith("#") for w in normalise(ln).split()}
+SLIPS = Slips(KNOWN)
+TALK = TMP / "talk"
+every = cfg["held_every"]
+add_train("primock", split_long("primock", primock(TALK, every["primock"], held=False), SLIPS))
+add_train("fareez", split_long("fareez", fareez(cfg["fareez_url"], TALK, every["fareez"], held=False), SLIPS))
+
+
+def held_talk(items) -> list:
+    """Lines of 3+ words, mixed across every held-out consultation (in order they would all come from the first)."""
+    rows = [(a, t) for a, t in items if usable(t)]
+    rng.shuffle(rows)
+    return held_out(rows)
+
+
+evals["primock_held"] = held_talk(primock(TALK, every["primock"], held=True))
+evals["fareez_held"] = held_talk(split_long("fareez_held", fareez(cfg["fareez_url"], TALK, every["fareez"], held=True)))
 cutter.free()  # every long clip is cut: give the aligner's GPU memory back before scoring and training
 
 # PARROT's test split is a random cut of the same reports' pieces, not a split by report, and reports share
@@ -197,7 +226,7 @@ def parrot_test_rows():
 evals["parrot_test"] = held_out(parrot_test_rows())
 log["sources"]["parrot_test"] = parrot_seen
 
-# 8. Noisy copies of a share of every source.
+# 9. Noisy copies of a share of every source.
 log["sources"].update(add_noisy_copies(train_rows, cfg, rng, TMP, CLIPS))
 
 # Leak check: how much of each held-out set's text the model has seen in training.

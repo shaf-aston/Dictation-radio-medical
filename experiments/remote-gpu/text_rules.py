@@ -28,6 +28,20 @@ def parrot_text(t: str) -> str:
     return " ".join(re.sub(r"(NEWLINE|PARAGRAPH)", " ", t).split())
 
 
+FILLERS = re.compile(r"\b(?:m+-?h+m+|u+h-h+u+h+|u+h+m*|u+m+|e+r+m+|a+h+|h+m+)\b[,.]*\s*", re.I)
+
+
+def talk_text(t: str) -> str:
+    """Hand-made transcripts of real talk (PriMock57, Fareez) as Parakeet writes them: no um/uh
+    (it does not write them, and a report must not get them), "Okay" not "OK", "Oh" not "Ohh", straight quotes."""
+    t = re.sub("[‘’]", "'", t)
+    t = re.sub(r"\bOK\b|\bok\b", "okay", FILLERS.sub("", t))
+    t = re.sub(r"\b([Oo])hh+\b", r"\1h", t)
+    t = re.sub(r"\s+([,.?!])", r"\1", re.sub(r"\.{2,}|[\"“”]", " ", t))
+    t = re.sub(r"(^|[.?!]\s+)([a-z])", lambda m: m.group(1) + m.group(2).upper(), " ".join(t.split()).strip(" ,"))
+    return t
+
+
 def normalise(t: str) -> str:
     """For comparing only: lowercase, no punctuation, so only the words are compared."""
     return " ".join(re.sub(r"[^a-z0-9' ]", " ", t.lower()).split())

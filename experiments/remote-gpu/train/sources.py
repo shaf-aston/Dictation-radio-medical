@@ -70,10 +70,10 @@ def parquet_rows(files: list, text_cols: tuple, rng, audio_col: str = "audio"):
 
 
 def eval_set(rows, min_sec: float, max_sec: float, n: int) -> list:
-    """Up to `n` (audio, text) pairs with text and a length in [min_sec, max_sec]."""
+    """Up to `n` (audio, text) pairs with text and a length in [min_sec, max_sec]; audio as bytes or already decoded."""
     out = []
     for b, text in rows:
-        a = decode(b)
+        a = decode(b) if isinstance(b, bytes) else b
         if normalise(text) and min_sec <= len(a) / SR <= max_sec:
             out.append((a, text))
         if len(out) >= n:

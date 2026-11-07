@@ -17,15 +17,16 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from config import HERE, MODELS, SETTINGS, load_env  # noqa: E402
+from config import HERE, MODELS, REPO, SETTINGS, load_env  # noqa: E402
 from kaggle_io import fetch_output, push_dataset, run_kernel  # noqa: E402
 from pack import PACK, pack_data  # noqa: E402
 
 OUT = HERE / "train" / "_out"
 # The modules each kernel imports. Kaggle runs one script, so they ride along with the training data.
 KERNEL_FILES = {
-    "parakeet": [HERE / "text_rules.py", HERE / "sherpa_view.py", *(HERE / "train" / f for f in (
-        "sources.py", "long_clips.py", "augment.py", "export_onnx.py", "eval_decode.py"))],
+    "parakeet": [HERE / "text_rules.py", HERE / "sherpa_view.py", REPO / "src" / "resources" / "radiology_lexicon.txt",
+                 *(HERE / "train" / f for f in ("sources.py", "talk.py", "long_clips.py", "augment.py",
+                                                "export_onnx.py", "eval_decode.py"))],
 }
 LOAD_LINE = {
     "parakeet": "onnx_asr.load_model('nemo-conformer-tdt', r'{model}', quantization={quantization!r})",

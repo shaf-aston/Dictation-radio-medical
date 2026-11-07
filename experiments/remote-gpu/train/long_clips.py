@@ -4,6 +4,7 @@ PARROT's median piece is 22.7 s and 83% are over max_duration_sec, so v4-v7 trai
 reports. The stock model times each word; a clip is cut just before a sentence's first word, wherever
 that word and the one before it are both heard exactly as written (a cut elsewhere could split a word).
 Each piece is decoded again and kept only if it starts and ends on its own text's first and last word.
+Whole recorded consultations (Fareez, 12 min) are timed in window_sec windows, which the GPU holds.
 """
 import difflib
 import re
@@ -11,7 +12,7 @@ import re
 from sources import SR
 from text_rules import normalise
 
-TALLY = ("long", "pieces", "edge_mismatch", "no_cut_fits")
+TALLY = ("long", "pieces", "edge_mismatch", "no_cut_fits", "slip")
 
 
 def heard_words(res) -> list:
@@ -28,9 +29,9 @@ def heard_words(res) -> list:
 class Cutter:
     """`load` makes the timed stock model; it is loaded on first need and dropped by free()."""
 
-    def __init__(self, load, max_sec: float, lead_sec: float):
+    def __init__(self, load, max_sec: float, lead_sec: float, window_sec: float):
         self._load, self._model = load, None
-        self.max_sec, self.lead_sec = max_sec, lead_sec
+        self.max_sec, self.lead_sec, self.window_sec = max_sec, lead_sec, window_sec
 
     def free(self) -> None:
         """Give the aligner's GPU memory back once every source is cut."""
@@ -41,16 +42,30 @@ class Cutter:
             self._model = self._load()
         return self._model.recognize(a, sample_rate=SR)
 
-    def split(self, items, tally: dict):
-        """Clips within max_sec pass through; longer ones are cut at sentence ends. Counts go in `tally`."""
+    def _heard(self, a) -> list:
+        """(word, start second) over the whole clip, timed window by window; a word split by a window
+        edge is misheard there, so no cut is made at it."""
+        step = int(self.window_sec * SR)
+        return [(w, t + i / SR) for i in range(0, len(a), step)
+                for w, t in heard_words(self._recognize(a[i:i + step]))]
+
+    def split(self, items, tally: dict, slips=None):
+        """Clips within max_sec pass through; longer ones are cut at sentence ends. Counts go in `tally`.
+        With `slips` (talk.Slips), a piece whose text has a transcriber's slip is dropped."""
         for k in TALLY:
             tally.setdefault(k, 0)
         for a, text in items:
             if len(a) / SR <= self.max_sec:
-                yield a, text
-                continue
-            tally["long"] += 1
-            yield from self._cut(a, text, tally)
+                pieces = [(a, text, None)]
+            else:
+                tally["long"] += 1
+                pieces = self._cut(a, text, tally)
+            for piece, words, got in pieces:
+                hear = (lambda g=got: g) if got is not None else (lambda p=piece: normalise(self._recognize(p).text).split())
+                if slips is not None and slips(words, hear):
+                    tally["slip"] += 1
+                else:
+                    yield piece, words
 
     def _starts(self, a, sents: list) -> dict:
         """{sentence k: second a piece may start at}; sentence 0 at the start of the clip."""
@@ -58,7 +73,7 @@ class Cutter:
         for x in sents:
             first.append(len(ref))
             ref += normalise(x).split()
-        heard = heard_words(self._recognize(a))
+        heard = self._heard(a)
         match = {}
         for b in difflib.SequenceMatcher(None, ref, [w for w, _ in heard], autojunk=False).get_matching_blocks():
             match.update({b.a + j: b.b + j for j in range(b.size)})
@@ -86,7 +101,7 @@ class Cutter:
             got, want = normalise(self._recognize(piece).text).split(), normalise(words).split()
             if got and got[0] == want[0] and got[-1] == want[-1]:
                 tally["pieces"] += 1
-                yield piece, words
+                yield piece, words, got
             else:
                 tally["edge_mismatch"] += 1
             if k1 not in starts:

@@ -14,7 +14,8 @@
     "onnx",
     "onnxruntime-gpu==1.23.2",
     "onnx-asr==0.12.0",
-    "sherpa-onnx==2.0.0"
+    "sherpa-onnx==2.0.0",
+    "symspellpy==6.9.0"
   ],
   "caps": {
     "radiology_synth": 100000,
@@ -22,7 +23,9 @@
     "edacc": 3000,
     "hani89": 3000,
     "librispeech": 3000,
-    "parrot": 4000
+    "parrot": 4000,
+    "primock": 4000,
+    "fareez": 4000
   },
   "hani89_shards": 4,
   "edacc_train_shards": 12,
@@ -51,7 +54,9 @@
       "edacc": 64,
       "hani89": 32,
       "librispeech": 32,
-      "parrot": 32
+      "parrot": 32,
+      "primock": 32,
+      "fareez": 32
     },
     "hani89_shards": 1,
     "edacc_train_shards": 1,
@@ -85,5 +90,11 @@
   "cut_lead_sec": 0.1,
   "eval_max_duration_sec": 30,
   "score_batch": 8,
-  "parrot_repo": "ysdede/parrot-radiology-asr-en"
+  "parrot_repo": "ysdede/parrot-radiology-asr-en",
+  "held_every": {
+    "primock": 6,
+    "fareez": 14
+  },
+  "fareez_url": "https://ndownloader.figshare.com/files/30598530",
+  "align_window_sec": 60
 }
