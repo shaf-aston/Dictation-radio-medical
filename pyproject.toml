@@ -73,5 +73,7 @@ testpaths = ["tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
 ignore = ["scripts/"]
+venvPath = "."
+venv = ".venv"
 reportMissingModuleSource = "none"
 reportMissingImports = "warning"
