@@ -18,6 +18,7 @@ Training text keeps capitals and punctuation, because Parakeet writes them: a se
 the model to stop. Rows with spelled-out numbers are dropped for the same reason.
 """
 import csv
+import gc
 import hashlib
 import json
 import os
@@ -401,7 +402,13 @@ save_log(batch_size=bs, accumulate=accumulate, steps_done=trainer.global_step, t
 
 # ---------- export ----------
 export(TMP / "tuned", model, cfg["onnx_repo"], TMP / "stock")
-torch.cuda.empty_cache()  # export moved the model to the CPU; free its GPU memory for onnxruntime
+# Export moved the model to the CPU, but AdamW's two running averages per weight stay on the GPU: v9's first
+# full run ran out of GPU memory scoring the tuned model because of them. Drop them before onnxruntime starts.
+for opt in trainer.optimizers:
+    opt.state.clear()
+gc.collect()
+torch.cuda.empty_cache()
+save_log(gpu_gb_held_after_training=round(torch.cuda.memory_allocated() / 2**30, 2))
 dest = OUT / cfg["output"]
 save_log(exported=copy_precision(TMP / "tuned", dest, cfg["quantization"]))
 
