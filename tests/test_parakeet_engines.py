@@ -55,7 +55,7 @@ def _tier(monkeypatch, installed, **settings):
         factory.importlib.util, "find_spec",
         lambda name: object() if name in installed else (None if name in ("onnx_asr", "sherpa_onnx") else real(name)),
     )
-    return factory.parakeet_tier(_Settings({"asr_hotwords": True, "hotword_score": 1.0, **settings}))
+    return factory.parakeet_tier(_Settings({"asr_hotwords": True, "hotword_score": 1.0, "parakeet_model": "standard", **settings}))
 
 
 def test_hotwords_engine_when_sherpa_is_installed(monkeypatch):
@@ -82,7 +82,7 @@ def test_engine_label_names_what_actually_answers(monkeypatch, tmp_path):
     real = importlib.util.find_spec
     monkeypatch.setattr(factory.importlib.util, "find_spec",
                         lambda name: object() if name in ("onnx_asr", "sherpa_onnx") else real(name))
-    base = {"asr_engine": "local", "asr_hotwords": True, "hotword_score": 1.0, "model_size": "base.en"}
+    base = {"asr_engine": "local", "asr_hotwords": True, "hotword_score": 1.0, "model_size": "base.en", "parakeet_model": "standard"}
     assert factory.describe_engine(_Settings(base)) == "Parakeet + radiology terms"
     assert factory.describe_engine(_Settings({**base, "asr_hotwords": False})) == "Parakeet"
     tune = _a_fine_tune(monkeypatch, tmp_path)

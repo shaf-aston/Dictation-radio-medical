@@ -27,11 +27,11 @@ _DEFAULTS: dict = {
     # and a one-time 2.4 GB download. "int8" is for a machine short of memory.
     "parakeet_precision": "fp32",
     # Which Parakeet: "standard" (the download) or a fine-tuned folder's name in
-    # data/models/fine_tuned/. parakeet-rad-v3, measured 2026-10-24 on 140 real
-    # Indian-English clips: WER 22.9 % -> 19.7 %, medical words missed 21 -> 13
-    # of 185; general English 1.85 % -> 2.18 %. Same speed and memory. Table:
-    # experiments/remote-gpu/models/parakeet-rad-v3/README.md.
-    "parakeet_model": "standard",
+    # data/models/fine_tuned/. Default: the best measured fine-tune, parakeet-rad-v8
+    # (results: experiments/remote-gpu/models/parakeet-rad-v8/README.md). A new
+    # install gets its files with the restore line in that README; until then
+    # dictation runs on "standard" and the status bar says so (asr/factory.py).
+    "parakeet_model": "parakeet-rad-v8",
     "model_size": "base.en",   # English-only: faster AND more accurate than "base"
     "language": "en",
     "vad_filter": True,

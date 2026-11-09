@@ -48,3 +48,8 @@ slash 80%, brackets 73%, "1.5 T" 85%, T1/T2 93% (v4: 76 / 62 / 54 / 93%).
 Verdict: adopted. Better than v4 on four sets (range misses zero on protocol hand, parrot, eka_noise), tied on eka and
 libri, worse nowhere. Same network as v4, so the same speed. Hotwords on top: best on radiology wording (protocol hand
 5.88%) and medical words, about 0.6 points worse on general words of real voices; not switched on.
+
+Backed up 2026-11-09 to the private Kaggle dataset `shafeinhashmi/radio-dictate-parakeet-v8` (the app's default model).
+A new install restores it into the folder the app loads from (needs the Kaggle CLI logged in to this account):
+
+    kaggle datasets download shafeinhashmi/radio-dictate-parakeet-v8 -p data/models/fine_tuned --unzip
