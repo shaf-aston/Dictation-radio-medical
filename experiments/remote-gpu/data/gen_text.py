@@ -1,8 +1,9 @@
 """Write many radiology-style dictation lines (no patient data, all invented).
 
 Vocabulary comes from the app's own lexicon so the model hears every term the
-correction pipeline claims to protect. Lines equal to a sentence in the test
-reports are dropped, so the test set stays unseen.
+correction pipeline claims to protect. A share of lines (protocol_share) is MRI
+protocol wording with spoken symbols. Lines equal to a sentence in the eval
+reports are dropped, so the eval set stays unseen.
 """
 import random
 import re
@@ -60,7 +61,7 @@ PATTERNS = [
 ]
 
 
-# --- v6: MRI protocol wording and spoken symbols -----------------------------
+# --- MRI protocol wording and spoken symbols -----------------------------
 # Lines are written the way they are SPOKEN ("slash", "open bracket", "one point
 # five tesla"): the model learns to hear the words, and the app's post-processing
 # turns them into "/", "( )" and "1.5 T". Never write the symbols here, or the
@@ -94,14 +95,16 @@ PROTOCOL = [
 
 MAX_WORDS = 26  # ~13 s at the slowest TTS rate; the kernel drops clips over 15 s
 
-_UNITS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+_UNITS = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
           "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
           "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19}
 _TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50}
 _NUM_RE = re.compile(
     r"\b(?:(?P<tens>" + "|".join(_TENS) + r")(?: (?P<tu>" + "|".join(k for k, v in _UNITS.items() if v < 10) + r"))?"
     r"|(?P<unit>" + "|".join(sorted(_UNITS, key=len, reverse=True)) + r"))"
-    r"(?: point (?P<dec>" + "|".join(k for k, v in _UNITS.items() if v < 10) + r"))?\b")
+    r"(?: point (?P<dec>" + "|".join(k for k, v in _UNITS.items() if v < 10) + r"))?\b", re.I)
+#: "one" that is not a number: "no one", "any one", "one of the".
+_NOT_A_NUMBER = re.compile(r"(?:\b(?:no|any|each|every) $)|(?:^ of\b)", re.I)
 
 
 def to_target(spoken: str) -> str:
@@ -114,10 +117,19 @@ def to_target(spoken: str) -> str:
     stay as words: the app's rules turn those into "/" and "( )".
     """
     def num(m):
-        n = _TENS[m["tens"]] + _UNITS.get(m["tu"] or "", 0) if m["tens"] else _UNITS[m["unit"]]
-        return f"{n}.{_UNITS[m['dec']]}" if m["dec"] else str(n)
+        g = {k: (v or "").lower() for k, v in m.groupdict().items()}
+        before = m.string[max(0, m.start() - 6):m.start()]
+        if g["unit"] == "one" and not g["dec"] and (
+                not before.strip() or before.rstrip().endswith(".")  # sentence start: report style spells it
+                or _NOT_A_NUMBER.search(before)
+                or _NOT_A_NUMBER.search(m.string[m.end():m.end() + 4])):
+            return m[0]
+        if g["unit"] == "zero" and not g["dec"]:
+            return m[0]  # "zero" alone is a word here; only "zero point five" is a number
+        n = _TENS[g["tens"]] + _UNITS.get(g["tu"], 0) if g["tens"] else _UNITS[g["unit"]]
+        return f"{n}.{_UNITS[g['dec']]}" if g["dec"] else str(n)
     t = _NUM_RE.sub(num, spoken)
-    t = re.sub(r"\bT (\d)\b", r"T\1", t)
+    t = re.sub(r"\b([CTLS]) (\d+)\b", r"\1\2", t)  # "T 2" -> "T2", spine "L 4" -> "L4"
     return re.sub(r"\b(\d+(?:\.\d+)?) millimetres?\b", r"\1 mm", t)
 
 

@@ -17,19 +17,29 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from config import HERE, MODELS, SETTINGS, load_env  # noqa: E402
+from config import HERE, MODELS, REPO, SETTINGS, load_env  # noqa: E402
 from kaggle_io import fetch_output, push_dataset, run_kernel  # noqa: E402
 from pack import PACK, pack_data  # noqa: E402
 
 OUT = HERE / "train" / "_out"
+# The modules each kernel imports. Kaggle runs one script, so they ride along with the training data.
+KERNEL_FILES = {
+    "parakeet": [HERE / "text_rules.py", HERE / "sherpa_view.py", REPO / "src" / "resources" / "radiology_lexicon.txt",
+                 *(HERE / "train" / f for f in ("sources.py", "talk.py", "long_clips.py", "augment.py",
+                                                "export_onnx.py", "eval_decode.py"))],
+}
 LOAD_LINE = {
-    "whisper": "FasterWhisperEngine(model_path=r'{model}')",
     "parakeet": "onnx_asr.load_model('nemo-conformer-tdt', r'{model}', quantization={quantization!r})",
 }
+
+
 def check_smoke(log: dict, cfg: dict) -> None:
     """A smoke run learns almost nothing, so our export must match the published model, the trained model
     must match the untouched one at full precision, and the BatchNorm averages must not have moved.
-    The tuned int8 score is printed, not gated: rounding magnifies even a 1e-7 change on 24 clips."""
+    The tuned score at the export precision is printed, not gated: int8 rounding magnifies even a 1e-7 change on 24 clips.
+    Gated on the average gap over every held-out set: one 24-clip set swings on a few near-tie words (parrot_test
+    once read 8.67 vs 10.06 while the same export on 200 local parrot clips scored 9.70 vs 9.68); a broken export
+    moves every set."""
     if log.get("training", "finished") != "finished":
         raise SystemExit(f"smoke run failed: training {log['training']}")
     scores, gap = log.get("eval", {}), SETTINGS["smoke_max_wer_gap_pp"]
@@ -39,9 +49,13 @@ def check_smoke(log: dict, cfg: dict) -> None:
         print(label, got)
     print("max change", log.get("max_change"))
     for label, ref in pairs.items():
-        off = {s: scores[label][s] for s in scores[ref] if abs(scores[label][s] - scores[ref][s]) > gap}
-        if off:
-            raise SystemExit(f"smoke run failed: {label} differs from {ref} by more than {gap} pp: {off}")
+        mean = sum(scores[label][s] - scores[ref][s] for s in scores[ref]) / len(scores[ref])
+        if abs(mean) > gap:
+            raise SystemExit(f"smoke run failed: {label} differs from {ref} by {mean:+.2f} pp on average (limit {gap})")
+    view = log.get("view_check")
+    print("sherpa view vs onnx-asr, same text:", view)
+    if cfg.get("score_eval_sets") and (not view or view.get("word_gap", 1.0) > SETTINGS["view_check_max_word_gap"]):
+        raise SystemExit("smoke run failed: the sherpa view of the model does not decode like the model itself")
     moved = log.get("max_change", {}).get("buffers")
     if moved != 0.0:
         raise SystemExit(f"smoke run failed: BatchNorm averages moved by {moved} (None = not measured)")
@@ -54,6 +68,19 @@ def next_version(name: str) -> Path:
     return MODELS / f"{name}-v{n}"
 
 
+def file_decodes(dest: Path) -> None:
+    """The kernel's decodes of the local eval sets go into decode_store, greedy as <version> and with
+    hotwords as <version>+hw, so `compare.py --only <version>` scores them without decoding."""
+    import decode_store
+    if not (OUT / "decodes").is_dir():
+        return
+    shutil.move(str(OUT / "decodes"), dest / "decodes")
+    for f in (dest / "decodes").glob("*.json"):
+        d = json.loads(f.read_text(encoding="utf-8"))
+        for kind, model in (("greedy", dest.name), ("hotwords", f"{dest.name}+hw")):
+            decode_store.save(f.stem, model, {clip: [text, None] for clip, text in d[kind].items()})
+
+
 def save_version(dest: Path, engine: str, cfg: dict, clips: int, data: Path, note: str) -> None:
     data_label = os.path.relpath(data, HERE)  # before anything moves: a failure here must not strand the model
     dest.mkdir(parents=True)  # fails loudly if it somehow exists: never overwrite
@@ -61,6 +88,7 @@ def save_version(dest: Path, engine: str, cfg: dict, clips: int, data: Path, not
     for name in ("train_log.json", "train_texts.txt"):  # train_texts.txt: for the leak check on local sets
         if (OUT / name).exists():
             shutil.move(str(OUT / name), dest / name)
+    file_decodes(dest)
     (dest / f"{engine}.json").write_text(json.dumps(cfg, indent=2))
     shutil.copy(PACK / "manifest.jsonl", dest / "train_manifest.jsonl")
     (dest / "README.md").write_text(
@@ -74,7 +102,7 @@ def save_version(dest: Path, engine: str, cfg: dict, clips: int, data: Path, not
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--engine", choices=sorted(LOAD_LINE), required=True)
+    ap.add_argument("--engine", choices=sorted(KERNEL_FILES), required=True)
     ap.add_argument("--name", required=True)
     ap.add_argument("--note", default="")
     ap.add_argument("--data", type=Path, default=HERE / "data" / "train")
@@ -90,11 +118,14 @@ def main() -> None:
     dest = next_version(a.name)
     clips = pack_data(a.data.resolve())
     print(f"packed {clips} clips -> {'smoke run' if a.smoke else dest.name}", flush=True)
-    # The kernel refuses to train unless the manifest it finds on Kaggle is this
-    # one. v6's first run trained on the previous dataset version, because the
-    # job started before Kaggle finished processing the new upload, and came
-    # back bit-identical to v5 without any error.
-    cfg["data_sha256"] = hashlib.sha256((PACK / "manifest.jsonl").read_bytes()).hexdigest()
+    for f in KERNEL_FILES[a.engine]:
+        shutil.copy(f, PACK / f.name)
+    # The kernel refuses to train unless the manifest and modules it finds on Kaggle are these.
+    # v6's first run trained on the previous dataset version, because the job started before
+    # Kaggle finished processing the new upload, and came back bit-identical to v5 without any error.
+    cfg["kernel_files"] = [f.name for f in KERNEL_FILES[a.engine]]
+    cfg["data_sha256"] = hashlib.sha256(b"".join((PACK / n).read_bytes()
+                                                 for n in ["manifest.jsonl", *cfg["kernel_files"]])).hexdigest()
     push_dataset(PACK)
     run_kernel(a.engine, cfg)
     fetch_output(OUT, cfg)
