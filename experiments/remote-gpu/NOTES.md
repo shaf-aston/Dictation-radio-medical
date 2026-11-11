@@ -99,8 +99,8 @@ Two halves, kept apart. Run commands, file-by-file flow and glossary: [CORE-FLOW
 
 ## What counts as better (2026-11-11, replaces "WER on protocol hand")
 Judge by the errors a radiologist must catch by rereading, on real voices: the **meaning** column (side, negation, numbers missed after the app's clean-up; `metrics.meaning_slips`) and medical-term error, on eka, eka_noise and parrot. A new version must cut one with a 95% range that misses zero, and be worse on none. Protocol hand is a formatting check only (slash, brackets, "1.5 T"): even stock misses ~1% of its meaning words, so its WER gains are mostly spoken-formatting words. libri guards general English. The set that would settle it is `own` (his voice, kept on this PC, never uploaded): scripts exist in `data/eval/own/`, no audio recorded yet.
-Stock vs v8 on this bar (meaning words wrong): eka 20.22% -> 11.61% (-8.61, range -14.06 to -3.44), parrot 10.36% -> 5.63% (-4.73, -7.41 to -2.33), eka_noise 18.35% -> 14.98% (tie), protocol hand 0.97% both, libri 0 both.
-Scoring fix the same day: "40mg" and "40 mg" now count as the same words (they were scored as errors). Every WER here dropped slightly as a result; older README tables were scored before it.
+Stock vs v8 on this bar (meaning words wrong after clean-up): eka 16.79% -> 5.22% (-11.57, range -16.85 to -6.46), parrot 8.94% -> 4.34% (-4.60, -7.12 to -2.33), eka_noise 13.06% -> 10.07% (tie), protocol 0.64% -> 0.21% (tie), libri 0 both. Medical-term error falls beyond luck on all four medical sets.
+Scoring fixes the same day (both sides, every model): spacing between letters and digits is not an error ("40mg" = "40 mg", "sr500" = "sr 500"), and "by" between two numbers = "x" (said vs written). Before them, a third of eka's "meaning" misses were spacing. Every WER here dropped slightly; older README tables were scored before it.
 
 ## How to run a version (checklist)
 1. `python data/build_train.py 1500` then `python data/audit_train.py` (must pass).

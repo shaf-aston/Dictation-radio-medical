@@ -99,7 +99,7 @@ def _canonical_numbers(words: List[str]) -> List[str]:
     return joined
 
 
-_GLUED_UNIT = re.compile(r"(\d+(?:\.\d+)?)([a-z]+)")
+_LETTER_DIGIT = re.compile(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])")
 
 
 def normalize_words(text: str) -> List[str]:
@@ -121,12 +121,15 @@ def normalize_words(text: str) -> List[str]:
     for token in text.split():
         for part in token.split("-"):
             part = _EDGE_PUNCT.sub("", part)
-            # "40mg" and "40 mg" are the same dose: split a number glued to its unit, both sides.
-            glued = _GLUED_UNIT.fullmatch(part)
-            for piece in (glued.groups() if glued else (part,)):
+            # "40mg" / "40 mg", "sr500" / "sr 500", "10x100" / "10 x 100" are the same words: split where
+            # letters meet digits, on both sides, so spacing alone is never scored as an error.
+            for piece in _LETTER_DIGIT.split(part):
                 if piece:
                     words.append(_UNIT_CANON.get(piece, piece))
-    return _canonical_numbers(words)
+    # "5 by 10 mg" is said, "5 x 10 mg" is written (the app's convention): same between two numbers.
+    words = _canonical_numbers(words)
+    return [("x" if w == "by" and 0 < i < len(words) - 1 and words[i - 1][-1].isdigit()
+             and words[i + 1][0].isdigit() else w) for i, w in enumerate(words)]
 
 
 # ---------------------------------------------------------------------------
