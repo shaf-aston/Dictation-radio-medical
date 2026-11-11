@@ -99,6 +99,9 @@ def _canonical_numbers(words: List[str]) -> List[str]:
     return joined
 
 
+_GLUED_UNIT = re.compile(r"(\d+(?:\.\d+)?)([a-z]+)")
+
+
 def normalize_words(text: str) -> List[str]:
     """Lower-case, de-punctuate and split *text* into comparable word tokens.
 
@@ -118,8 +121,11 @@ def normalize_words(text: str) -> List[str]:
     for token in text.split():
         for part in token.split("-"):
             part = _EDGE_PUNCT.sub("", part)
-            if part:
-                words.append(_UNIT_CANON.get(part, part))
+            # "40mg" and "40 mg" are the same dose: split a number glued to its unit, both sides.
+            glued = _GLUED_UNIT.fullmatch(part)
+            for piece in (glued.groups() if glued else (part,)):
+                if piece:
+                    words.append(_UNIT_CANON.get(piece, piece))
     return _canonical_numbers(words)
 
 
@@ -315,6 +321,24 @@ def correction_effect(reference: str, raw: str, processed: str) -> CorrectionEff
         net_gain=true_fixes - false_corrections,
         examples=examples,
     )
+
+
+# ---------------------------------------------------------------------------
+# Meaning slips
+# ---------------------------------------------------------------------------
+
+#: Words whose loss changes what a report says, not just how it reads: side, negation, size.
+#: "no effusion" heard as "effusion", "left" as "right", "4 mm" as "14 mm" are the errors a
+#: radiologist must catch by rereading; a missed "the" is not.
+MEANING_WORDS = frozenset({"left", "right", "bilateral", "no", "not", "without", "negative", "absent"})
+
+
+def meaning_slips(reference: str, hypothesis: str) -> tuple[int, int]:
+    """(meaning words the hypothesis got wrong, meaning words in the reference); numbers count too."""
+    ref, hyp = normalize_words(reference), normalize_words(hypothesis)
+    want = [i for i, w in enumerate(ref) if w in MEANING_WORDS or any(ch.isdigit() for ch in w)]
+    right = _matched_ref_indices(ref, hyp)
+    return sum(i not in right for i in want), len(want)
 
 
 # ---------------------------------------------------------------------------
