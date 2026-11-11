@@ -380,12 +380,45 @@ class Progress(pl.Callback):
             print(f"step {step}  loss {loss:.4f}  peak {peak:.1f} GB  {(time.time() - started) / 60:.0f} min", flush=True)
 
 
+class Average(pl.Callback):
+    """Running sum of the trainable weights every `average_every` steps over the last `average_last_steps`
+    (on the CPU, in fp32). The mean of several late points usually sits nearer the middle of the low ground
+    than any one step does (checkpoint averaging). The last step is always one of the points."""
+
+    def __init__(self, every: int, last: int, max_steps: int):
+        self.every, self.start, self.n, self.sum, self.taken = every, max_steps - last, 0, None, set()
+
+    def take(self, pl_module, step: int) -> None:
+        if step in self.taken:
+            return
+        self.taken.add(step)
+        weights = {k: p.detach().float().cpu() for k, p in pl_module.named_parameters() if p.requires_grad}
+        self.sum = weights if self.sum is None else {k: self.sum[k] + v for k, v in weights.items()}
+        self.n += 1
+
+    def on_train_batch_end(self, trainer, pl_module, *_):
+        step = trainer.global_step
+        if step > self.start and step % self.every == 0:
+            self.take(pl_module, step)
+
+    def on_train_end(self, trainer, pl_module):
+        self.take(pl_module, trainer.global_step)
+
+    def apply(self, model) -> int:
+        with torch.no_grad():
+            for k, p in model.named_parameters():
+                if k in self.sum:
+                    p.copy_((self.sum[k] / self.n).to(p.device, p.dtype))
+        return self.n
+
+
 hours = cfg["max_train_hours"]
+average = Average(cfg["average_every"], cfg["average_last_steps"], cfg["max_steps"])
 trainer = pl.Trainer(devices=1, accelerator="gpu", precision=cfg["precision"], max_steps=cfg["max_steps"],
                      max_time=f"00:{int(hours):02d}:{int(hours % 1 * 60):02d}:00", accumulate_grad_batches=accumulate,
                      gradient_clip_val=1.0, limit_val_batches=0, num_sanity_val_steps=0, logger=False,
                      enable_checkpointing=False, enable_progress_bar=False, log_every_n_steps=10,
-                     callbacks=[Progress()])
+                     callbacks=[Progress(), average])
 model.set_trainer(trainer)
 model.setup_training_data(data_cfg(bs, manifest, True))
 model.setup_optimization(DictConfig({
@@ -398,7 +431,8 @@ except torch.cuda.OutOfMemoryError as e:
     stopped = "out of memory part-way; exported what it had learned so far"
     print(e, flush=True)  # how much it tried to take and how much was already held
     log["out_of_memory"] = str(e)[:500]
-save_log(batch_size=bs, accumulate=accumulate, steps_done=trainer.global_step, training=stopped)
+save_log(batch_size=bs, accumulate=accumulate, steps_done=trainer.global_step, training=stopped,
+         averaged_points=average.apply(model), averaged_steps=sorted(average.taken))
 
 # ---------- export ----------
 export(TMP / "tuned", model, cfg["onnx_repo"], TMP / "stock")

@@ -24,8 +24,8 @@
     "hani89": 3000,
     "librispeech": 3000,
     "parrot": 4000,
-    "primock": 4000,
-    "fareez": 4000
+    "primock": 0,
+    "fareez": 0
   },
   "hani89_shards": 4,
   "edacc_train_shards": 12,
@@ -72,7 +72,9 @@
     "parrot_train_shards": 1,
     "score_eval_sets": true,
     "eval_set_limit": 6,
-    "view_check_clips": 12
+    "view_check_clips": 12,
+    "average_every": 5,
+    "average_last_steps": 10
   },
   "libri_train_shards": 3,
   "parrot_train_shards": 2,
@@ -96,5 +98,7 @@
     "fareez": 14
   },
   "fareez_url": "https://ndownloader.figshare.com/files/30598530",
-  "align_window_sec": 60
+  "align_window_sec": 60,
+  "average_every": 200,
+  "average_last_steps": 1000
 }
