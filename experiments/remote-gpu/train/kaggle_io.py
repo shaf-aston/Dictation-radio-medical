@@ -68,7 +68,9 @@ def run_kernel(engine: str, cfg: dict) -> None:
         "enable_gpu": "true", "enable_internet": "true", "machine_shape": SETTINGS["machine"],
         "dataset_sources": [f"{USER}/{DATASET}", *([f"{USER}/{SETTINGS['eval_dataset']}"] if cfg.get("score_eval_sets") else []),
                             *cfg["kaggle_sources"]]}))
-    kaggle("kernels", "push", "-p", str(KDIR))
+    pushed = kaggle("kernels", "push", "-p", str(KDIR))
+    if "error" in pushed.lower():  # the CLI exits 0 on a refused push (e.g. weekly GPU quota used up)
+        raise SystemExit(f"Kaggle refused the run: {pushed.strip()}")
     started = time.time()
     time.sleep(SETTINGS["kernel_start_wait_sec"])  # right after a push, status still shows the PREVIOUS run
     while True:
