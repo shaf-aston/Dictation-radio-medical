@@ -1,5 +1,5 @@
 .env
-data/train/
+data/train*/
 train/_pack/
 train/_eval_pack/
 train/_kernel/
