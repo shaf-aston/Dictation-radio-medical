@@ -16,7 +16,7 @@ HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
 from text_rules import usable  # noqa: E402
 
-MANIFEST = HERE / "data" / "train" / "manifest.jsonl"
+MANIFEST = (Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "data" / "train") / "manifest.jsonl"
 CFG = json.loads((HERE / "train" / "parakeet.json").read_text())
 MIN_KEPT = 30
 

@@ -99,6 +99,9 @@ def _canonical_numbers(words: List[str]) -> List[str]:
     return joined
 
 
+_LETTER_DIGIT = re.compile(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])")
+
+
 def normalize_words(text: str) -> List[str]:
     """Lower-case, de-punctuate and split *text* into comparable word tokens.
 
@@ -118,9 +121,15 @@ def normalize_words(text: str) -> List[str]:
     for token in text.split():
         for part in token.split("-"):
             part = _EDGE_PUNCT.sub("", part)
-            if part:
-                words.append(_UNIT_CANON.get(part, part))
-    return _canonical_numbers(words)
+            # "40mg" / "40 mg", "sr500" / "sr 500", "10x100" / "10 x 100" are the same words: split where
+            # letters meet digits, on both sides, so spacing alone is never scored as an error.
+            for piece in _LETTER_DIGIT.split(part):
+                if piece:
+                    words.append(_UNIT_CANON.get(piece, piece))
+    # "5 by 10 mg" is said, "5 x 10 mg" is written (the app's convention): same between two numbers.
+    words = _canonical_numbers(words)
+    return [("x" if w == "by" and 0 < i < len(words) - 1 and words[i - 1][-1].isdigit()
+             and words[i + 1][0].isdigit() else w) for i, w in enumerate(words)]
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +324,24 @@ def correction_effect(reference: str, raw: str, processed: str) -> CorrectionEff
         net_gain=true_fixes - false_corrections,
         examples=examples,
     )
+
+
+# ---------------------------------------------------------------------------
+# Meaning slips
+# ---------------------------------------------------------------------------
+
+#: Words whose loss changes what a report says, not just how it reads: side, negation, size.
+#: "no effusion" heard as "effusion", "left" as "right", "4 mm" as "14 mm" are the errors a
+#: radiologist must catch by rereading; a missed "the" is not.
+MEANING_WORDS = frozenset({"left", "right", "bilateral", "no", "not", "without", "negative", "absent"})
+
+
+def meaning_slips(reference: str, hypothesis: str) -> tuple[int, int]:
+    """(meaning words the hypothesis got wrong, meaning words in the reference); numbers count too."""
+    ref, hyp = normalize_words(reference), normalize_words(hypothesis)
+    want = [i for i, w in enumerate(ref) if w in MEANING_WORDS or any(ch.isdigit() for ch in w)]
+    right = _matched_ref_indices(ref, hyp)
+    return sum(i not in right for i in want), len(want)
 
 
 # ---------------------------------------------------------------------------

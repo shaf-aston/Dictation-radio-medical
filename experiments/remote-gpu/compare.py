@@ -32,7 +32,7 @@ import soundfile as sf
 import decode_store
 from config import MODELS
 from scripts.eval.corpus import load_set
-from scripts.eval.metrics import term_error_rate, word_error_rate
+from scripts.eval.metrics import meaning_slips, term_error_rate, word_error_rate
 from src.dictation.asr.engines.parakeet_engine import ParakeetEngine, available_models, model_dir_for
 
 
@@ -123,10 +123,13 @@ class Score(NamedTuple):
     terms: int
     features: dict
     unseen: bool
+    slips: int = 0
+    meaning: int = 0
 
 
 # label, error field, word field: each rate is summed errors over summed words, clip by clip
-MEASURES = (("WER raw", "raw_err", "raw_words"), ("WER +fix", "fix_err", "fix_words"), ("term err", "term_err", "terms"))
+MEASURES = (("WER raw", "raw_err", "raw_words"), ("WER +fix", "fix_err", "fix_words"), ("term err", "term_err", "terms"),
+            ("meaning", "slips", "meaning"))
 
 
 def rate(recs, err, words):
@@ -163,7 +166,8 @@ def score(name, clips, decodes, lex, show):
         t = term_error_rate(c.reference, text, lex)
         recs.append(Score(w.substitutions + w.deletions + w.insertions, w.ref_words,
                           p.substitutions + p.deletions + p.insertions, p.ref_words,
-                          t.term_errors, t.term_tokens, feature_hits(c.reference, fixed), is_unseen(i, c)))
+                          t.term_errors, t.term_tokens, feature_hits(c.reference, fixed), is_unseen(i, c),
+                          *meaning_slips(c.reference, fixed)))
     audio = sum(sf.info(str(c.audio_path)).duration for c in clips)  # the manifest's figure is 0.0 when unreadable
     return recs, (math.nan if None in secs else sum(secs) / (audio / 60))
 
@@ -171,11 +175,11 @@ def score(name, clips, decodes, lex, show):
 def print_rates(set_name, per_clip, speed):
     # "unseen" (a voice no version trained on) only means something on the tts set,
     # where every third clip is the held-out voice; elsewhere it is printed as "-".
-    print(f"{'model':<22}{'WER raw':>9}{'WER unseen':>12}{'WER +fix':>10}{'term err':>10}{'terms':>7}{'s/min':>8}")
+    print(f"{'model':<22}{'WER raw':>9}{'WER unseen':>12}{'WER +fix':>10}{'term err':>10}{'terms':>7}{'meaning':>9}{'s/min':>8}")
     for n, recs in per_clip.items():
         unseen = f"{rate([x for x in recs if x.unseen], 'raw_err', 'raw_words'):.2%}" if set_name == "tts" else "-"
         print(f"{n:<22}{rate(recs, 'raw_err', 'raw_words'):>9.2%}{unseen:>12}{rate(recs, 'fix_err', 'fix_words'):>10.2%}"
-              f"{rate(recs, 'term_err', 'terms'):>10.2%}{sum(x.terms for x in recs):>7}{speed[n]:>8.1f}")
+              f"{rate(recs, 'term_err', 'terms'):>10.2%}{sum(x.terms for x in recs):>7}{rate(recs, 'slips', 'meaning'):>9.2%}{speed[n]:>8.1f}")
 
 
 def print_features(per_clip):
